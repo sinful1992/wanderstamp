@@ -1,0 +1,645 @@
+/* Holiday Map — a family passport over a vintage atlas.
+   Aged-paper chrome, navy passport cover, foil-gold accents, visa-stamp red.
+   Display face: Staatliches (bundled) = rubber-stamp lettering. */
+
+@font-face {
+  font-family: "Staatliches";
+  src: url("/staatliches.woff2") format("woff2");
+  font-display: swap;
+}
+
+:root {
+  --paper: #f6f1e3;
+  --paper-2: #ede5cf;
+  --ink: #26221c;
+  --navy: #1c3652;
+  --navy-2: #142639;
+  --gold: #c6a45e;
+  --red: #b3372a;
+  --muted: #86796a;
+  --line: #dcd1b6;
+  --shadow: 0 2px 14px rgba(38, 34, 28, .2);
+  --stamp: "Staatliches", "Arial Narrow", sans-serif;
+  --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --prose: Georgia, "Times New Roman", serif;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--body);
+  color: var(--ink);
+  background: var(--paper-2);
+  overscroll-behavior: none;
+}
+button { font: inherit; cursor: pointer; }
+
+/* ---------- the atlas ---------- */
+
+#map { position: fixed; inset: 0; background: var(--paper-2); }
+/* Voyager is already warm; just a whisper of sepia to sit it on the paper */
+.leaflet-tile-pane { filter: sepia(.08) saturate(.92) contrast(.98); }
+/* soft vignette above the tiles, below pins and popups */
+#map::after {
+  content: ""; position: absolute; inset: 0; z-index: 250;
+  pointer-events: none;
+  box-shadow: inset 0 0 140px rgba(70, 52, 24, .22);
+}
+
+/* ---------- markers ---------- */
+
+/* photo pin: a small landscape photo print laid on the atlas — cream print
+   border, enamel edge in the trip colour. The print sits centred in a fixed
+   icon box so the zoom-tier resize below stays anchored to the place. */
+.photo-pin {
+  position: relative;
+  width: 100%; height: 100%;
+  display: grid; place-items: center;
+}
+.print {
+  position: relative; display: block; overflow: hidden;
+  width: 48px; height: 40px; border-radius: 8px;
+  background: var(--c, #1d6fb8);
+  box-shadow:
+    0 0 0 2.5px #fffdf7,               /* the print's white border */
+    0 0 0 4px var(--c, #1d6fb8),       /* enamel edge */
+    0 2px 6px rgba(0,0,0,.35);
+  transition: width .18s ease, height .18s ease, border-radius .18s ease, scale .15s ease-out;
+}
+/* .photo-pin qualifier outranks leaflet.css's ".leaflet-container
+   .leaflet-marker-pane img { width: auto }", which otherwise leaves
+   portrait thumbs half-filling the print. */
+.photo-pin .print img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+  transition: opacity .15s ease;
+}
+.badge-count {
+  position: absolute; right: -5px; bottom: -6px; z-index: 1;
+  min-width: 19px; height: 19px; padding: 0 4px;
+  border-radius: 999px; background: var(--c, #1d6fb8); color: #fff;
+  font-family: var(--stamp); font-size: 12px; line-height: 19px; text-align: center;
+  box-shadow: 0 0 0 2px #fffdf7;
+}
+.leaflet-marker-icon:hover .print { scale: 1.15; }
+
+/* zoom tiers (data-zoom set by app.js): region zoom shrinks the prints,
+   country/world zoom folds them into enamel pushpin dots */
+#map[data-zoom="mid"] .print { width: 30px; height: 25px; border-radius: 6px; }
+#map[data-zoom="mid"] .badge-count,
+#map[data-zoom="far"] .badge-count { display: none; }
+#map[data-zoom="far"] .print {
+  width: 13px; height: 13px; border-radius: 50%;
+  box-shadow: 0 0 0 2px #fffdf7, 0 1px 3px rgba(0,0,0,.4);
+}
+#map[data-zoom="far"] .print img { opacity: 0; }
+#map[data-zoom="far"] .leaflet-marker-icon:hover .print { scale: 1.4; }
+/* itinerary line: dotted ink route joining a trip's stops. Boldest at world
+   zoom where pins fold to dots and the line carries the trip's shape; recedes
+   at street zoom so the photo prints stay the heroes. CSS opacity multiplies
+   the stroke-opacity Leaflet sets inline, so these are fractions of 0.8. */
+.route-line { transition: opacity .18s ease; }
+#map[data-zoom="mid"] .route-line { opacity: .75; }
+#map[data-zoom="near"] .route-line { opacity: .55; }
+
+/* focus: tapping a trip row spotlights it — everyone else's ink and pins
+   fade back into the paper until the map (or the row) is tapped again */
+.leaflet-marker-icon { transition: opacity .18s ease; }
+.leaflet-marker-icon.dimmed { opacity: .25; }
+/* [data-zoom] keeps this above the zoom-tier rules in specificity */
+#map[data-zoom] .route-line.dimmed { opacity: .12; }
+.trip-row.focused-trip { background: var(--paper-2); box-shadow: inset 3px 0 0 var(--c, #1d6fb8); }
+
+.manual-pin {
+  width: 22px; height: 22px; border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255,255,255,.35), transparent 55%),
+    var(--c, #1d6fb8);
+  border: 2px solid var(--paper);
+  box-shadow: 0 1px 4px rgba(0,0,0,.4);
+}
+.manual-pin::after {
+  content: ""; position: absolute; inset: 6px;
+  border-radius: 50%; background: var(--paper);
+}
+.leaflet-div-icon { background: none; border: none; }
+
+/* Leaflet chrome on paper */
+.leaflet-bar a {
+  background: var(--paper); color: var(--ink);
+  border-bottom: 1px solid var(--line);
+}
+.leaflet-bar a:hover { background: var(--paper-2); }
+.leaflet-control-attribution {
+  background: rgba(246, 241, 227, .85); color: var(--muted); font-size: 10px;
+}
+.leaflet-control-attribution a { color: var(--muted); }
+
+/* ---------- luggage-tag banner ---------- */
+
+#banner {
+  position: fixed; top: max(10px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  z-index: 1500;
+  display: flex; align-items: center; gap: 10px;
+  max-width: min(680px, calc(100vw - 20px));
+  padding: 8px 12px 8px 14px;
+  background: var(--c, #1d6fb8); color: #fff;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.tag-hole {
+  flex: none; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--paper);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.35), 0 0 0 2.5px rgba(255,255,255,.55);
+}
+.tag-text { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+#banner-name {
+  font-family: var(--stamp); font-size: 20px; letter-spacing: 1.5px;
+  text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#banner-day { font-size: 12px; opacity: .85; white-space: nowrap; }
+.tag-actions { display: flex; gap: 6px; margin-left: auto; }
+.tag-actions button {
+  border: 1px solid rgba(255,255,255,.55); border-radius: 7px;
+  background: rgba(255,255,255,.14); color: #fff;
+  padding: 5px 10px; font-size: 13px; min-height: 32px;
+  white-space: nowrap;
+}
+@media (max-width: 480px) {
+  #banner { gap: 7px; padding: 6px 8px 6px 10px; }
+  #banner-name { font-size: 17px; letter-spacing: 1px; }
+  .tag-actions { gap: 4px; }
+  .tag-actions button { padding: 4px 7px; font-size: 12px; }
+}
+.tag-actions button:active { background: rgba(255,255,255,.3); }
+
+#place-hint {
+  position: fixed; top: calc(max(10px, env(safe-area-inset-top)) + 54px); left: 50%; transform: translateX(-50%);
+  z-index: 1500; background: var(--ink); color: var(--paper);
+  padding: 8px 12px; border-radius: 8px; font-size: 14px;
+  display: flex; gap: 10px; align-items: center; box-shadow: var(--shadow);
+}
+#place-hint button {
+  background: none; border: 1px solid var(--muted); color: var(--paper);
+  border-radius: 6px; padding: 3px 8px; font-size: 13px;
+}
+body.placing #map { cursor: crosshair; }
+
+#fabs {
+  position: fixed; right: 12px; bottom: calc(108px + env(safe-area-inset-bottom)); z-index: 1500;
+  display: flex; flex-direction: column; gap: 10px; align-items: center;
+}
+#fabs button {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--navy); color: var(--paper);
+  border: none; font-size: 22px; box-shadow: var(--shadow);
+}
+#fab-gps { background: var(--paper); font-size: 24px; }
+#fab-pin span { font-size: 14px; vertical-align: 6px; margin-left: -3px; }
+body.placing #fab-pin { background: var(--red); }
+
+/* ---------- trips sheet ---------- */
+
+#sheet {
+  position: fixed; left: 10px; bottom: max(10px, env(safe-area-inset-bottom)); z-index: 1600;
+  width: min(340px, calc(100vw - 20px));
+}
+#sheet-pill {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--paper); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 9px 16px; box-shadow: var(--shadow);
+  font-family: var(--stamp); font-size: 16px; letter-spacing: 1.5px; text-transform: uppercase;
+}
+#pill-dots { display: flex; gap: 3px; }
+#pill-dots i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+#sheet-body {
+  margin-top: 8px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--shadow);
+  max-height: min(58vh, 480px); overflow-y: auto;
+  padding: 6px 0;
+}
+#sheet.collapsed #sheet-body { display: none; }
+
+.trip-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; cursor: pointer;
+}
+.trip-row + .trip-row { border-top: 1px dotted var(--line); } /* booklet perforation */
+.trip-row:hover { background: var(--paper-2); }
+.trip-cover {
+  flex: none; width: 44px; height: 44px; border-radius: 9px;
+  overflow: hidden; box-shadow: 0 0 0 2px var(--c, #1d6fb8), 0 1px 4px rgba(38,34,28,.25);
+  background: var(--paper-2);
+}
+.trip-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.trip-cover.no-cover { background: var(--c, #1d6fb8); }
+.trip-info { min-width: 0; flex: 1; }
+.trip-name {
+  font-family: var(--stamp); font-size: 17px; letter-spacing: 1px; text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.trip-name .live { color: #fff; font-size: 11px; letter-spacing: 1px; border-radius: 4px; padding: 1px 5px; vertical-align: 2px; }
+.trip-sub { font-size: 12px; color: var(--muted); line-height: 1.9; }
+.trip-eye {
+  flex: none; background: none; border: none; font-size: 15px;
+  width: 32px; height: 32px; padding: 0; border-radius: 50%;
+  opacity: .75;
+}
+.trip-eye:hover { background: var(--line); opacity: 1; }
+.trip-row.hidden-trip { opacity: .45; }
+.empty-note { padding: 14px; font-size: 14px; color: var(--muted); }
+.sub-link {
+  display: inline-block;
+  background: none; border: 1px solid var(--line); border-radius: 999px;
+  padding: 0 8px; font-size: 11.5px; line-height: 18px;
+  color: var(--muted); text-decoration: none; cursor: pointer;
+}
+.sub-link:hover { border-color: var(--muted); color: var(--ink); }
+.trip-edit {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 0 14px 10px; padding: 10px;
+  background: var(--paper-2); border: 1px solid var(--line); border-radius: 10px;
+}
+.trip-edit .swatch-row { display: flex; gap: 7px; flex-wrap: wrap; }
+.trip-edit .swatch-row button { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; padding: 0; }
+.trip-edit .swatch-row button.sel { border-color: var(--ink); }
+.trip-edit textarea { resize: vertical; min-height: 64px; font: inherit; }
+button.danger {
+  background: none; border: 1px solid var(--red); color: var(--red);
+  border-radius: 8px; padding: 10px 14px;
+}
+
+#sheet-forms { border-top: 1px solid var(--line); padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+#sheet-forms form { display: flex; flex-direction: column; gap: 8px; }
+input[type=text], input[type=password], input[type=date], textarea, select {
+  font: inherit; color: var(--ink);
+  background: #fffdf7; border: 1px solid var(--line); border-radius: 8px;
+  padding: 9px 10px; width: 100%;
+}
+#btn-passport {
+  background: var(--paper); border: 3px double var(--navy); border-radius: 8px;
+  padding: 7px 14px; color: var(--navy);
+  font-family: var(--stamp); font-size: 16px; letter-spacing: 2px; text-transform: uppercase;
+}
+button.primary {
+  background: var(--navy); color: var(--paper);
+  border: none; border-radius: 8px; padding: 10px 14px; min-height: 40px;
+}
+button.primary:hover { filter: brightness(1.12); }
+button.primary:active { opacity: .85; }
+input[type=text]:focus, input[type=password]:focus, input[type=date]:focus, textarea:focus, select:focus {
+  outline: none; border-color: var(--navy);
+  box-shadow: 0 0 0 2px rgba(28, 54, 82, .16);
+}
+#btn-cancel-trip, .form-row button:not(.primary):not(.danger) {
+  background: none; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; color: var(--muted);
+}
+.form-row { display: flex; gap: 8px; }
+.form-row .primary { flex: 1; }
+.date-row { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.form-hint { margin: 0; font-size: 12px; color: var(--muted); }
+.date-row input { width: auto; flex: 1; }
+#swatches { display: flex; gap: 7px; flex-wrap: wrap; }
+#swatches button {
+  width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent;
+  padding: 0;
+}
+#swatches button.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--paper) inset; }
+#admin-box summary, #pass-box summary { font-size: 13px; color: var(--muted); cursor: pointer; padding: 4px 0; }
+#admin-box form, #pass-box form { margin-top: 8px; }
+button.linkish {
+  background: none; border: none; color: var(--muted); font-size: 13px;
+  text-decoration: underline; padding: 2px; align-self: flex-start;
+}
+
+/* ---------- popups: postcards ---------- */
+
+.leaflet-popup-content-wrapper {
+  background: var(--paper); color: var(--ink);
+  border-radius: 12px; box-shadow: var(--shadow);
+}
+.leaflet-popup-tip { background: var(--paper); }
+.leaflet-popup-content { margin: 12px 14px; font-family: var(--body); }
+/* Leaflet adds this class when a popup hits its maxHeight; this build's
+   leaflet.css ships no rule for it, so the scrolling is defined here. */
+.leaflet-popup-scrolled {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 4px;
+}
+.pop-title {
+  font-family: var(--stamp); font-size: 19px; letter-spacing: 1px; text-transform: uppercase;
+  margin: 0 0 2px; padding-bottom: 3px;
+  border-bottom: 3px double var(--line);
+}
+.pop-sub { font-size: 12px; color: var(--muted); margin: 4px 0 6px; }
+.pop-note { font-size: 14px; margin: 0 0 8px; white-space: pre-wrap; }
+.pop-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-bottom: 8px; }
+.pop-grid img {
+  width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 3px;
+  cursor: pointer; display: block;
+  background: var(--paper-2);
+  box-shadow: 0 0 0 2.5px #fffdf7, 0 1px 3px rgba(38,34,28,.3); /* photo-print border */
+}
+.pop-more { grid-column: 1 / -1; text-align: center; font-size: 13px; color: var(--muted); background: none; border: 1px dashed var(--line); border-radius: 6px; padding: 6px; }
+.pop-actions { display: flex; gap: 12px; }
+.pop-actions button { background: none; border: none; padding: 2px; font-size: 13px; color: var(--muted); text-decoration: underline; }
+.pop-form { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
+.pop-form textarea { resize: vertical; min-height: 52px; }
+
+/* cover photo picker (pin + trip edit forms) */
+.form-label { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.cover-pick {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px;
+  max-height: 132px; overflow-y: auto;
+}
+.cover-pick img {
+  width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 5px;
+  cursor: pointer; display: block; background: var(--paper-2);
+}
+.cover-pick img.sel { outline: 3px solid var(--navy); outline-offset: -3px; }
+
+/* ---------- overlay (passport / gallery / journal) ---------- */
+
+#overlay {
+  position: fixed; inset: 0; z-index: 2500;
+  background: var(--paper-2);
+  overflow-y: auto;
+}
+#overlay-head {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: max(14px, env(safe-area-inset-top)) 16px 12px; background: var(--paper-2);
+  border-bottom: 3px double var(--line);
+}
+#overlay-title {
+  margin: 0; font-family: var(--stamp); font-size: 24px;
+  letter-spacing: 2px; text-transform: uppercase;
+}
+#overlay-close {
+  background: var(--paper); border: 1px solid var(--line); border-radius: 50%;
+  width: 40px; height: 40px; font-size: 22px; line-height: 1;
+}
+#overlay-content { padding: 16px; max-width: 900px; margin: 0 auto; }
+
+/* the passport page */
+.stamp-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 20px; padding: 10px 0;
+}
+.stamp-card {
+  border: 3px double var(--c, #1d6fb8); color: var(--c, #1d6fb8);
+  border-radius: 10px; padding: 14px 10px 11px; text-align: center;
+  transform: rotate(var(--r, 0deg));
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(255,255,255,.5), transparent 60%),
+    var(--paper);
+  opacity: .93; /* uneven ink take */
+  box-shadow: 0 1px 3px rgba(38,34,28,.12);
+}
+.stamp-country {
+  font-family: var(--stamp); font-size: 20px; letter-spacing: 2px; text-transform: uppercase;
+}
+.stamp-trip { font-size: 12px; margin-top: 3px; opacity: .8; }
+.stamp-admit {
+  margin-top: 7px; padding-top: 5px;
+  border-top: 1px solid currentColor;
+  font-family: var(--stamp); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  opacity: .85;
+}
+
+.gallery-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 6px;
+}
+.gallery-grid img {
+  width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px;
+  cursor: pointer; background: var(--paper);
+}
+.gallery-grid img.sel {
+  outline: 3px solid var(--red); outline-offset: -3px;
+  filter: brightness(.85);
+}
+.day-head {
+  font-family: var(--stamp); font-size: 15px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--muted); margin: 18px 0 8px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.day-head:first-child { margin-top: 0; }
+.attach-bar {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 10px 0 12px; margin-bottom: 4px;
+  background: var(--paper-2); border-bottom: 1px solid var(--line);
+}
+.attach-hint { font-size: 13px; color: var(--muted); flex: 1; min-width: 140px; }
+.attach-bar select { width: auto; flex: none; max-width: 55%; }
+.journal-read { max-width: 640px; }
+.journal-text { font-family: var(--prose); font-size: 17px; line-height: 1.65; white-space: pre-wrap; }
+
+/* ---------- trip story: the map follows the scroll ---------- */
+
+/* Bottom sheet on phones, left column on desktop — the atlas must stay
+   visible, since the whole point is watching it fly between chapters. */
+#story {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 1700;
+  height: min(52vh, 520px);
+  display: flex; flex-direction: column;
+  background: var(--paper);
+  border-top: 3px double var(--line);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 24px rgba(38, 34, 28, .25);
+}
+@media (min-width: 720px) {
+  #story {
+    top: 0; right: auto; width: 380px; height: auto;
+    border-radius: 0; border-top: none;
+    border-right: 3px double var(--line);
+    box-shadow: 4px 0 24px rgba(38, 34, 28, .2);
+  }
+}
+#story-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 14px 8px;
+  border-bottom: 3px double var(--line);
+}
+#story-title {
+  margin: 0; font-family: var(--stamp); font-size: 21px; letter-spacing: 1.5px;
+  text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#story-close {
+  flex: none; width: 34px; height: 34px; border-radius: 50%;
+  background: var(--paper-2); border: 1px solid var(--line);
+  font-size: 19px; line-height: 1;
+}
+#story-scroll {
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 0 14px;
+}
+/* runway below the last chapter so it can reach the active band */
+#story-scroll::after { content: ""; display: block; height: 60%; }
+
+.story-sec {
+  padding: 13px 2px 15px;
+  border-bottom: 1px dotted var(--line); /* booklet perforation */
+  border-left: 3px solid transparent;
+  transition: border-color .18s ease, padding-left .18s ease, background .18s ease;
+}
+.story-sec.active {
+  border-left-color: var(--gold);
+  padding-left: 10px;
+  background: linear-gradient(90deg, rgba(198, 164, 94, .09), transparent 70%);
+}
+.story-day {
+  margin: 0 0 1px; font-family: var(--stamp); font-size: 11px;
+  letter-spacing: 2px; text-transform: uppercase; color: var(--muted);
+}
+.story-place {
+  margin: 0 0 4px; font-family: var(--stamp); font-size: 18px;
+  letter-spacing: 1px; text-transform: uppercase;
+}
+.story-note {
+  margin: 0 0 8px; font-family: var(--prose);
+  font-size: 14.5px; line-height: 1.5; white-space: pre-wrap;
+}
+.story-actions { display: flex; gap: 12px; margin-top: 8px; }
+.story-actions button {
+  background: none; border: none; padding: 2px;
+  font-size: 13px; color: var(--muted); text-decoration: underline;
+}
+.story-sec .pop-form { margin-top: 4px; }
+.story-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.story-grid img {
+  width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 3px;
+  cursor: pointer; display: block; background: var(--paper-2);
+  box-shadow: 0 0 0 2px #fffdf7, 0 1px 2px rgba(38, 34, 28, .25);
+}
+
+/* the sheet and fabs would collide with (or hide behind) the panel */
+body.storying #sheet, body.storying #fabs { display: none; }
+
+/* the active chapter's pin lifts off the paper; !important because Leaflet
+   manages each marker's z-index inline */
+.leaflet-marker-icon.story-active { z-index: 10000 !important; }
+.leaflet-marker-icon.story-active .print {
+  scale: 1.2;
+  box-shadow: 0 0 0 2.5px #fffdf7, 0 0 0 4.5px var(--c, #1d6fb8), 0 3px 10px rgba(0, 0, 0, .4);
+}
+.leaflet-marker-icon.story-active .manual-pin { scale: 1.25; }
+
+/* ---------- lightbox ---------- */
+
+#lightbox {
+  position: fixed; inset: 0; z-index: 3000;
+  background: rgba(15, 13, 10, .96);
+  display: flex; align-items: center; justify-content: center;
+}
+#lightbox[hidden] { display: none; }
+#lb-img { max-width: 100vw; max-height: 100vh; object-fit: contain; }
+#lb-close, #lb-prev, #lb-next {
+  position: absolute; z-index: 1;
+  background: rgba(255,255,255,.12); color: #fff; border: none;
+  width: 44px; height: 44px; border-radius: 50%; font-size: 24px; line-height: 1;
+}
+#lb-close { top: max(10px, env(safe-area-inset-top)); right: 12px; }
+#lb-prev { left: 8px; top: 50%; transform: translateY(-50%); }
+#lb-next { right: 8px; top: 50%; transform: translateY(-50%); }
+#lb-meta {
+  position: absolute; bottom: max(12px, env(safe-area-inset-bottom)); left: 0; right: 0;
+  text-align: center; color: rgba(255,255,255,.75); font-size: 13px;
+}
+#lb-meta a { color: #fff; }
+
+/* ---------- sign-in: the passport cover ---------- */
+
+#login {
+  position: fixed; inset: 0; z-index: 4000;
+  background: radial-gradient(120% 100% at 50% 0%, var(--navy) 0%, var(--navy-2) 70%);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+#login[hidden] { display: none; }
+#login-form {
+  width: min(330px, 100%);
+  background: linear-gradient(160deg, rgba(255,255,255,.045), rgba(0,0,0,.12)), var(--navy);
+  border: 1px solid rgba(198,164,94,.75); border-radius: 12px;
+  outline: 1px solid rgba(198,164,94,.35); outline-offset: -7px; /* double gold frame */
+  box-shadow: 0 12px 40px rgba(0,0,0,.45);
+  padding: 30px 26px 26px; display: flex; flex-direction: column; gap: 10px;
+}
+.cover-eyebrow {
+  margin: 0; text-align: center;
+  color: var(--gold); font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+}
+.cover-crest {
+  align-self: center; margin: 6px 0 2px;
+  width: 54px; height: 54px; border-radius: 50%;
+  border: 2px solid var(--gold); color: var(--gold);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+}
+.cover-title {
+  margin: 2px 0 4px; text-align: center;
+  font-family: var(--stamp); font-weight: 400;
+  font-size: 40px; line-height: .95; letter-spacing: 4px; text-transform: uppercase;
+  color: var(--gold);
+  text-shadow: 0 1px 0 rgba(0,0,0,.4);
+}
+.cover-rule {
+  align-self: center; width: 72px; margin-bottom: 10px;
+  border-top: 3px double var(--gold); opacity: .7;
+}
+#login-form input {
+  background: var(--paper); border-color: transparent;
+}
+button.primary.gold {
+  background: var(--gold); color: var(--navy-2);
+  font-family: var(--stamp); font-size: 17px; letter-spacing: 2px; text-transform: uppercase;
+}
+#login-error { color: #e8a89e; font-size: 13px; margin: 0; text-align: center; }
+
+/* ---------- toast ---------- */
+
+#toast {
+  position: fixed; bottom: calc(80px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+  z-index: 3500;
+  background: var(--ink); color: var(--paper);
+  border-left: 3px solid var(--gold);
+  padding: 10px 16px; border-radius: 10px; font-size: 14px;
+  box-shadow: var(--shadow); max-width: calc(100vw - 30px); text-align: center;
+}
+
+/* ---------- desktop ---------- */
+
+@media (min-width: 720px) {
+  #sheet { width: 320px; }
+  #banner { left: 50%; }
+}
+
+/* ---------- motion (two moments: stamps thunk in, pins pop) ---------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  #sheet-body { animation: rise .18s ease-out; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+  #toast { animation: toastrise .18s ease-out; }
+  @keyframes toastrise { from { opacity: 0; transform: translate(-50%, 8px); } to { transform: translate(-50%, 0); } }
+  .stamp-card { animation: stamp-in .28s cubic-bezier(.2, 1.4, .4, 1) backwards; animation-delay: calc(var(--i, 0) * 55ms); }
+  @keyframes stamp-in {
+    from { opacity: 0; transform: rotate(var(--r, 0deg)) scale(1.35); }
+    to { opacity: .93; transform: rotate(var(--r, 0deg)) scale(1); }
+  }
+  .leaflet-marker-icon { animation: pin-pop .22s ease-out backwards; }
+  @keyframes pin-pop { from { opacity: 0; scale: .5; } }
+  .trip-name .live { animation: live-pulse 2.4s ease-in-out infinite; }
+  @keyframes live-pulse { 50% { opacity: .55; } }
+  #login-form { animation: cover-up .35s ease-out; }
+  @keyframes cover-up { from { opacity: 0; transform: translateY(14px); } }
+}
+
+:focus-visible { outline: 2px solid var(--navy); outline-offset: 2px; }
+#login :focus-visible, .tag-actions :focus-visible { outline-color: var(--gold); }

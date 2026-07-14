@@ -1,0 +1,7 @@
+holidaymap-test
+*.db
+*.db-*
+.git
+.github
+README.md
+app/

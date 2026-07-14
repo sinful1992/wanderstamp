@@ -1,0 +1,19 @@
+[package]
+name = "holiday-map-app"
+version = "1.0.0"
+description = "Holiday Map — family travel log"
+authors = ["Giedrius"]
+edition = "2021"
+rust-version = "1.77.2"
+
+# The library is what the Android (and desktop) entry points call into.
+[lib]
+name = "holiday_map_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"

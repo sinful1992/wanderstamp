@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Wanderstamp</title>
+<meta name="theme-color" content="#1c3652">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📍</text></svg>">
+<link rel="stylesheet" href="/leaflet/leaflet.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- Active holiday: luggage-tag strap -->
+<header id="banner" hidden>
+  <span class="tag-hole"></span>
+  <div class="tag-text">
+    <span id="banner-name"></span>
+    <span id="banner-day"></span>
+  </div>
+  <div class="tag-actions">
+    <button id="btn-sync" title="Sync photos from Immich">Sync</button>
+    <button id="btn-end" title="End this holiday">End</button>
+  </div>
+</header>
+
+<div id="fabs">
+  <button id="fab-gps" title="Pin my current location" aria-label="Pin my current location">🧭</button>
+  <button id="fab-pin" title="Add a pin on the map" aria-label="Add a pin on the map">📍<span>+</span></button>
+</div>
+
+<div id="place-hint" hidden>Tap the map to place your pin <button id="btn-cancel-place">Cancel</button></div>
+
+<!-- Trips sheet -->
+<div id="sheet" class="collapsed">
+  <button id="sheet-pill">
+    <span id="pill-dots"></span>
+    <span id="pill-label">Trips</span>
+  </button>
+  <div id="sheet-body">
+    <div id="trip-list"></div>
+    <div id="sheet-forms">
+      <button id="btn-new-trip" class="primary">Start a holiday</button>
+      <button id="btn-passport">Passport</button>
+      <form id="new-trip-form" hidden>
+        <input id="trip-name" type="text" placeholder="Where are you going?" maxlength="60" required>
+        <div id="swatches"></div>
+        <label class="date-row">First day <input id="trip-start" type="date"></label>
+        <label class="date-row">Last day <input id="trip-end" type="date"></label>
+        <p class="form-hint">Leave "last day" empty if the holiday is starting now — it stays live until you end it.</p>
+        <div class="form-row">
+          <button type="submit" class="primary">Start</button>
+          <button type="button" id="btn-cancel-trip">Cancel</button>
+        </div>
+      </form>
+      <details id="admin-box" hidden>
+        <summary>Add a family member</summary>
+        <form id="new-user-form">
+          <input id="user-name" type="text" placeholder="Username" autocomplete="off" required>
+          <input id="user-pass" type="password" placeholder="Password (8+ characters)" minlength="8" required>
+          <button type="submit" class="primary">Create account</button>
+        </form>
+      </details>
+      <details id="pass-box">
+        <summary>Change my password</summary>
+        <form id="password-form">
+          <input id="pass-current" type="password" placeholder="Current password" autocomplete="current-password" required>
+          <input id="pass-new" type="password" placeholder="New password (8+ characters)" autocomplete="new-password" minlength="8" required>
+          <button type="submit" class="primary">Change password</button>
+        </form>
+      </details>
+      <button id="btn-logout" class="linkish">Sign out</button>
+    </div>
+  </div>
+</div>
+
+<!-- Full-screen overlay (passport, unplaced photos, journal) -->
+<div id="overlay" hidden>
+  <div id="overlay-head">
+    <h2 id="overlay-title"></h2>
+    <button id="overlay-close" aria-label="Close">×</button>
+  </div>
+  <div id="overlay-content"></div>
+</div>
+
+<!-- Trip story: bottom sheet (phone) / side panel (desktop); the map follows the scroll -->
+<aside id="story" hidden>
+  <div id="story-head">
+    <h2 id="story-title"></h2>
+    <button id="story-close" aria-label="Close the story">×</button>
+  </div>
+  <div id="story-scroll"></div>
+</aside>
+
+<!-- Lightbox -->
+<div id="lightbox" hidden>
+  <button id="lb-close" aria-label="Close">×</button>
+  <button id="lb-prev" aria-label="Previous">‹</button>
+  <img id="lb-img" alt="">
+  <button id="lb-next" aria-label="Next">›</button>
+  <div id="lb-meta"><span id="lb-count"></span> · <span id="lb-date"></span> · <a id="lb-orig" target="_blank" rel="noopener">Open original</a></div>
+</div>
+
+<!-- Sign-in: passport cover -->
+<div id="login" hidden>
+  <form id="login-form">
+    <p class="cover-eyebrow">Family travel record</p>
+    <div class="cover-crest" aria-hidden="true">✈</div>
+    <h1 class="cover-title">Wander<br>stamp</h1>
+    <div class="cover-rule" aria-hidden="true"></div>
+    <input id="login-user" type="text" placeholder="Username" autocomplete="username" required>
+    <input id="login-pass" type="password" placeholder="Password" autocomplete="current-password" required>
+    <button type="submit" class="primary gold">Sign in</button>
+    <p id="login-error" hidden></p>
+  </form>
+</div>
+
+<div id="toast" hidden></div>
+
+<script src="/leaflet/leaflet.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

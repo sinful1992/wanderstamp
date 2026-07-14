@@ -1,0 +1,25 @@
+# Wanderstamp — minimal self-hosted setup.
+#
+#   mkdir data && sudo chown 65534:65534 data   # image runs as user "nobody"
+#   docker compose up -d
+#
+# First boot creates the admin account from ADMIN_USERNAME/ADMIN_PASSWORD;
+# after that the two variables are ignored (manage users in the app).
+
+services:
+  wanderstamp:
+    image: ghcr.io/sinful1992/wanderstamp:latest
+    container_name: wanderstamp
+    ports:
+      - "8095:8095"
+    environment:
+      DB_PATH: /data/wanderstamp.db
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: change-me
+      COOKIE_SECURE: "false" # set "true" once you serve it over HTTPS
+      # Optional Immich integration — photos auto-cluster into pins:
+      # IMMICH_URL: http://immich-server:2283
+      # IMMICH_API_KEY: your-immich-api-key
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
