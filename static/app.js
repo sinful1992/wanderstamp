@@ -55,12 +55,17 @@ async function api(method, path, body) {
 const map = L.map("map", { zoomControl: false, worldCopyJump: true });
 L.control.zoom({ position: "bottomright" }).addTo(map);
 // CARTO Voyager: warm muted colours + quiet labels, much closer to an atlas
-// plate than stock OSM. OSM tiles remain the fallback if CARTO disappears.
-L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+// plate than stock OSM. Dark scheme swaps to CARTO's night plate (Dark
+// Matter), matching the CSS token flip in style.css.
+const darkScheme = matchMedia("(prefers-color-scheme: dark)");
+const tileURL = () =>
+  `https://{s}.basemaps.cartocdn.com/${darkScheme.matches ? "dark_all" : "rastertiles/voyager"}/{z}/{x}/{y}{r}.png`;
+const tiles = L.tileLayer(tileURL(), {
   maxZoom: 20,
   subdomains: "abcd",
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
 }).addTo(map);
+darkScheme.addEventListener("change", () => tiles.setUrl(tileURL()));
 map.setView([35, 10], 3);
 
 // Pins wear three outfits by zoom: enamel dots at country/world zoom (so a
@@ -267,7 +272,8 @@ function openStory(h, pinId) {
     sec.dataset.lat = pin.lat;
     sec.dataset.lng = pin.lng;
     sec.dataset.pinId = pin.id;
-    sec.appendChild(el("p", "story-day", fmtDate(pin.visited_at)));
+    const dayN = Math.max(1, Math.floor((new Date(pin.visited_at) - new Date(h.start_at)) / 86400000) + 1);
+    sec.appendChild(el("p", "story-day", `Day ${dayN} · ${fmtDate(pin.visited_at)}`));
     sec.appendChild(el("h3", "story-place", pin.title || (pin.kind === "photo" ? "Photo stop" : "Pin")));
     if (pin.note) sec.appendChild(el("p", "story-note", pin.note));
     if (pin.photo_count > 0) {
@@ -705,6 +711,27 @@ $("overlay-close").onclick = () => { $("overlay").hidden = true; };
 $("btn-passport").onclick = async () => {
   try {
     const stamps = await api("GET", "/api/stamps");
+    const box = el("div");
+
+    // the data page: a life of travel in four numbers
+    const stats = el("div", "passport-stats");
+    const days = state.holidays.reduce((sum, h) => {
+      const end = h.end_at ? new Date(h.end_at) : new Date();
+      return sum + Math.max(1, Math.round((end - new Date(h.start_at)) / 86400000) + 1);
+    }, 0);
+    for (const [n, label] of [
+      [new Set(stamps.map((s) => s.country)).size, "countries"],
+      [state.holidays.length, "trips"],
+      [days, "days away"],
+      [state.holidays.reduce((s, h) => s + h.pin_count, 0), "places"],
+    ]) {
+      const t = el("div", "stat");
+      t.appendChild(el("div", "stat-n", String(n)));
+      t.appendChild(el("div", "stat-label", label));
+      stats.appendChild(t);
+    }
+    box.appendChild(stats);
+
     const wrap = el("div", "stamp-grid");
     if (!stamps.length) {
       wrap.appendChild(el("p", "empty-note", "No stamps yet — countries appear here once trips have photos."));
@@ -717,9 +744,17 @@ $("btn-passport").onclick = async () => {
       card.appendChild(el("div", "stamp-country", s.country));
       card.appendChild(el("div", "stamp-trip", s.name));
       card.appendChild(el("div", "stamp-admit", "Admitted · " + fmtDate(s.start_at)));
+      card.title = "Open this trip's story";
+      card.onclick = () => {
+        const h = holidayById(s.holiday_id);
+        if (!h) return;
+        $("overlay").hidden = true;
+        openStory(h);
+      };
       wrap.appendChild(card);
     });
-    openOverlay("Passport", wrap);
+    box.appendChild(wrap);
+    openOverlay("Passport", box);
   } catch (err) {
     toast(err.message);
   }
@@ -1016,6 +1051,7 @@ $("login-form").onsubmit = async (e) => {
     return; // login overlay already shown
   }
   $("admin-box").hidden = !state.me.is_admin;
+  $("app-version").textContent = state.me.version === "dev" ? "dev build" : state.me.version;
   try {
     await loadData(true);
   } catch (ex) {

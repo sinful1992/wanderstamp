@@ -34,6 +34,10 @@ type app struct {
 	lastSync     map[int64]time.Time
 }
 
+// version is stamped by release builds via -ldflags "-X main.version=v1.x.x";
+// source builds show "dev".
+var version = "dev"
+
 func env(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -93,7 +97,15 @@ func main() {
 
 	mux.HandleFunc("GET /api/photo/{asset}/{kind}", a.auth(a.handlePhoto))
 
+	mux.HandleFunc("GET /api/export", a.auth(a.handleExport))
+
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		// An honest check: prove the database answers, not just the process.
+		var one int
+		if err := a.db.QueryRow(`SELECT 1`).Scan(&one); err != nil {
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})

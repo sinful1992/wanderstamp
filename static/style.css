@@ -276,7 +276,7 @@ button.danger {
 #sheet-forms form { display: flex; flex-direction: column; gap: 8px; }
 input[type=text], input[type=password], input[type=date], textarea, select {
   font: inherit; color: var(--ink);
-  background: #fffdf7; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--field, #fffdf7); border: 1px solid var(--line); border-radius: 8px;
   padding: 9px 10px; width: 100%;
 }
 #btn-passport {
@@ -310,9 +310,10 @@ input[type=text]:focus, input[type=password]:focus, input[type=date]:focus, text
 #swatches button.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--paper) inset; }
 #admin-box summary, #pass-box summary { font-size: 13px; color: var(--muted); cursor: pointer; padding: 4px 0; }
 #admin-box form, #pass-box form { margin-top: 8px; }
-button.linkish {
+button.linkish, a.linkish {
   background: none; border: none; color: var(--muted); font-size: 13px;
   text-decoration: underline; padding: 2px; align-self: flex-start;
+  cursor: pointer;
 }
 
 /* ---------- popups: postcards ---------- */
@@ -387,7 +388,23 @@ button.linkish {
 }
 #overlay-content { padding: 16px; max-width: 900px; margin: 0 auto; }
 
-/* the passport page */
+/* the passport page: the data strip, then the stamps */
+.passport-stats {
+  display: flex; gap: 6px; justify-content: space-between;
+  padding: 4px 0 14px; margin-bottom: 6px;
+  border-bottom: 3px double var(--line);
+  text-align: center;
+}
+.passport-stats .stat { flex: 1; }
+.passport-stats .stat-n {
+  font-family: var(--stamp); font-size: 32px; line-height: 1;
+  color: var(--navy);
+}
+.passport-stats .stat-label {
+  margin-top: 3px; font-size: 11px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--muted);
+}
+
 .stamp-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 20px; padding: 10px 0;
@@ -401,6 +418,7 @@ button.linkish {
     var(--paper);
   opacity: .93; /* uneven ink take */
   box-shadow: 0 1px 3px rgba(38,34,28,.12);
+  cursor: pointer; /* opens the trip's story */
 }
 .stamp-country {
   font-family: var(--stamp); font-size: 20px; letter-spacing: 2px; text-transform: uppercase;
@@ -643,3 +661,26 @@ button.primary.gold {
 
 :focus-visible { outline: 2px solid var(--navy); outline-offset: 2px; }
 #login :focus-visible, .tag-actions :focus-visible { outline-color: var(--gold); }
+
+/* ---------- night chart (dark scheme) ----------
+   The atlas after dark: navy paper, cream ink, the same gold and visa-red.
+   app.js swaps the tiles to CARTO Dark Matter to match. */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #222835;
+    --paper-2: #1a1f2a;
+    --ink: #e6dfcf;
+    --navy: #31517a;
+    --navy-2: #10151d;
+    --red: #d0685c;
+    --muted: #98917f;
+    --line: #3a4254;
+    --field: #2a3140;
+    --shadow: 0 2px 14px rgba(0, 0, 0, .55);
+  }
+  .leaflet-tile-pane { filter: none; } /* the night plate needs no sepia */
+  #map::after { box-shadow: inset 0 0 140px rgba(0, 0, 0, .55); }
+  .leaflet-control-attribution { background: rgba(26, 31, 42, .85); }
+  .passport-stats .stat-n { color: var(--gold); }
+}

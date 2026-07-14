@@ -603,3 +603,100 @@ func (a *app) handlePinPhotos(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// handleExport streams the whole travel log as one JSON document — data
+// portability and an extra backup path. Photos are Immich asset references,
+// not files; the image data itself lives (and is backed up) in Immich.
+func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
+	type photoExp struct {
+		AssetID string `json:"asset_id"`
+		TakenAt string `json:"taken_at"`
+		Lat     float64 `json:"lat"`
+		Lng     float64 `json:"lng"`
+	}
+	type pinExp struct {
+		ID         int64      `json:"id"`
+		Kind       string     `json:"kind"`
+		Lat        float64    `json:"lat"`
+		Lng        float64    `json:"lng"`
+		Title      string     `json:"title"`
+		Note       string     `json:"note"`
+		Country    string     `json:"country"`
+		CoverAsset string     `json:"cover_asset"`
+		CreatedAt  string     `json:"created_at"`
+		Photos     []photoExp `json:"photos"`
+	}
+	type holidayExp struct {
+		ID         int64     `json:"id"`
+		Name       string    `json:"name"`
+		Color      string    `json:"color"`
+		StartAt    string    `json:"start_at"`
+		EndAt      *string   `json:"end_at"`
+		Journal    string    `json:"journal"`
+		CoverAsset string    `json:"cover_asset"`
+		Pins       []*pinExp `json:"pins"`
+	}
+
+	rows, err := a.db.Query(`SELECT id, name, color, start_at, end_at, journal, cover_asset FROM holidays ORDER BY start_at`)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer rows.Close()
+	holidays := []*holidayExp{}
+	byHoliday := map[int64]*holidayExp{}
+	for rows.Next() {
+		h := &holidayExp{Pins: []*pinExp{}}
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset); err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		holidays = append(holidays, h)
+		byHoliday[h.ID] = h
+	}
+
+	pinRows, err := a.db.Query(`SELECT id, holiday_id, kind, lat, lng, title, note, country, cover_asset, created_at FROM pins ORDER BY created_at, id`)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer pinRows.Close()
+	byPin := map[int64]*pinExp{}
+	for pinRows.Next() {
+		p := &pinExp{Photos: []photoExp{}}
+		var hid int64
+		if err := pinRows.Scan(&p.ID, &hid, &p.Kind, &p.Lat, &p.Lng, &p.Title, &p.Note, &p.Country, &p.CoverAsset, &p.CreatedAt); err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		if h := byHoliday[hid]; h != nil {
+			h.Pins = append(h.Pins, p)
+		}
+		byPin[p.ID] = p
+	}
+
+	phRows, err := a.db.Query(`SELECT pin_id, asset_id, taken_at, lat, lng FROM pin_photos ORDER BY taken_at`)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer phRows.Close()
+	for phRows.Next() {
+		var pid int64
+		var ph photoExp
+		if err := phRows.Scan(&pid, &ph.AssetID, &ph.TakenAt, &ph.Lat, &ph.Lng); err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		if p := byPin[pid]; p != nil {
+			p.Photos = append(p.Photos, ph)
+		}
+	}
+
+	w.Header().Set("Content-Disposition", `attachment; filename="travel-log-export.json"`)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"exported_at": time.Now().UTC().Format(time.RFC3339),
+		"version":     version,
+		"holidays":    holidays,
+	})
+}

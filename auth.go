@@ -176,7 +176,12 @@ func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) handleMe(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, r.Context().Value(userKey).(sessionUser))
+	u := r.Context().Value(userKey).(sessionUser)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"username": u.Username,
+		"is_admin": u.IsAdmin,
+		"version":  version,
+	})
 }
 
 func (a *app) handleCreateUser(w http.ResponseWriter, r *http.Request) {
