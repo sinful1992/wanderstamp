@@ -19,6 +19,13 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
+// Share mode: /share/<token> serves this same app read-only for one trip.
+const SHARE = location.pathname.startsWith("/share/") ? location.pathname.split("/")[2] : null;
+
+function photoURL(asset, kind) {
+  return SHARE ? `/api/share/${SHARE}/photo/${asset}/${kind}` : `/api/photo/${asset}/${kind}`;
+}
+
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -135,7 +142,7 @@ function pinIcon(pin, color) {
     const print = el("span", "print");
     if (pin.cover_asset) {
       const img = el("img");
-      img.src = `/api/photo/${pin.cover_asset}/thumb`;
+      img.src = photoURL(pin.cover_asset, "thumb");
       img.alt = "";
       print.appendChild(img);
     }
@@ -242,11 +249,13 @@ function activateSection(sec) {
 function loadStoryPhotos(sec) {
   const grid = sec.querySelector(".story-grid");
   if (!grid || grid.childElementCount) return;
-  api("GET", `/api/pins/${grid.dataset.pin}/photos`).then((photos) => {
+  const path = SHARE ? `/api/share/${SHARE}/pins/${grid.dataset.pin}/photos`
+                     : `/api/pins/${grid.dataset.pin}/photos`;
+  api("GET", path).then((photos) => {
     photos.forEach((ph, i) => {
       const img = el("img");
       img.loading = "lazy";
-      img.src = `/api/photo/${ph.asset_id}/thumb`;
+      img.src = photoURL(ph.asset_id, "thumb");
       img.alt = "";
       img.onclick = (e) => { e.stopPropagation(); openLightbox(photos, i); };
       grid.appendChild(img);
@@ -281,6 +290,7 @@ function openStory(h, pinId) {
       grid.dataset.pin = pin.id;
       sec.appendChild(grid);
     }
+    if (SHARE) { sec.onclick = () => activateSection(sec); scroll.appendChild(sec); secs.push(sec); continue; }
     const actions = el("div", "story-actions");
     const ed = el("button", null, "Edit");
     ed.onclick = (e) => {
@@ -303,6 +313,12 @@ function openStory(h, pinId) {
     sec.onclick = () => activateSection(sec); // tapping a chapter flies there too
     scroll.appendChild(sec);
     secs.push(sec);
+  }
+  if (h.journal) {
+    const sec = el("section", "story-sec");
+    sec.appendChild(el("h3", "story-place", "Journal"));
+    sec.appendChild(el("p", "story-note", h.journal));
+    scroll.appendChild(sec);
   }
   if (h.unplaced_count > 0) {
     const sec = el("section", "story-sec");
@@ -417,7 +433,7 @@ function coverPick(photosPromise, current, onPick) {
     photos.forEach((ph) => {
       const img = el("img");
       img.loading = "lazy";
-      img.src = `/api/photo/${ph.asset_id}/thumb`;
+      img.src = photoURL(ph.asset_id, "thumb");
       img.alt = "";
       if (ph.asset_id === current) img.classList.add("sel");
       img.onclick = () => {
@@ -569,7 +585,7 @@ function renderSheet() {
     if (h.cover_asset) {
       const img = el("img");
       img.loading = "lazy";
-      img.src = `/api/photo/${h.cover_asset}/thumb`;
+      img.src = photoURL(h.cover_asset, "thumb");
       img.alt = "";
       cover.appendChild(img);
     } else {
@@ -678,7 +694,36 @@ function tripEditForm(h) {
   if (h.photo_count > 0 || h.unplaced_count > 0) {
     wrap.appendChild(coverPick(api("GET", `/api/holidays/${h.id}/timeline`), h.cover_asset, (a) => { cover = a; }));
   }
-  wrap.append(journal, btnRow);
+  const shareRow = el("div", "share-row");
+  const mkShare = el("button", "linkish", h.shared ? "New share link (replaces the old one)" : "Share this trip — view-only link");
+  mkShare.type = "button";
+  mkShare.onclick = async () => {
+    try {
+      const res = await api("POST", `/api/holidays/${h.id}/share`);
+      const url = location.origin + res.url;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast("View-only link copied — anyone with it can see this trip");
+      } catch {
+        window.prompt("Copy the view-only link:", url);
+      }
+      loadData();
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  shareRow.appendChild(mkShare);
+  if (h.shared) {
+    const revoke = el("button", "linkish", "Revoke share link");
+    revoke.type = "button";
+    revoke.onclick = async () => {
+      await api("DELETE", `/api/holidays/${h.id}/share`);
+      toast("Share link revoked");
+      loadData();
+    };
+    shareRow.appendChild(revoke);
+  }
+  wrap.append(journal, shareRow, btnRow);
   wrap.onsubmit = async (e) => {
     e.preventDefault();
     const body = { name: name.value, color, start_at: start.value, journal: journal.value };
@@ -776,7 +821,7 @@ function dayGroupedGallery(photos, onClick) {
     }
     const img = el("img");
     img.loading = "lazy";
-    img.src = `/api/photo/${ph.asset_id}/thumb`;
+    img.src = photoURL(ph.asset_id, "thumb");
     img.alt = "";
     img.dataset.asset = ph.asset_id;
     img.onclick = () => (onClick ? onClick(photos, i, img) : openLightbox(photos, i));
@@ -987,10 +1032,10 @@ function openLightbox(photos, idx) {
 
 function showLightbox() {
   const ph = lb.photos[lb.idx];
-  $("lb-img").src = `/api/photo/${ph.asset_id}/preview`;
+  $("lb-img").src = photoURL(ph.asset_id, "preview");
   $("lb-count").textContent = `${lb.idx + 1} / ${lb.photos.length}`;
   $("lb-date").textContent = fmtDate(ph.taken_at);
-  $("lb-orig").href = `/api/photo/${ph.asset_id}/original`;
+  $("lb-orig").href = photoURL(ph.asset_id, "original");
   $("lb-prev").style.visibility = lb.idx > 0 ? "visible" : "hidden";
   $("lb-next").style.visibility = lb.idx < lb.photos.length - 1 ? "visible" : "hidden";
 }
@@ -1045,6 +1090,21 @@ $("login-form").onsubmit = async (e) => {
 /* ---------- boot ---------- */
 
 (async function boot() {
+  if (SHARE) {
+    document.body.classList.add("shared");
+    try {
+      const d = await api("GET", `/api/share/${SHARE}`);
+      state.holidays = [d.holiday];
+      state.pins = d.pins;
+      renderMarkers();
+      openStory(d.holiday);
+    } catch {
+      openOverlay("Link expired", el("p", "empty-note",
+        "This share link is no longer active — ask the sender for a fresh one."));
+      $("overlay-close").hidden = true;
+    }
+    return;
+  }
   try {
     state.me = await api("GET", "/api/me");
   } catch {

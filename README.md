@@ -27,6 +27,8 @@ own login.
 - **Passport stamps** — a page of rubber-stamp entries, one per country per
   trip
 - **Journals, notes and cover photos** — the stories the photos don't tell
+- **View-only share links** — hand a trip's story to grandparents or
+  friends without accounts; revoke or replace the link any time
 - **Multi-user** — accounts for the whole family, managed in-app
 - **Small and boring to operate** — one static Go binary (stdlib HTTP +
   modernc SQLite) with an embedded vanilla-JS/Leaflet frontend, in a ~10 MB

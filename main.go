@@ -99,6 +99,13 @@ func main() {
 
 	mux.HandleFunc("GET /api/export", a.auth(a.handleExport))
 
+	// view-only trip sharing: management needs a login, reading needs the token
+	mux.HandleFunc("POST /api/holidays/{id}/share", a.auth(a.handleCreateShare))
+	mux.HandleFunc("DELETE /api/holidays/{id}/share", a.auth(a.handleRevokeShare))
+	mux.HandleFunc("GET /api/share/{token}", a.handleShareData)
+	mux.HandleFunc("GET /api/share/{token}/pins/{id}/photos", a.handleSharePinPhotos)
+	mux.HandleFunc("GET /api/share/{token}/photo/{asset}/{kind}", a.handleSharePhoto)
+
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		// An honest check: prove the database answers, not just the process.
 		var one int
@@ -109,7 +116,13 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
-	mux.Handle("GET /", newStaticServer())
+	static := newStaticServer()
+	mux.Handle("GET /", static)
+	// share links serve the same SPA; app.js reads the token from the path
+	mux.HandleFunc("GET /share/{token}", func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = "/"
+		static.ServeHTTP(w, r)
+	})
 
 	srv := &http.Server{
 		Addr:              env("LISTEN_ADDR", ":8095"),

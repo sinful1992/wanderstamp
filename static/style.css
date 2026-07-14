@@ -542,6 +542,10 @@ button.linkish, a.linkish {
 /* the sheet and fabs would collide with (or hide behind) the panel */
 body.storying #sheet, body.storying #fabs { display: none; }
 
+/* share mode: an anonymous reader gets the story and the map, nothing else */
+body.shared #sheet, body.shared #fabs, body.shared #banner { display: none !important; }
+.share-row { display: flex; gap: 14px; flex-wrap: wrap; }
+
 /* the active chapter's pin lifts off the paper; !important because Leaflet
    manages each marker's z-index inline */
 .leaflet-marker-icon.story-active { z-index: 10000 !important; }

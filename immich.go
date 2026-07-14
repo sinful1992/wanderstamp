@@ -475,8 +475,7 @@ var photoSizes = map[string]string{
 // open proxy into the whole Immich library.
 func (a *app) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	assetID := r.PathValue("asset")
-	suffix, ok := photoSizes[r.PathValue("kind")]
-	if !ok || !assetIDRe.MatchString(assetID) {
+	if !assetIDRe.MatchString(assetID) {
 		httpError(w, http.StatusBadRequest, "bad request")
 		return
 	}
@@ -486,6 +485,17 @@ func (a *app) handlePhoto(w http.ResponseWriter, r *http.Request) {
 		UNION ALL SELECT 1 FROM unplaced_photos WHERE asset_id = ? LIMIT 1`,
 		assetID, assetID).Scan(&exists); err != nil {
 		httpError(w, http.StatusNotFound, "unknown photo")
+		return
+	}
+	a.streamPhoto(w, r, assetID)
+}
+
+// streamPhoto proxies one Immich asset. Callers must have authorized the
+// asset already — this only translates kind → Immich URL and streams.
+func (a *app) streamPhoto(w http.ResponseWriter, r *http.Request, assetID string) {
+	suffix, ok := photoSizes[r.PathValue("kind")]
+	if !ok {
+		httpError(w, http.StatusBadRequest, "bad request")
 		return
 	}
 	req, _ := http.NewRequestWithContext(r.Context(), "GET",

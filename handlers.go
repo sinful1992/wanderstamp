@@ -60,6 +60,7 @@ type holidayOut struct {
 	PinCount      int     `json:"pin_count"`
 	PhotoCount    int     `json:"photo_count"`
 	UnplacedCount int     `json:"unplaced_count"`
+	Shared        bool    `json:"shared"`
 }
 
 func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +74,8 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 		                 WHERE p.holiday_id = h.id ORDER BY pp.taken_at LIMIT 1), ''),
 		       (SELECT COUNT(*) FROM pins p WHERE p.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id WHERE p.holiday_id = h.id),
-		       (SELECT COUNT(*) FROM unplaced_photos up WHERE up.holiday_id = h.id)
+		       (SELECT COUNT(*) FROM unplaced_photos up WHERE up.holiday_id = h.id),
+		       EXISTS (SELECT 1 FROM shares s WHERE s.holiday_id = h.id)
 		FROM holidays h ORDER BY h.start_at DESC`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
@@ -83,7 +85,7 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 	out := []holidayOut{}
 	for rows.Next() {
 		var h holidayOut
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.Shared); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -458,8 +460,8 @@ type pinOut struct {
 	CoverAsset string  `json:"cover_asset"`
 }
 
-func (a *app) handleListPins(w http.ResponseWriter, r *http.Request) {
-	a.maybeSyncActive()
+// queryPins returns pins for one holiday, or every pin when holidayID is 0.
+func (a *app) queryPins(holidayID int64) ([]pinOut, error) {
 	rows, err := a.db.Query(`
 		SELECT p.id, p.holiday_id, p.kind, p.lat, p.lng, p.title, p.note, p.created_at,
 		       COALESCE((SELECT MIN(pp.taken_at) FROM pin_photos pp WHERE pp.pin_id = p.id),
@@ -469,20 +471,28 @@ func (a *app) handleListPins(w http.ResponseWriter, r *http.Request) {
 		                 AND pp.asset_id = p.cover_asset),
 		                (SELECT pp.asset_id FROM pin_photos pp WHERE pp.pin_id = p.id
 		                 ORDER BY pp.taken_at LIMIT 1), '')
-		FROM pins p`)
+		FROM pins p WHERE ? = 0 OR p.holiday_id = ?`, holidayID, holidayID)
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "database error")
-		return
+		return nil, err
 	}
 	defer rows.Close()
 	out := []pinOut{}
 	for rows.Next() {
 		var p pinOut
 		if err := rows.Scan(&p.ID, &p.HolidayID, &p.Kind, &p.Lat, &p.Lng, &p.Title, &p.Note, &p.CreatedAt, &p.VisitedAt, &p.PhotoCount, &p.CoverAsset); err != nil {
-			httpError(w, http.StatusInternalServerError, "database error")
-			return
+			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (a *app) handleListPins(w http.ResponseWriter, r *http.Request) {
+	a.maybeSyncActive()
+	out, err := a.queryPins(0)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }

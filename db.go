@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS unplaced_photos (
   PRIMARY KEY (holiday_id, asset_id)
 );
 
+-- view-only share links, one per holiday; tokens stored hashed like sessions
+CREATE TABLE IF NOT EXISTS shares (
+  token      TEXT PRIMARY KEY,
+  holiday_id INTEGER NOT NULL UNIQUE REFERENCES holidays(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_pins_holiday ON pins(holiday_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 `
