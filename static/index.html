@@ -50,6 +50,11 @@
         <div id="swatches"></div>
         <label class="date-row">First day <input id="trip-start" type="date"></label>
         <label class="date-row">Last day <input id="trip-end" type="date"></label>
+        <div class="form-row">
+          <input id="trip-dest" type="text" placeholder="Where to? Place or lat, lng (optional)" maxlength="120" autocomplete="off">
+          <button type="button" id="btn-dest-search">Find</button>
+        </div>
+        <div id="dest-results"></div>
         <p class="form-hint">Leave "last day" empty if the holiday is starting now — it stays live until you end it.</p>
         <div class="form-row">
           <button type="submit" class="primary">Start</button>

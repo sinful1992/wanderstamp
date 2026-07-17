@@ -87,6 +87,7 @@ func main() {
 	mux.HandleFunc("GET /api/holidays/{id}/unplaced", a.auth(a.handleUnplacedPhotos))
 	mux.HandleFunc("GET /api/holidays/{id}/timeline", a.auth(a.handleHolidayTimeline))
 	mux.HandleFunc("GET /api/stamps", a.auth(a.handleStamps))
+	mux.HandleFunc("GET /api/geocode", a.auth(a.handleGeocode))
 
 	mux.HandleFunc("GET /api/pins", a.auth(a.handleListPins))
 	mux.HandleFunc("POST /api/pins", a.auth(a.handleCreatePin))

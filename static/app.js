@@ -517,7 +517,16 @@ function placePin(latlng) {
   trip.value = String((active || state.holidays[0]).id);
   const save = el("button", "primary", "Add pin");
   save.type = "submit";
-  form.append(title, note, trip, save);
+  // Exactly where this pin lands; tap to copy (clipboard needs HTTPS, so it
+  // may quietly do nothing on plain-HTTP LAN — the numbers stay readable).
+  const coords = el("p", "pop-coords", `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`);
+  coords.title = "Tap to copy the coordinates";
+  coords.onclick = () => {
+    navigator.clipboard?.writeText(coords.textContent)
+      .then(() => toast("Coordinates copied"))
+      .catch(() => {});
+  };
+  form.append(coords, title, note, trip, save);
   const popup = L.popup({ maxWidth: 300, minWidth: 220 }).setLatLng(latlng).setContent(form).openOn(map);
   title.focus();
   form.onsubmit = async (e) => {
@@ -661,6 +670,10 @@ function renderSheet() {
       if (pts.length) {
         setFocus(h.id);
         map.fitBounds(pts, { padding: [50, 50], maxZoom: 13 });
+        $("sheet").classList.add("collapsed");
+      } else if (h.dest_name) {
+        // no pins yet, but the trip knows where it's going
+        map.flyTo([h.dest_lat, h.dest_lng], 10);
         $("sheet").classList.add("collapsed");
       } else {
         toast("No pins on this trip yet");
@@ -1238,9 +1251,63 @@ function buildSwatches() {
   makeSwatches($("swatches"), chosenColor, (c) => { chosenColor = c; });
 }
 
+// Destination picker: search places (Nominatim, proxied by the server so the
+// browser never talks to a third party) or type "lat, lng" straight in.
+let chosenDest = null;
+const COORD_RE = /^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/;
+
+function resetDest() {
+  chosenDest = null;
+  $("trip-dest").value = "";
+  $("dest-results").textContent = "";
+}
+
+async function searchDest() {
+  const q = $("trip-dest").value.trim();
+  if (!q) return;
+  const res = $("dest-results");
+  const m = q.match(COORD_RE);
+  if (m) {
+    const lat = +m[1], lng = +m[2];
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) { toast("Coordinates out of range"); return; }
+    chosenDest = { name: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, lat, lng };
+    res.textContent = "";
+    res.appendChild(el("p", "form-hint", `Destination set: ${chosenDest.name}`));
+    return;
+  }
+  res.textContent = "";
+  res.appendChild(el("p", "form-hint", "Searching…"));
+  try {
+    const hits = await api("GET", `/api/geocode?q=${encodeURIComponent(q)}`);
+    res.textContent = "";
+    chosenDest = null;
+    if (!hits.length) {
+      res.appendChild(el("p", "form-hint", "No places found — try a broader name, or type lat, lng"));
+      return;
+    }
+    for (const hit of hits) {
+      const b = el("button", "dest-opt", hit.name);
+      b.type = "button";
+      b.onclick = () => {
+        chosenDest = { name: hit.name.split(",").slice(0, 2).join(","), lat: hit.lat, lng: hit.lng };
+        res.querySelectorAll(".dest-opt").forEach((x) => x.classList.toggle("sel", x === b));
+      };
+      res.appendChild(b);
+    }
+  } catch (err) {
+    res.textContent = "";
+    toast(err.message);
+  }
+}
+$("btn-dest-search").onclick = searchDest;
+$("trip-dest").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); searchDest(); }
+});
+
 $("btn-new-trip").onclick = () => {
   buildSwatches();
   $("trip-start").value = new Date().toISOString().slice(0, 10);
+  resetDest();
   $("new-trip-form").hidden = false;
   $("btn-new-trip").hidden = true;
   $("trip-name").focus();
@@ -1252,18 +1319,27 @@ $("btn-cancel-trip").onclick = () => {
 $("new-trip-form").onsubmit = async (e) => {
   e.preventDefault();
   try {
-    const created = await api("POST", "/api/holidays", {
+    const body = {
       name: $("trip-name").value.trim(),
       color: chosenColor,
       start_at: $("trip-start").value,
       end_at: $("trip-end").value,
-    });
+    };
+    if (chosenDest) {
+      body.dest_name = chosenDest.name;
+      body.dest_lat = chosenDest.lat;
+      body.dest_lng = chosenDest.lng;
+    }
+    const created = await api("POST", "/api/holidays", body);
     $("new-trip-form").hidden = true;
     $("btn-new-trip").hidden = false;
     $("trip-name").value = "";
     $("trip-end").value = "";
+    const dest = chosenDest;
+    resetDest();
     toast(created.active ? "Holiday started — pins and photos now attach to it" : "Past trip added — pulling its photos…");
     await loadData();
+    if (dest) map.flyTo([dest.lat, dest.lng], 10);
     api("POST", `/api/holidays/${created.id}/sync`)
       .then((r) => { toast(`Found ${r.photos} photos across ${r.photo_pins} places`); loadData(); })
       .catch(() => {});

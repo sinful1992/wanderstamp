@@ -112,6 +112,10 @@ var migrations = []string{
 	`ALTER TABLE holidays ADD COLUMN immich_album_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE holidays ADD COLUMN cover_asset TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE pins ADD COLUMN cover_asset TEXT NOT NULL DEFAULT ''`,
+	// destination chosen at trip creation; dest_name = '' means none
+	`ALTER TABLE holidays ADD COLUMN dest_name TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE holidays ADD COLUMN dest_lat REAL NOT NULL DEFAULT 0`,
+	`ALTER TABLE holidays ADD COLUMN dest_lng REAL NOT NULL DEFAULT 0`,
 }
 
 func openDB(path string) (*sql.DB, error) {

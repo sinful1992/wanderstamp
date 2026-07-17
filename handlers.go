@@ -63,6 +63,9 @@ type holidayOut struct {
 	Shared        bool    `json:"shared"`
 	PackTotal     int     `json:"pack_total"`
 	PackDone      int     `json:"pack_done"`
+	DestName      string  `json:"dest_name"`
+	DestLat       float64 `json:"dest_lat"`
+	DestLng       float64 `json:"dest_lng"`
 }
 
 func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +82,8 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 		       (SELECT COUNT(*) FROM unplaced_photos up WHERE up.holiday_id = h.id),
 		       EXISTS (SELECT 1 FROM shares s WHERE s.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id),
-		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id AND pi.checked = 1)
+		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id AND pi.checked = 1),
+		       h.dest_name, h.dest_lat, h.dest_lng
 		FROM holidays h ORDER BY h.start_at DESC`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
@@ -89,7 +93,7 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 	out := []holidayOut{}
 	for rows.Next() {
 		var h holidayOut
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.Shared, &h.PackTotal, &h.PackDone); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -101,10 +105,13 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name    string `json:"name"`
-		Color   string `json:"color"`
-		StartAt string `json:"start_at"` // optional RFC3339 or YYYY-MM-DD backdate
-		EndAt   string `json:"end_at"`   // optional: set to import a past trip (created already ended)
+		Name     string  `json:"name"`
+		Color    string  `json:"color"`
+		StartAt  string  `json:"start_at"`  // optional RFC3339 or YYYY-MM-DD backdate
+		EndAt    string  `json:"end_at"`    // optional: set to import a past trip (created already ended)
+		DestName string  `json:"dest_name"` // optional destination (from place search or typed coords)
+		DestLat  float64 `json:"dest_lat"`
+		DestLng  float64 `json:"dest_lng"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -141,8 +148,19 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 		s := t.Format(time.RFC3339)
 		endAt = &s
 	}
-	res, err := a.db.Exec(`INSERT INTO holidays (name, color, start_at, end_at) VALUES (?, ?, ?, ?)`,
-		req.Name, req.Color, start.Format(time.RFC3339), endAt)
+	req.DestName = strings.TrimSpace(req.DestName)
+	if len(req.DestName) > 120 {
+		req.DestName = req.DestName[:120]
+	}
+	if req.DestName != "" && (req.DestLat < -90 || req.DestLat > 90 || req.DestLng < -180 || req.DestLng > 180) {
+		httpError(w, http.StatusBadRequest, "invalid destination coordinates")
+		return
+	}
+	if req.DestName == "" {
+		req.DestLat, req.DestLng = 0, 0
+	}
+	res, err := a.db.Exec(`INSERT INTO holidays (name, color, start_at, end_at, dest_name, dest_lat, dest_lng) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		req.Name, req.Color, start.Format(time.RFC3339), endAt, req.DestName, req.DestLat, req.DestLng)
 	if err != nil {
 		httpError(w, http.StatusConflict, "a holiday is already active — end it first")
 		return
@@ -151,6 +169,7 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, holidayOut{
 		ID: id, Name: req.Name, Color: req.Color,
 		StartAt: start.Format(time.RFC3339), EndAt: endAt, Active: endAt == nil,
+		DestName: req.DestName, DestLat: req.DestLat, DestLng: req.DestLng,
 	})
 }
 
@@ -652,11 +671,14 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		EndAt      *string      `json:"end_at"`
 		Journal    string       `json:"journal"`
 		CoverAsset string       `json:"cover_asset"`
+		DestName   string       `json:"dest_name"`
+		DestLat    float64      `json:"dest_lat"`
+		DestLng    float64      `json:"dest_lng"`
 		Pins       []*pinExp    `json:"pins"`
 		Packing    []packingExp `json:"packing"`
 	}
 
-	rows, err := a.db.Query(`SELECT id, name, color, start_at, end_at, journal, cover_asset FROM holidays ORDER BY start_at`)
+	rows, err := a.db.Query(`SELECT id, name, color, start_at, end_at, journal, cover_asset, dest_name, dest_lat, dest_lng FROM holidays ORDER BY start_at`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
@@ -666,7 +688,7 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 	byHoliday := map[int64]*holidayExp{}
 	for rows.Next() {
 		h := &holidayExp{Pins: []*pinExp{}, Packing: []packingExp{}}
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.DestName, &h.DestLat, &h.DestLng); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
