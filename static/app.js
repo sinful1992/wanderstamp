@@ -248,10 +248,12 @@ function activateSection(sec) {
 
 function loadStoryPhotos(sec) {
   const grid = sec.querySelector(".story-grid");
-  if (!grid || grid.childElementCount) return;
+  if (!grid || grid.dataset.loaded) return;
+  grid.dataset.loaded = "1";
   const path = SHARE ? `/api/share/${SHARE}/pins/${grid.dataset.pin}/photos`
                      : `/api/pins/${grid.dataset.pin}/photos`;
   api("GET", path).then((photos) => {
+    grid.textContent = "";
     photos.forEach((ph, i) => {
       const img = el("img");
       img.loading = "lazy";
@@ -260,7 +262,7 @@ function loadStoryPhotos(sec) {
       img.onclick = (e) => { e.stopPropagation(); openLightbox(photos, i); };
       grid.appendChild(img);
     });
-  }).catch(() => grid.appendChild(el("span", "pop-sub", "Couldn't load photos")));
+  }).catch(() => { grid.textContent = ""; grid.appendChild(el("span", "pop-sub", "Couldn't load photos")); });
 }
 
 function openStory(h, pinId) {
@@ -288,6 +290,10 @@ function openStory(h, pinId) {
     if (pin.photo_count > 0) {
       const grid = el("div", "story-grid");
       grid.dataset.pin = pin.id;
+      // Placeholder cells reserve the grid's final height before the photos
+      // arrive — chapters must not grow later, or the open-at-pin scroll (and
+      // the reader's place) slides as content above them expands.
+      for (let i = 0; i < pin.photo_count; i++) grid.appendChild(el("span", "ph"));
       sec.appendChild(grid);
     }
     if (SHARE) { sec.onclick = () => activateSection(sec); scroll.appendChild(sec); secs.push(sec); continue; }
