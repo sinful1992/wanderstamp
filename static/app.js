@@ -87,6 +87,7 @@ applyZoomTier();
 
 map.on("click", (e) => {
   if (state.placing) { placePin(e.latlng); return; }
+  $("sheet").classList.add("collapsed"); // tap the atlas to tuck the trips sheet away
   if (story.hid !== null) return; // the story keeps its spotlight while open
   if (state.focused !== null) setFocus(null); // tap the atlas to release the spotlight
 });
