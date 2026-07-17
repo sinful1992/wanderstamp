@@ -27,6 +27,10 @@ own login.
 - **Passport stamps** — a page of rubber-stamp entries, one per country per
   trip
 - **Journals, notes and cover photos** — the stories the photos don't tell
+- **Manifest** — packing lists drawn as a packing slip: master lists hold
+  what you always pack, each trip gets its own tick-off copy (items take a
+  rubber PACKED stamp), and anything you add mid-trip can be promoted back
+  to a master list so the lists sharpen with every holiday
 - **View-only share links** — hand a trip's story to grandparents or
   friends without accounts; revoke or replace the link any time
 - **Multi-user** — accounts for the whole family, managed in-app
