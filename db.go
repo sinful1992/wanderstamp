@@ -75,8 +75,33 @@ CREATE TABLE IF NOT EXISTS shares (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+-- Manifest: master packing lists ("always pack this") and each holiday's
+-- own tick-off copy. NOCASE keeps "Sun cream" and "sun cream" one item.
+CREATE TABLE IF NOT EXISTS packing_templates (
+  id   INTEGER PRIMARY KEY,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS packing_template_items (
+  id          INTEGER PRIMARY KEY,
+  template_id INTEGER NOT NULL REFERENCES packing_templates(id) ON DELETE CASCADE,
+  label       TEXT NOT NULL COLLATE NOCASE,
+  sort        INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (template_id, label)
+);
+
+CREATE TABLE IF NOT EXISTS packing_items (
+  id         INTEGER PRIMARY KEY,
+  holiday_id INTEGER NOT NULL REFERENCES holidays(id) ON DELETE CASCADE,
+  label      TEXT NOT NULL COLLATE NOCASE,
+  checked    INTEGER NOT NULL DEFAULT 0,
+  sort       INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (holiday_id, label)
+);
+
 CREATE INDEX IF NOT EXISTS idx_pins_holiday ON pins(holiday_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_packing_holiday ON packing_items(holiday_id);
 `
 
 // additive column migrations for databases created before the columns

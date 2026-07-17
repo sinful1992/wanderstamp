@@ -97,6 +97,19 @@ func main() {
 
 	mux.HandleFunc("GET /api/photo/{asset}/{kind}", a.auth(a.handlePhoto))
 
+	// Manifest: master packing lists + each holiday's tick-off copy
+	mux.HandleFunc("GET /api/packing/templates", a.auth(a.handleListTemplates))
+	mux.HandleFunc("POST /api/packing/templates", a.auth(a.handleCreateTemplate))
+	mux.HandleFunc("DELETE /api/packing/templates/{id}", a.auth(a.handleDeleteTemplate))
+	mux.HandleFunc("POST /api/packing/templates/{id}/items", a.auth(a.handleAddTemplateItem))
+	mux.HandleFunc("DELETE /api/packing/templates/{id}/items/{itemID}", a.auth(a.handleDeleteTemplateItem))
+	mux.HandleFunc("GET /api/holidays/{id}/packing", a.auth(a.handleListPacking))
+	mux.HandleFunc("POST /api/holidays/{id}/packing", a.auth(a.handleAddPackingItem))
+	mux.HandleFunc("POST /api/holidays/{id}/packing/apply", a.auth(a.handleApplyTemplate))
+	mux.HandleFunc("PATCH /api/packing/{id}", a.auth(a.handleUpdatePackingItem))
+	mux.HandleFunc("DELETE /api/packing/{id}", a.auth(a.handleDeletePackingItem))
+	mux.HandleFunc("POST /api/packing/{id}/promote", a.auth(a.handlePromoteItem))
+
 	mux.HandleFunc("GET /api/export", a.auth(a.handleExport))
 
 	// view-only trip sharing: management needs a login, reading needs the token

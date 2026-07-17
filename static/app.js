@@ -622,6 +622,11 @@ function renderSheet() {
       jr.onclick = (e) => { e.stopPropagation(); openJournal(h); };
       sub.append(" · ", jr);
     }
+    const mfLeft = (h.pack_total || 0) - (h.pack_done || 0);
+    const mf = el("button", "sub-link",
+      !h.pack_total ? "manifest" : mfLeft ? `manifest · ${mfLeft} to pack` : "manifest ✓");
+    mf.onclick = (e) => { e.stopPropagation(); openManifest(h); };
+    sub.append(" · ", mf);
     info.append(name, sub);
     const edit = el("button", "trip-eye", "✎");
     edit.title = "Edit this trip";
@@ -897,6 +902,282 @@ function openJournal(h) {
   openOverlay(h.name, box);
 }
 
+/* ---------- manifest: the packing slip ---------- */
+
+// Starter master lists, offered once when there are none yet.
+const STARTER_LISTS = {
+  "Caravan": ["Gas bottle", "Levelling ramps", "Electric hook-up cable", "Fresh water hose",
+    "Waste water container", "Toilet chemicals", "Awning, pegs & mallet", "Folding chairs",
+    "Torch", "Kettle & pans", "Tea towels", "Bottle opener", "Bin bags", "First aid kit", "Phone chargers"],
+  "Beach": ["Swimwear", "Beach towels", "Sun cream", "After-sun", "Sunglasses", "Hats",
+    "Flip flops", "Beach bag", "Books", "Power bank", "Travel adapters", "Medications", "Passports"],
+  "City break": ["Passports", "Boarding passes", "Comfortable shoes", "Day bag", "Umbrella",
+    "Travel adapters", "Power bank", "Medications", "Camera"],
+};
+
+// A trip's manifest: tick items off; the stamp box takes a PACKED stamp.
+async function openManifest(h) {
+  try {
+    const [items, templates] = await Promise.all([
+      api("GET", `/api/holidays/${h.id}/packing`),
+      api("GET", "/api/packing/templates"),
+    ]);
+    const box = el("div", "manifest");
+    const tally = el("p", "mf-tally");
+    const list = el("div", "mf-list");
+
+    const syncCounts = () => {
+      h.pack_total = items.length;
+      h.pack_done = items.filter((i) => i.checked).length;
+      renderSheet(); // keep the trip row's "N to pack" honest behind the overlay
+      if (!items.length) tally.textContent = "Nothing on the manifest";
+      else if (h.pack_done === items.length) { tally.textContent = "All packed"; tally.classList.add("done"); }
+      else { tally.textContent = `${h.pack_done} of ${h.pack_total} packed`; tally.classList.remove("done"); }
+    };
+
+    const promote = async (it, tpl) => {
+      try {
+        const r = await api("POST", `/api/packing/${it.id}/promote`, { template_id: tpl.id });
+        toast(r.added ? `Added to the ${tpl.name} list` : `Already on the ${tpl.name} list`);
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+
+    const mfRow = (it) => {
+      const row = el("div", "mf-row" + (it.checked ? " packed" : ""));
+      const boxBtn = el("button", "mf-box");
+      boxBtn.type = "button";
+      boxBtn.setAttribute("aria-pressed", String(!!it.checked));
+      boxBtn.setAttribute("aria-label", (it.checked ? "Unpack " : "Pack ") + it.label);
+      // .thunk animates only a freshly stamped item, not every stamp on re-render
+      boxBtn.appendChild(it.checked ? el("span", "mf-stamp" + (it.thunk ? " thunk" : ""), "Packed") : el("span", "mf-void"));
+      delete it.thunk;
+      const toggle = async () => {
+        try {
+          await api("PATCH", `/api/packing/${it.id}`, { checked: !it.checked });
+          it.checked = !it.checked;
+          if (it.checked) it.thunk = true;
+          renderRows();
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+      boxBtn.onclick = (e) => { e.stopPropagation(); toggle(); };
+      row.onclick = toggle;
+      const star = el("button", "mf-icon", "☆");
+      star.type = "button";
+      star.title = "Always pack this — add it to a master list";
+      star.onclick = (e) => {
+        e.stopPropagation();
+        if (!templates.length) { toast("No master lists yet — Manifest in the trips sheet creates them"); return; }
+        if (templates.length === 1) { promote(it, templates[0]); return; }
+        if (row.querySelector("select")) return;
+        const pick = el("select");
+        const ph = el("option", null, "Add to…");
+        ph.value = "";
+        pick.appendChild(ph);
+        for (const t of templates) {
+          const o = el("option", null, t.name);
+          o.value = t.id;
+          pick.appendChild(o);
+        }
+        pick.onclick = (ev) => ev.stopPropagation();
+        pick.onchange = () => {
+          const tpl = templates.find((t) => t.id === +pick.value);
+          if (tpl) promote(it, tpl);
+          pick.remove();
+        };
+        star.before(pick);
+      };
+      const del = el("button", "mf-icon", "✕");
+      del.type = "button";
+      del.title = "Remove from the manifest";
+      del.onclick = async (e) => {
+        e.stopPropagation();
+        try {
+          await api("DELETE", `/api/packing/${it.id}`);
+          items.splice(items.indexOf(it), 1);
+          renderRows();
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+      row.append(el("span", "mf-label", it.label), el("span", "mf-lead"), boxBtn, star, del);
+      return row;
+    };
+
+    const renderRows = () => {
+      list.textContent = "";
+      if (!items.length) {
+        list.appendChild(el("p", "empty-note", "An empty manifest — add items below, or bring in a master list."));
+      }
+      for (const it of items) list.appendChild(mfRow(it));
+      syncCounts();
+    };
+
+    const addForm = el("form", "form-row");
+    const inp = el("input");
+    inp.type = "text"; inp.placeholder = "Add something to pack…"; inp.maxLength = 80; inp.required = true;
+    const addBtn = el("button", "primary", "Add");
+    addBtn.type = "submit";
+    addForm.append(inp, addBtn);
+    addForm.onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        const it = await api("POST", `/api/holidays/${h.id}/packing`, { label: inp.value });
+        items.push(it);
+        inp.value = "";
+        renderRows();
+        inp.focus();
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+
+    box.append(tally, list, addForm);
+
+    if (templates.length) {
+      const applyRow = el("div", "form-row");
+      const pick = el("select");
+      const ph = el("option", null, "Bring in a master list…");
+      ph.value = "";
+      pick.appendChild(ph);
+      for (const t of templates) {
+        const o = el("option", null, `${t.name} · ${t.items.length}`);
+        o.value = t.id;
+        pick.appendChild(o);
+      }
+      const applyBtn = el("button", null, "Add list");
+      applyBtn.type = "button";
+      applyBtn.onclick = async () => {
+        if (!pick.value) return;
+        try {
+          const r = await api("POST", `/api/holidays/${h.id}/packing/apply`, { template_id: +pick.value });
+          toast(r.added ? `${r.added} items added` : "Everything on that list is already here");
+          const fresh = await api("GET", `/api/holidays/${h.id}/packing`);
+          items.length = 0;
+          items.push(...fresh);
+          pick.value = "";
+          renderRows();
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+      applyRow.append(pick, applyBtn);
+      box.appendChild(applyRow);
+    }
+
+    const editLists = el("button", "linkish", "Edit master lists");
+    editLists.onclick = () => openMasterLists();
+    box.appendChild(editLists);
+
+    renderRows();
+    openOverlay(`Manifest — ${h.name}`, box);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+// The master lists: the "always pack this" reference, kept between trips.
+async function openMasterLists() {
+  try {
+    const templates = await api("GET", "/api/packing/templates");
+    const box = el("div", "manifest");
+    box.appendChild(el("p", "form-hint",
+      "Master lists hold the things you always pack. Bring one onto a trip from its manifest, and tick items off there."));
+
+    if (!templates.length) {
+      box.appendChild(el("p", "empty-note", "No master lists yet."));
+      const starter = el("button", "primary", "Create starter lists — caravan · beach · city break");
+      starter.onclick = async () => {
+        try {
+          for (const [name, items] of Object.entries(STARTER_LISTS)) {
+            await api("POST", "/api/packing/templates", { name, items });
+          }
+          toast("Starter lists created — make them yours");
+          openMasterLists();
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+      box.appendChild(starter);
+    }
+
+    for (const t of templates) {
+      const head = el("div", "mf-head");
+      head.appendChild(el("h3", "day-head", `${t.name} · ${t.items.length}`));
+      const delList = el("button", "linkish", "delete list");
+      delList.onclick = async () => {
+        if (!confirm(`Delete the "${t.name}" master list? Trips keep their own copies.`)) return;
+        await api("DELETE", `/api/packing/templates/${t.id}`);
+        openMasterLists();
+      };
+      head.appendChild(delList);
+      box.appendChild(head);
+
+      const list = el("div", "mf-list");
+      for (const it of t.items) {
+        const row = el("div", "mf-row");
+        const del = el("button", "mf-icon", "✕");
+        del.type = "button";
+        del.title = "Remove from this list";
+        del.onclick = async () => {
+          try {
+            await api("DELETE", `/api/packing/templates/${t.id}/items/${it.id}`);
+            row.remove();
+          } catch (err) {
+            toast(err.message);
+          }
+        };
+        row.append(el("span", "mf-label", it.label), el("span", "mf-lead"), del);
+        list.appendChild(row);
+      }
+      box.appendChild(list);
+
+      const addForm = el("form", "form-row");
+      const inp = el("input");
+      inp.type = "text"; inp.placeholder = `Add to ${t.name}…`; inp.maxLength = 80; inp.required = true;
+      const addBtn = el("button", "primary", "Add");
+      addBtn.type = "submit";
+      addForm.append(inp, addBtn);
+      addForm.onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+          await api("POST", `/api/packing/templates/${t.id}/items`, { label: inp.value });
+          openMasterLists();
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+      box.appendChild(addForm);
+    }
+
+    if (templates.length) {
+      const newForm = el("form", "form-row");
+      const inp = el("input");
+      inp.type = "text"; inp.placeholder = "New master list — e.g. Ski"; inp.maxLength = 80; inp.required = true;
+      const btn = el("button", "primary", "Create");
+      btn.type = "submit";
+      newForm.append(inp, btn);
+      newForm.onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+          await api("POST", "/api/packing/templates", { name: inp.value });
+          openMasterLists();
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+      box.appendChild(newForm);
+    }
+
+    openOverlay("Manifest — master lists", box);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 /* ---------- banner ---------- */
 
 function renderBanner() {
@@ -994,6 +1275,8 @@ $("new-trip-form").onsubmit = async (e) => {
 /* ---------- sheet + admin + logout ---------- */
 
 $("sheet-pill").onclick = () => $("sheet").classList.toggle("collapsed");
+
+$("btn-manifest").onclick = () => openMasterLists();
 
 $("new-user-form").onsubmit = async (e) => {
   e.preventDefault();

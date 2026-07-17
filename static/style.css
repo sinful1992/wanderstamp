@@ -460,6 +460,54 @@ button.linkish, a.linkish {
 .journal-read { max-width: 640px; }
 .journal-text { font-family: var(--prose); font-size: 17px; line-height: 1.65; white-space: pre-wrap; }
 
+/* ---------- manifest: the packing slip ----------
+   A ledger document: item, dotted leader line, then a stamp box that takes
+   a visa-red PACKED stamp (reusing the passport's stamp-in thunk). */
+
+.manifest { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+.mf-tally {
+  margin: 0; font-family: var(--stamp); font-size: 16px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--muted);
+  padding-bottom: 8px; border-bottom: 3px double var(--line);
+}
+.mf-tally.done { color: var(--gold); }
+.mf-list { display: flex; flex-direction: column; }
+.mf-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; cursor: pointer; }
+.mf-row + .mf-row { border-top: 1px dotted var(--line); }
+.mf-label { font-size: 15px; }
+.mf-row.packed .mf-label {
+  color: var(--muted);
+  text-decoration: line-through; text-decoration-color: rgba(179, 55, 42, .45);
+}
+.mf-lead { flex: 1; min-width: 24px; align-self: flex-end; margin-bottom: .45em; border-bottom: 2px dotted var(--line); }
+.mf-box { flex: none; width: 76px; background: none; border: none; padding: 2px 0; text-align: center; }
+.mf-void { display: inline-block; width: 60px; height: 24px; border: 1.5px dashed var(--line); border-radius: 5px; }
+.mf-row:hover .mf-void { border-color: var(--muted); }
+.mf-stamp {
+  display: inline-block; font-family: var(--stamp); font-size: 13px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--red);
+  border: 2px solid var(--red); border-radius: 5px; padding: 1px 7px;
+  --r: -6deg; transform: rotate(var(--r)); opacity: .88;
+}
+.mf-icon {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  background: none; border: none; padding: 0;
+  font-size: 14px; color: var(--muted); opacity: .75;
+}
+.mf-icon:hover { background: var(--line); opacity: 1; }
+.mf-row select { width: auto; padding: 4px 6px; font-size: 13px; }
+.mf-head { display: flex; align-items: baseline; gap: 10px; }
+.mf-head .day-head { flex: 1; margin-bottom: 0; }
+.manifest .form-row button:not(.primary) {
+  background: none; border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 14px; color: var(--muted); white-space: nowrap;
+}
+#btn-manifest {
+  background: var(--paper); border: 3px double var(--red); border-radius: 8px;
+  padding: 7px 14px; color: var(--red);
+  font-family: var(--stamp); font-size: 16px; letter-spacing: 2px; text-transform: uppercase;
+}
+
 /* ---------- trip story: the map follows the scroll ---------- */
 
 /* Bottom sheet on phones, left column on desktop — the atlas must stay
@@ -659,6 +707,7 @@ button.primary.gold {
     from { opacity: 0; transform: rotate(var(--r, 0deg)) scale(1.35); }
     to { opacity: .93; transform: rotate(var(--r, 0deg)) scale(1); }
   }
+  .mf-stamp.thunk { animation: stamp-in .28s cubic-bezier(.2, 1.4, .4, 1) backwards; }
   .leaflet-marker-icon { animation: pin-pop .22s ease-out backwards; }
   @keyframes pin-pop { from { opacity: 0; scale: .5; } }
   .trip-name .live { animation: live-pulse 2.4s ease-in-out infinite; }

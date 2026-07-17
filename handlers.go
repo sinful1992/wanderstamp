@@ -61,6 +61,8 @@ type holidayOut struct {
 	PhotoCount    int     `json:"photo_count"`
 	UnplacedCount int     `json:"unplaced_count"`
 	Shared        bool    `json:"shared"`
+	PackTotal     int     `json:"pack_total"`
+	PackDone      int     `json:"pack_done"`
 }
 
 func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +77,9 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 		       (SELECT COUNT(*) FROM pins p WHERE p.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id WHERE p.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM unplaced_photos up WHERE up.holiday_id = h.id),
-		       EXISTS (SELECT 1 FROM shares s WHERE s.holiday_id = h.id)
+		       EXISTS (SELECT 1 FROM shares s WHERE s.holiday_id = h.id),
+		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id),
+		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id AND pi.checked = 1)
 		FROM holidays h ORDER BY h.start_at DESC`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
@@ -85,7 +89,7 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 	out := []holidayOut{}
 	for rows.Next() {
 		var h holidayOut
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.Shared); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.Shared, &h.PackTotal, &h.PackDone); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -636,15 +640,20 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		CreatedAt  string     `json:"created_at"`
 		Photos     []photoExp `json:"photos"`
 	}
+	type packingExp struct {
+		Label   string `json:"label"`
+		Checked bool   `json:"checked"`
+	}
 	type holidayExp struct {
-		ID         int64     `json:"id"`
-		Name       string    `json:"name"`
-		Color      string    `json:"color"`
-		StartAt    string    `json:"start_at"`
-		EndAt      *string   `json:"end_at"`
-		Journal    string    `json:"journal"`
-		CoverAsset string    `json:"cover_asset"`
-		Pins       []*pinExp `json:"pins"`
+		ID         int64        `json:"id"`
+		Name       string       `json:"name"`
+		Color      string       `json:"color"`
+		StartAt    string       `json:"start_at"`
+		EndAt      *string      `json:"end_at"`
+		Journal    string       `json:"journal"`
+		CoverAsset string       `json:"cover_asset"`
+		Pins       []*pinExp    `json:"pins"`
+		Packing    []packingExp `json:"packing"`
 	}
 
 	rows, err := a.db.Query(`SELECT id, name, color, start_at, end_at, journal, cover_asset FROM holidays ORDER BY start_at`)
@@ -656,7 +665,7 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 	holidays := []*holidayExp{}
 	byHoliday := map[int64]*holidayExp{}
 	for rows.Next() {
-		h := &holidayExp{Pins: []*pinExp{}}
+		h := &holidayExp{Pins: []*pinExp{}, Packing: []packingExp{}}
 		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
@@ -700,6 +709,24 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 		if p := byPin[pid]; p != nil {
 			p.Photos = append(p.Photos, ph)
+		}
+	}
+
+	packRows, err := a.db.Query(`SELECT holiday_id, label, checked FROM packing_items ORDER BY holiday_id, sort, id`)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer packRows.Close()
+	for packRows.Next() {
+		var hid int64
+		var pk packingExp
+		if err := packRows.Scan(&hid, &pk.Label, &pk.Checked); err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		if h := byHoliday[hid]; h != nil {
+			h.Packing = append(h.Packing, pk)
 		}
 	}
 
