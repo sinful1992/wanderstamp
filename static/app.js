@@ -1484,3 +1484,10 @@ $("login-form").onsubmit = async (e) => {
     toast("Couldn't load the map data: " + ex.message);
   }
 })();
+
+// App-shell service worker: the map opens (from cache) even with no signal.
+// navigator.serviceWorker only exists on HTTPS/localhost, so plain-HTTP LAN
+// visits skip this silently — same caveat as the clipboard API.
+if ("serviceWorker" in navigator && !SHARE) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}

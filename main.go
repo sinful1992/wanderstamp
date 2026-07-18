@@ -193,6 +193,8 @@ type staticServer struct {
 }
 
 func newStaticServer() *staticServer {
+	// not in Go's built-in table; without it the manifest would go out as text/plain
+	mime.AddExtensionType(".webmanifest", "application/manifest+json")
 	sub, _ := fs.Sub(staticFiles, "static")
 	s := &staticServer{files: make(map[string]*staticFile)}
 	fs.WalkDir(sub, ".", func(p string, d fs.DirEntry, err error) error {
@@ -215,7 +217,7 @@ func newStaticServer() *staticServer {
 			f.ctype = http.DetectContentType(body)
 		}
 		switch path.Ext(p) {
-		case ".js", ".css", ".html", ".svg":
+		case ".js", ".css", ".html", ".svg", ".webmanifest":
 			var buf bytes.Buffer
 			zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 			zw.Write(body)
