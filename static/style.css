@@ -123,6 +123,12 @@ button { font: inherit; cursor: pointer; }
   content: ""; position: absolute; inset: 6px;
   border-radius: 50%; background: var(--paper);
 }
+/* a pin queued offline: same pushpin, ghosted until it syncs */
+.manual-pin.pending {
+  opacity: .55;
+  border-style: dashed;
+  box-shadow: none;
+}
 .leaflet-div-icon { background: none; border: none; }
 
 /* Leaflet chrome on paper */
@@ -352,6 +358,7 @@ button.linkish, a.linkish {
 .pop-actions button { background: none; border: none; padding: 2px; font-size: 13px; color: var(--muted); text-decoration: underline; }
 .pop-form { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
 .pop-form textarea { resize: vertical; min-height: 52px; }
+.pop-title { margin: 0; font-weight: 600; }
 .pop-coords { margin: 0; font-size: 11.5px; letter-spacing: .4px; color: var(--muted); cursor: pointer; }
 .pop-coords:hover { color: var(--ink); }
 

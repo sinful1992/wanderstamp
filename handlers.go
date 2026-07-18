@@ -527,6 +527,7 @@ func (a *app) handleCreatePin(w http.ResponseWriter, r *http.Request) {
 		Lng       float64 `json:"lng"`
 		Title     string  `json:"title"`
 		Note      string  `json:"note"`
+		CreatedAt string  `json:"created_at"` // optional: pins queued offline sync later but keep their real capture time
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -535,6 +536,15 @@ func (a *app) handleCreatePin(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid coordinates")
 		return
 	}
+	createdAt := time.Now().UTC()
+	if req.CreatedAt != "" {
+		t, err := time.Parse(time.RFC3339, req.CreatedAt)
+		if err != nil || t.After(time.Now().Add(5*time.Minute)) {
+			httpError(w, http.StatusBadRequest, "invalid created_at")
+			return
+		}
+		createdAt = t.UTC()
+	}
 	if req.HolidayID == 0 {
 		if err := a.db.QueryRow(`SELECT id FROM holidays WHERE end_at IS NULL`).Scan(&req.HolidayID); err != nil {
 			httpError(w, http.StatusBadRequest, "no active holiday — start one or pass holiday_id")
@@ -542,9 +552,10 @@ func (a *app) handleCreatePin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	res, err := a.db.Exec(`
-		INSERT INTO pins (holiday_id, kind, lat, lng, title, note)
-		VALUES (?, 'manual', ?, ?, ?, ?)`,
-		req.HolidayID, req.Lat, req.Lng, strings.TrimSpace(req.Title), req.Note)
+		INSERT INTO pins (holiday_id, kind, lat, lng, title, note, created_at)
+		VALUES (?, 'manual', ?, ?, ?, ?, ?)`,
+		req.HolidayID, req.Lat, req.Lng, strings.TrimSpace(req.Title), req.Note,
+		createdAt.Format(time.RFC3339))
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "no such holiday")
 		return
@@ -553,7 +564,7 @@ func (a *app) handleCreatePin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, pinOut{
 		ID: id, HolidayID: req.HolidayID, Kind: "manual",
 		Lat: req.Lat, Lng: req.Lng, Title: strings.TrimSpace(req.Title), Note: req.Note,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		CreatedAt: createdAt.Format(time.RFC3339),
 	})
 }
 

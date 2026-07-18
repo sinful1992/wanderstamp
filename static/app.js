@@ -57,6 +57,95 @@ async function api(method, path, body) {
   return data;
 }
 
+/* ---------- offline: data snapshot + pin queue ---------- */
+
+// The service worker keeps the shell; these keep the data. A snapshot of the
+// last successful load lets the map open with its trips and pins when there's
+// no signal, and pins dropped offline wait in a queue until the network comes
+// back. localStorage rather than IndexedDB: the payload is a few KB of JSON
+// and synchronous access keeps every call site trivial.
+const SNAP_KEY = "hm-snapshot";
+const QUEUE_KEY = "hm-pin-queue";
+
+function saveSnapshot() {
+  try {
+    localStorage.setItem(SNAP_KEY, JSON.stringify({ holidays: state.holidays, pins: state.pins, at: Date.now() }));
+  } catch { /* storage full or blocked — the offline view just won't have data */ }
+}
+
+function restoreSnapshot() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SNAP_KEY));
+    if (!s || !Array.isArray(s.holidays)) return false;
+    state.holidays = s.holidays;
+    state.pins = s.pins || [];
+    renderAll(true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pinQueue() {
+  try { return JSON.parse(localStorage.getItem(QUEUE_KEY)) || []; } catch { return []; }
+}
+
+function setPinQueue(q) {
+  try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch {}
+}
+
+function queuePin(pin) {
+  pin.qid = Date.now() + ":" + Math.random().toString(36).slice(2, 8);
+  setPinQueue([...pinQueue(), pin]);
+  renderMarkers();
+}
+
+// Network failures (offline, server unreachable) surface as TypeError from
+// fetch; HTTP-level failures come back as plain Errors from api(). Only the
+// former mean "worth retrying later".
+function isNetworkError(ex) {
+  return ex instanceof TypeError;
+}
+
+let syncingQueue = false;
+async function syncQueue() {
+  if (syncingQueue || SHARE) return;
+  let q = pinQueue();
+  if (!q.length) return;
+  syncingQueue = true;
+  let sent = 0, dropped = 0;
+  try {
+    while (q.length) {
+      const { qid, ...pin } = q[0];
+      try {
+        await api("POST", "/api/pins", pin);
+        sent++;
+      } catch (ex) {
+        // still offline, or logged out mid-queue: stop and keep everything
+        if (isNetworkError(ex) || ex.message === "not logged in") break;
+        dropped++; // the server said no (trip deleted?) — retrying forever won't fix it
+      }
+      q = q.slice(1);
+      setPinQueue(q);
+    }
+  } finally {
+    syncingQueue = false;
+  }
+  if (!sent && !dropped) return;
+  const bits = [];
+  if (sent) bits.push(`${sent} offline pin${sent > 1 ? "s" : ""} synced`);
+  if (dropped) bits.push(`${dropped} rejected by the server`);
+  toast(bits.join(" · "));
+  if (sent) loadData().catch(() => {});
+  else renderMarkers();
+}
+
+window.addEventListener("online", () => {
+  // an offline boot never loaded /api/me — reboot properly now that we can
+  if (!state.me && !SHARE) { location.reload(); return; }
+  syncQueue();
+});
+
 /* ---------- map ---------- */
 
 const map = L.map("map", { zoomControl: false, worldCopyJump: true });
@@ -103,6 +192,8 @@ async function loadData(fit) {
   state.holidays = holidays;
   state.pins = pins;
   renderAll(fit);
+  saveSnapshot();
+  syncQueue(); // reaching the server just now proves any queued pins can go
 }
 
 function renderAll(fit) {
@@ -141,7 +232,9 @@ function pinIcon(pin, color) {
     const div = el("div", "photo-pin");
     div.style.setProperty("--c", color);
     const print = el("span", "print");
-    if (pin.cover_asset) {
+    // offline the thumb request can't succeed — the empty cream print reads
+    // better than a broken-image glyph
+    if (pin.cover_asset && navigator.onLine) {
       const img = el("img");
       img.src = photoURL(pin.cover_asset, "thumb");
       img.alt = "";
@@ -197,7 +290,39 @@ function renderMarkers() {
     line.tripId = hid;
     state.routes.push(line);
   }
+  // Pins waiting to sync ride along as ghosts: same pushpin, dashed and
+  // faded. They're local-only until the network returns; tap to discard.
+  for (const qp of pinQueue()) {
+    if (state.hidden.has(qp.holiday_id)) continue;
+    const h = holidayById(qp.holiday_id);
+    const marker = L.marker([qp.lat, qp.lng], { icon: pendingIcon(h ? h.color : "#666"), riseOnHover: true }).addTo(map);
+    marker.tripId = qp.holiday_id;
+    marker.on("click", () => openPendingPopup(qp));
+    state.markers.push(marker);
+  }
   applyFocus();
+}
+
+function pendingIcon(color) {
+  const div = el("div", "manual-pin pending");
+  div.style.setProperty("--c", color);
+  div.style.position = "relative";
+  return L.divIcon({ html: div.outerHTML, iconSize: [22, 22], iconAnchor: [4, 20], popupAnchor: [7, -18] });
+}
+
+function openPendingPopup(qp) {
+  const box = el("div", "pop-form");
+  if (qp.title) box.appendChild(el("p", "pop-title", qp.title));
+  box.appendChild(el("p", "pop-coords", "Saved offline — syncs when you're back online"));
+  const drop = el("button", null, "Discard pin");
+  drop.onclick = () => {
+    setPinQueue(pinQueue().filter((p) => p.qid !== qp.qid));
+    map.closePopup();
+    renderMarkers();
+    toast("Offline pin discarded");
+  };
+  box.appendChild(drop);
+  L.popup({ maxWidth: 260, minWidth: 180 }).setLatLng([qp.lat, qp.lng]).setContent(box).openOn(map);
 }
 
 /* ---------- focus: spotlight one trip, fade the rest ---------- */
@@ -531,15 +656,28 @@ function placePin(latlng) {
   title.focus();
   form.onsubmit = async (e) => {
     e.preventDefault();
-    await api("POST", "/api/pins", {
+    const pin = {
       holiday_id: Number(trip.value),
       lat: latlng.lat, lng: latlng.lng,
       title: title.value, note: note.value,
-    }).then(() => {
+    };
+    // created_at rides along so a pin synced hours later still lands on the
+    // right day of the trip's story
+    const offline = () => {
+      queuePin({ ...pin, created_at: new Date().toISOString() });
+      map.closePopup(popup);
+      toast("No signal — pin saved, will sync when you're back online");
+    };
+    if (!navigator.onLine) { offline(); return; } // known-dead link: skip the doomed request
+    try {
+      await api("POST", "/api/pins", pin);
       map.closePopup(popup);
       loadData();
       toast("Pin added");
-    }).catch((err) => toast(err.message));
+    } catch (err) {
+      if (isNetworkError(err)) offline();
+      else toast(err.message);
+    }
   };
 }
 
@@ -1473,8 +1611,13 @@ $("login-form").onsubmit = async (e) => {
   }
   try {
     state.me = await api("GET", "/api/me");
-  } catch {
-    return; // login overlay already shown
+  } catch (ex) {
+    // A dead network (unlike a 401) means mid-holiday with no signal: open
+    // the last synced map from the snapshot instead of a blank atlas.
+    if (isNetworkError(ex) && restoreSnapshot()) {
+      toast("Offline — showing your last synced map");
+    }
+    return; // on 401 the login overlay is already shown
   }
   $("admin-box").hidden = !state.me.is_admin;
   $("app-version").textContent = state.me.version === "dev" ? "dev build" : state.me.version;
