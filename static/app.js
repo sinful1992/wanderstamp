@@ -159,6 +159,9 @@ const tileURL = () =>
 const tiles = L.tileLayer(tileURL(), {
   maxZoom: 20,
   subdomains: "abcd",
+  // CORS mode so the service worker's tile cache stores real responses, not
+  // opaque ones (opaque entries get ~7MB of quota padding each in Chromium)
+  crossOrigin: "anonymous",
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
 }).addTo(map);
 darkScheme.addEventListener("change", () => tiles.setUrl(tileURL()));
