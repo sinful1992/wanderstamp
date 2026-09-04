@@ -10,7 +10,7 @@ const state = {
   holidays: [],
   pins: [],
   hidden: new Set(),      // holiday ids toggled off
-  markers: [],
+  markers: new Map(),  // pin key -> Leaflet marker, reconciled in renderMarkers
   routes: [],             // one dotted itinerary line per visible trip
   focused: null,          // holiday id spotlit by tapping its trip row
   placing: false,
@@ -31,6 +31,13 @@ function el(tag, cls, text) {
   if (cls) n.className = cls;
   if (text !== undefined) n.textContent = text;
   return n;
+}
+
+// The trips sheet is a disclosure; one setter keeps the pill's announced
+// state and the class in step.
+function setSheet(open) {
+  $("sheet").classList.toggle("collapsed", !open);
+  $("sheet-pill").setAttribute("aria-expanded", String(open));
 }
 
 function toast(msg) {
@@ -179,7 +186,7 @@ applyZoomTier();
 
 map.on("click", (e) => {
   if (state.placing) { placePin(e.latlng); return; }
-  $("sheet").classList.add("collapsed"); // tap the atlas to tuck the trips sheet away
+  setSheet(false); // tap the atlas to tuck the trips sheet away
   if (story.hid !== null) return; // the story keeps its spotlight while open
   if (state.focused !== null) setFocus(null); // tap the atlas to release the spotlight
 });
@@ -253,33 +260,81 @@ function pinIcon(pin, color) {
   return L.divIcon({ html: div.outerHTML, iconSize: [22, 22], iconAnchor: [4, 20], popupAnchor: [7, -18] });
 }
 
+// Markers are reconciled, not rebuilt. Tearing the whole layer down on every
+// loadData() meant every pin replayed its pop-in animation after any edit or
+// reconnect, and it threw away Leaflet's DOM for pins that had not changed.
+// Now a marker is only rebuilt when something it draws from actually differs.
+function pinSig(pin, color) {
+  return [pin.kind, color, pin.cover_asset, pin.photo_count, navigator.onLine ? 1 : 0].join("|");
+}
+
 function renderMarkers() {
-  for (const m of state.markers) m.remove();
-  state.markers = [];
-  for (const r of state.routes) r.remove();
-  state.routes = [];
-  const byTrip = new Map();
+  const want = new Map(); // key -> descriptor
   for (const pin of visiblePins()) {
     const h = holidayById(pin.holiday_id);
-    const color = h ? h.color : "#666";
-    const marker = L.marker([pin.lat, pin.lng], { icon: pinIcon(pin, color), riseOnHover: true }).addTo(map);
+    want.set("p" + pin.id, { pin, color: h ? h.color : "#666" });
+  }
+  // Pins waiting to sync ride along as ghosts: same pushpin, dashed and
+  // faded. They're local-only until the network returns; tap to discard.
+  for (const qp of pinQueue()) {
+    if (state.hidden.has(qp.holiday_id)) continue;
+    const h = holidayById(qp.holiday_id);
+    want.set("q" + qp.qid, { qp, color: h ? h.color : "#666" });
+  }
+
+  for (const [key, marker] of state.markers) {
+    if (!want.has(key)) { marker.remove(); state.markers.delete(key); }
+  }
+
+  const byTrip = new Map();
+  for (const [key, w] of want) {
+    const pending = !w.pin;
+    const src = w.pin || w.qp;
+    const sig = pending ? "q|" + w.color : pinSig(w.pin, w.color);
+    let marker = state.markers.get(key);
+    if (!marker) {
+      marker = L.marker([src.lat, src.lng], {
+        icon: pending ? pendingIcon(w.color) : pinIcon(w.pin, w.color),
+        riseOnHover: true,
+      }).addTo(map);
+      marker.sig = sig;
+      state.markers.set(key, marker);
+    } else {
+      const ll = marker.getLatLng();
+      if (ll.lat !== src.lat || ll.lng !== src.lng) marker.setLatLng([src.lat, src.lng]);
+      if (marker.sig !== sig) {
+        marker.setIcon(pending ? pendingIcon(w.color) : pinIcon(w.pin, w.color));
+        marker.sig = sig;
+      }
+    }
+    marker.tripId = src.holiday_id;
+    marker.pinId = pending ? null : w.pin.id;
+    marker.qp = pending ? w.qp : null;
+    // Bound once, on creation: the handler reads the marker's current fields
+    // rather than closing over the descriptor from the render that made it.
     // Tapping a pin opens its trip's story at that chapter — the chapter
     // carries everything the old popup did (photos, note, edit, delete).
-    marker.on("click", () => {
-      const owner = holidayById(pin.holiday_id);
-      if (owner) openStory(owner, pin.id);
-    });
-    marker.tripId = pin.holiday_id;
-    marker.pinId = pin.id;
-    state.markers.push(marker);
-    if (!byTrip.has(pin.holiday_id)) byTrip.set(pin.holiday_id, []);
-    byTrip.get(pin.holiday_id).push(pin);
+    if (!marker.bound) {
+      marker.bound = true;
+      marker.on("click", () => {
+        if (marker.qp) { openPendingPopup(marker.qp); return; }
+        const owner = holidayById(marker.tripId);
+        if (owner) openStory(owner, marker.pinId);
+      });
+    }
+    if (!pending) {
+      if (!byTrip.has(w.pin.holiday_id)) byTrip.set(w.pin.holiday_id, []);
+      byTrip.get(w.pin.holiday_id).push(w.pin);
+    }
   }
+
   // The itinerary line: a dotted ink route joining each trip's stops in the
   // order they were visited (visited_at = first photo's taken time, so pins
   // added after the fact still land in the right leg of the journey). Lines
   // render in Leaflet's overlay pane, under the marker pane — photo prints
-  // always sit on top of the ink.
+  // always sit on top of the ink. Cheap to rebuild, so they still are.
+  for (const r of state.routes) r.remove();
+  state.routes = [];
   for (const [hid, pins] of byTrip) {
     if (pins.length < 2) continue;
     const h = holidayById(hid);
@@ -292,16 +347,6 @@ function renderMarkers() {
     }).addTo(map);
     line.tripId = hid;
     state.routes.push(line);
-  }
-  // Pins waiting to sync ride along as ghosts: same pushpin, dashed and
-  // faded. They're local-only until the network returns; tap to discard.
-  for (const qp of pinQueue()) {
-    if (state.hidden.has(qp.holiday_id)) continue;
-    const h = holidayById(qp.holiday_id);
-    const marker = L.marker([qp.lat, qp.lng], { icon: pendingIcon(h ? h.color : "#666"), riseOnHover: true }).addTo(map);
-    marker.tripId = qp.holiday_id;
-    marker.on("click", () => openPendingPopup(qp));
-    state.markers.push(marker);
   }
   applyFocus();
 }
@@ -334,7 +379,7 @@ function openPendingPopup(qp) {
 // pins keep their position and don't replay the pop-in animation.
 function applyFocus() {
   const activePin = story.activeEl ? story.activeEl.dataset.pinId : null;
-  for (const layer of [...state.markers, ...state.routes]) {
+  for (const layer of [...state.markers.values(), ...state.routes]) {
     const elm = layer.getElement && layer.getElement();
     if (!elm) continue;
     elm.classList.toggle("dimmed", state.focused !== null && layer.tripId !== state.focused);
@@ -349,6 +394,11 @@ function setFocus(id) {
 }
 
 /* ---------- trip story: scroll the chapters, the map follows ---------- */
+
+// How many thumbnails a chapter shows before deferring to the lightbox.
+// Two rows of three: enough to recognise the stop, short enough that the
+// next chapter is always within a screen.
+const STORY_THUMBS = 6;
 
 const story = { hid: null, loadObserver: null, activeEl: null, holdUntil: 0 };
 
@@ -383,7 +433,7 @@ function loadStoryPhotos(sec) {
                      : `/api/pins/${grid.dataset.pin}/photos`;
   api("GET", path).then((photos) => {
     grid.textContent = "";
-    photos.forEach((ph, i) => {
+    photos.slice(0, STORY_THUMBS).forEach((ph, i) => {
       const img = el("img");
       img.loading = "lazy";
       img.src = photoURL(ph.asset_id, "thumb");
@@ -391,6 +441,12 @@ function loadStoryPhotos(sec) {
       img.onclick = (e) => { e.stopPropagation(); openLightbox(photos, i); };
       grid.appendChild(img);
     });
+    const more = sec.querySelector(".story-more");
+    if (more) {
+      more.disabled = false;
+      more.textContent = `All ${photos.length} photos`;
+      more.onclick = (e) => { e.stopPropagation(); openLightbox(photos, 0); };
+    }
   }).catch(() => { grid.textContent = ""; grid.appendChild(el("span", "pop-sub", "Couldn't load photos")); });
 }
 
@@ -399,7 +455,7 @@ function openStory(h, pinId) {
   story.hid = h.id;
   state.focused = h.id;
   document.body.classList.add("storying");
-  $("sheet").classList.add("collapsed");
+  setSheet(false);
   $("story-title").textContent = h.name;
   const scroll = $("story-scroll");
   scroll.textContent = "";
@@ -417,13 +473,24 @@ function openStory(h, pinId) {
     sec.appendChild(el("h3", "story-place", pin.title || (pin.kind === "photo" ? "Photo stop" : "Pin")));
     if (pin.note) sec.appendChild(el("p", "story-note", pin.note));
     if (pin.photo_count > 0) {
+      // A chapter shows a contact strip, not the whole roll. Day 1 of a trip
+      // can carry 20+ photos, and an uncapped grid made every chapter several
+      // screens tall — you scrolled photographs instead of chapters, so the
+      // map never got to fly between the stops. The rest are one tap away.
+      const shown = Math.min(pin.photo_count, STORY_THUMBS);
       const grid = el("div", "story-grid");
       grid.dataset.pin = pin.id;
       // Placeholder cells reserve the grid's final height before the photos
       // arrive — chapters must not grow later, or the open-at-pin scroll (and
       // the reader's place) slides as content above them expands.
-      for (let i = 0; i < pin.photo_count; i++) grid.appendChild(el("span", "ph"));
+      for (let i = 0; i < shown; i++) grid.appendChild(el("span", "ph"));
       sec.appendChild(grid);
+      if (pin.photo_count > shown) {
+        const more = el("button", "story-more", `All ${pin.photo_count} photos`);
+        more.type = "button";
+        more.disabled = true; // enabled once the photos are in hand
+        sec.appendChild(more);
+      }
     }
     if (SHARE) { sec.onclick = () => activateSection(sec); scroll.appendChild(sec); secs.push(sec); continue; }
     const actions = el("div", "story-actions");
@@ -715,6 +782,23 @@ function fmtDate(s) {
   return new Date(s).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
+// A date range says the shared parts once. Intl does this per-locale — an
+// elision written by hand ("23 – May 25, 2026") only reads correctly where
+// the day precedes the month, which is not something to assume.
+const rangeFmt = (() => {
+  try {
+    const f = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
+    return typeof f.formatRange === "function" ? f : null;
+  } catch { return null; }
+})();
+
+function fmtRange(a, b) {
+  const s = new Date(a), e = new Date(b);
+  if (isNaN(s) || isNaN(e)) return fmtDate(a);
+  if (rangeFmt) return rangeFmt.formatRange(s, e);
+  return `${fmtDate(a)} – ${fmtDate(b)}`;
+}
+
 function renderSheet() {
   const dots = $("pill-dots");
   dots.textContent = "";
@@ -755,31 +839,43 @@ function renderSheet() {
       live.style.background = h.color;
       name.appendChild(live);
     }
-    const range = h.active ? `since ${fmtDate(h.start_at)}` : `${fmtDate(h.start_at)} – ${fmtDate(h.end_at)}`;
-    const sub = el("div", "trip-sub", `${range} · ${h.pin_count} pins · ${h.photo_count} photos`);
+    const range = h.active ? `since ${fmtDate(h.start_at)}` : fmtRange(h.start_at, h.end_at);
+    info.append(name, el("div", "trip-meta", `${range} · ${h.pin_count} pins · ${h.photo_count} photos`));
+
+    // The cover + name is the trip's own control. It used to be a click
+    // handler on the row div, which no keyboard could ever reach.
+    const main = el("button", "trip-main");
+    main.type = "button";
+    main.append(cover, info);
+
+    // The pill links get their own line, so the name is no longer competing
+    // with them (and with ✎/👁) for one row's width.
+    const sub = el("div", "trip-sub");
     if (h.pin_count > 0 || h.unplaced_count > 0) {
       const st = el("button", "sub-link", "story");
       st.onclick = (e) => { e.stopPropagation(); openStory(h); };
-      sub.append(" · ", st);
+      sub.append(st);
     }
     if (h.unplaced_count > 0) {
       const un = el("button", "sub-link", `${h.unplaced_count} without location`);
       un.onclick = (e) => { e.stopPropagation(); openUnplaced(h); };
-      sub.append(" · ", un);
+      sub.append(un);
     }
     if (h.journal) {
       const jr = el("button", "sub-link", "journal");
       jr.onclick = (e) => { e.stopPropagation(); openJournal(h); };
-      sub.append(" · ", jr);
+      sub.append(jr);
     }
     const mfLeft = (h.pack_total || 0) - (h.pack_done || 0);
     const mf = el("button", "sub-link",
       !h.pack_total ? "manifest" : mfLeft ? `manifest · ${mfLeft} to pack` : "manifest ✓");
     mf.onclick = (e) => { e.stopPropagation(); openManifest(h); };
-    sub.append(" · ", mf);
-    info.append(name, sub);
+    sub.append(mf);
+
     const edit = el("button", "trip-eye", "✎");
+    edit.type = "button";
     edit.title = "Edit this trip";
+    edit.setAttribute("aria-label", `Edit ${h.name}`);
     edit.onclick = (e) => {
       e.stopPropagation();
       const existing = row.nextElementSibling;
@@ -791,7 +887,10 @@ function renderSheet() {
       }
     };
     const eye = el("button", "trip-eye", state.hidden.has(h.id) ? "🚫" : "👁");
+    eye.type = "button";
     eye.title = "Show or hide this trip's pins";
+    eye.setAttribute("aria-label", `Show or hide ${h.name} on the map`);
+    eye.setAttribute("aria-pressed", String(!state.hidden.has(h.id)));
     eye.onclick = (e) => {
       e.stopPropagation();
       state.hidden.has(h.id) ? state.hidden.delete(h.id) : state.hidden.add(h.id);
@@ -799,8 +898,8 @@ function renderSheet() {
       renderMarkers();
       renderSheet();
     };
-    row.append(cover, info, edit, eye);
-    row.onclick = () => {
+    row.append(main, edit, eye, sub);
+    main.onclick = () => {
       // First tap spotlights the trip (others fade) and flies to it;
       // tapping the spotlit row again releases the focus.
       if (state.focused === h.id) {
@@ -811,11 +910,11 @@ function renderSheet() {
       if (pts.length) {
         setFocus(h.id);
         map.fitBounds(pts, { padding: [50, 50], maxZoom: 13 });
-        $("sheet").classList.add("collapsed");
+        setSheet(false);
       } else if (h.dest_name) {
         // no pins yet, but the trip knows where it's going
         map.flyTo([h.dest_lat, h.dest_lng], 10);
-        $("sheet").classList.add("collapsed");
+        setSheet(false);
       } else {
         toast("No pins on this trip yet");
       }
@@ -910,62 +1009,109 @@ function tripEditForm(h) {
 
 /* ---------- overlays: passport, unplaced, journal ---------- */
 
+// Modal plumbing shared by the overlay and the lightbox. Both cover the whole
+// screen, so the page behind them is marked inert (keyboard and screen reader
+// skip it), focus moves in, and on close it returns to whatever opened it —
+// otherwise closing a dialog dumps you back at the top of the document.
+const BEHIND = ["map", "banner", "fabs", "sheet", "place-hint", "story"];
+let modalDepth = 0;
+const returnFocus = [];
+
+function modalOpen(id, focusEl) {
+  returnFocus.push(document.activeElement);
+  if (modalDepth === 0) for (const b of BEHIND) $(b).inert = true;
+  modalDepth++;
+  $(id).hidden = false;
+  if (focusEl) focusEl.focus();
+}
+
+function modalClose(id) {
+  $(id).hidden = true;
+  modalDepth = Math.max(0, modalDepth - 1);
+  if (modalDepth === 0) for (const b of BEHIND) $(b).inert = false;
+  const prev = returnFocus.pop();
+  if (prev && prev.isConnected) prev.focus();
+}
+
 function openOverlay(title, contentNode) {
   $("overlay-title").textContent = title;
   const c = $("overlay-content");
   c.textContent = "";
   c.appendChild(contentNode);
-  $("overlay").hidden = false;
+  modalOpen("overlay", $("overlay-close"));
 }
-$("overlay-close").onclick = () => { $("overlay").hidden = true; };
+
+function closeOverlay() {
+  if (!$("overlay").hidden) modalClose("overlay");
+}
+$("overlay-close").onclick = closeOverlay;
 
 $("btn-passport").onclick = async () => {
   try {
     const stamps = await api("GET", "/api/stamps");
-    const box = el("div");
+    const page = el("div", "passport");
 
-    // the data page: a life of travel in four numbers
-    const stats = el("div", "passport-stats");
     const days = state.holidays.reduce((sum, h) => {
       const end = h.end_at ? new Date(h.end_at) : new Date();
       return sum + Math.max(1, Math.round((end - new Date(h.start_at)) / 86400000) + 1);
     }, 0);
-    for (const [n, label] of [
-      [new Set(stamps.map((s) => s.country)).size, "countries"],
-      [state.holidays.length, "trips"],
-      [days, "days away"],
-      [state.holidays.reduce((s, h) => s + h.pin_count, 0), "places"],
+    const countries = new Set(stamps.map((s) => s.country));
+    const places = state.holidays.reduce((n, h) => n + h.pin_count, 0);
+
+    // The data page. Passports set their fields as label/value pairs, so these
+    // read as fields rather than as a row of dashboard stat tiles.
+    const head = el("div", "pp-head");
+    head.appendChild(el("div", "pp-crest", "\u2708"));
+    const fields = el("dl", "pp-fields");
+    for (const [k, v] of [
+      ["Holder", state.me ? state.me.username : "\u2014"],
+      ["Trips", String(state.holidays.length)],
+      ["Countries", String(countries.size)],
+      ["Days away", String(days)],
+      ["Places pinned", String(places)],
     ]) {
-      const t = el("div", "stat");
-      t.appendChild(el("div", "stat-n", String(n)));
-      t.appendChild(el("div", "stat-label", label));
-      stats.appendChild(t);
+      fields.appendChild(el("dt", "pp-key", k));
+      fields.appendChild(el("dd", "pp-val", v));
     }
-    box.appendChild(stats);
+    head.appendChild(fields);
+    page.appendChild(head);
+
+    // The machine-readable zone, built from the record it actually describes.
+    const mrz = (t) => t.toUpperCase().replace(/[^A-Z0-9]+/g, "<").slice(0, 44).padEnd(44, "<");
+    const holder = state.me ? state.me.username : "traveller";
+    page.appendChild(el("p", "pp-mrz",
+      mrz("P<GBR<" + holder) + "\n" +
+      mrz(countries.size + " countries " + state.holidays.length + " trips " + days + " days")));
+
+    page.appendChild(el("hr", "pp-perf"));
 
     const wrap = el("div", "stamp-grid");
-    if (!stamps.length) {
-      wrap.appendChild(el("p", "empty-note", "No stamps yet — countries appear here once trips have photos."));
-    }
     stamps.forEach((s, i) => {
-      const card = el("div", "stamp-card");
+      const card = el("button", "stamp-card");
       card.style.setProperty("--c", s.color);
       card.style.setProperty("--r", ((i % 5) - 2) * 1.6 + "deg");
       card.style.setProperty("--i", i % 12);
       card.appendChild(el("div", "stamp-country", s.country));
       card.appendChild(el("div", "stamp-trip", s.name));
-      card.appendChild(el("div", "stamp-admit", "Admitted · " + fmtDate(s.start_at)));
+      card.appendChild(el("div", "stamp-admit", "Admitted \u00b7 " + fmtDate(s.start_at)));
       card.title = "Open this trip's story";
       card.onclick = () => {
         const h = holidayById(s.holiday_id);
         if (!h) return;
-        $("overlay").hidden = true;
+        closeOverlay();
         openStory(h);
       };
       wrap.appendChild(card);
     });
-    box.appendChild(wrap);
-    openOverlay("Passport", box);
+    if (!stamps.length) {
+      wrap.appendChild(el("div", "stamp-blank", "Awaiting first entry"));
+    }
+    page.appendChild(wrap);
+    if (!stamps.length) {
+      page.appendChild(el("p", "pp-empty",
+        "A country is stamped here once a trip has photos with a location on them."));
+    }
+    openOverlay("Passport", page);
   } catch (err) {
     toast(err.message);
   }
@@ -1029,7 +1175,7 @@ async function openUnplaced(h) {
       try {
         const r = await api("POST", `/api/pins/${pinPick.value}/attach`, { asset_ids: [...selected] });
         toast(`Moved ${r.moved} photos onto the pin`);
-        $("overlay").hidden = true;
+        closeOverlay();
         loadData();
       } catch (err) {
         toast(err.message);
@@ -1491,7 +1637,7 @@ $("new-trip-form").onsubmit = async (e) => {
 
 /* ---------- sheet + admin + logout ---------- */
 
-$("sheet-pill").onclick = () => $("sheet").classList.toggle("collapsed");
+$("sheet-pill").onclick = () => setSheet($("sheet").classList.contains("collapsed"));
 
 $("btn-manifest").onclick = () => openMasterLists();
 
@@ -1533,7 +1679,7 @@ const lb = { photos: [], idx: 0 };
 function openLightbox(photos, idx) {
   lb.photos = photos;
   lb.idx = idx;
-  $("lightbox").hidden = false;
+  modalOpen("lightbox", $("lb-close"));
   showLightbox();
 }
 
@@ -1552,7 +1698,7 @@ function lbStep(d) {
   if (next >= 0 && next < lb.photos.length) { lb.idx = next; showLightbox(); }
 }
 
-$("lb-close").onclick = () => { $("lightbox").hidden = true; $("lb-img").src = ""; };
+$("lb-close").onclick = () => { modalClose("lightbox"); $("lb-img").src = ""; };
 $("lb-prev").onclick = () => lbStep(-1);
 $("lb-next").onclick = () => lbStep(1);
 document.addEventListener("keydown", (e) => {

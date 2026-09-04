@@ -212,8 +212,11 @@ func newStaticServer() *staticServer {
 			body:  body,
 			ctype: mime.TypeByExtension(path.Ext(p)),
 			etag:  `"` + hex.EncodeToString(sum[:8]) + `"`,
-			// vendored/immutable-ish assets: cache hard, revalidate rarely
-			longCache: strings.HasPrefix(p, "leaflet/") || strings.HasSuffix(p, ".woff2"),
+			// vendored/immutable-ish assets: cache hard, revalidate rarely.
+			// icons/ belongs here too — the service worker already treats it as
+			// immutable, so serving it no-cache had the two layers disagreeing.
+			longCache: strings.HasPrefix(p, "leaflet/") || strings.HasPrefix(p, "icons/") ||
+				strings.HasSuffix(p, ".woff2"),
 		}
 		if f.ctype == "" {
 			f.ctype = http.DetectContentType(body)

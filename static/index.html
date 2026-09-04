@@ -8,6 +8,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📍</text></svg>">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
+<link rel="preload" href="/staatliches.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/leaflet/leaflet.css">
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -37,7 +38,7 @@
 
 <!-- Trips sheet -->
 <div id="sheet" class="collapsed">
-  <button id="sheet-pill">
+  <button id="sheet-pill" aria-expanded="false" aria-controls="sheet-body">
     <span id="pill-dots"></span>
     <span id="pill-label">Trips</span>
   </button>
@@ -87,7 +88,7 @@
 </div>
 
 <!-- Full-screen overlay (passport, unplaced photos, journal) -->
-<div id="overlay" hidden>
+<div id="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="overlay-title">
   <div id="overlay-head">
     <h2 id="overlay-title"></h2>
     <button id="overlay-close" aria-label="Close">×</button>
@@ -96,7 +97,7 @@
 </div>
 
 <!-- Trip story: bottom sheet (phone) / side panel (desktop); the map follows the scroll -->
-<aside id="story" hidden>
+<aside id="story" hidden role="region" aria-labelledby="story-title">
   <div id="story-head">
     <h2 id="story-title"></h2>
     <button id="story-close" aria-label="Close the story">×</button>
@@ -105,7 +106,7 @@
 </aside>
 
 <!-- Lightbox -->
-<div id="lightbox" hidden>
+<div id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Photo viewer">
   <button id="lb-close" aria-label="Close">×</button>
   <button id="lb-prev" aria-label="Previous">‹</button>
   <img id="lb-img" alt="">
@@ -127,7 +128,7 @@
   </form>
 </div>
 
-<div id="toast" hidden></div>
+<div id="toast" hidden role="status" aria-live="polite"></div>
 
 <script src="/leaflet/leaflet.js"></script>
 <script src="/app.js"></script>

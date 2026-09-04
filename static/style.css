@@ -16,7 +16,7 @@
   --navy-2: #142639;
   --gold: #c6a45e;
   --red: #b3372a;
-  --muted: #86796a;
+  --muted: #6f6354;
   --line: #dcd1b6;
   --shadow: 0 2px 14px rgba(38, 34, 28, .2);
   --stamp: "Staatliches", "Arial Narrow", sans-serif;
@@ -229,12 +229,32 @@ body.placing #fab-pin { background: var(--red); }
 }
 #sheet.collapsed #sheet-body { display: none; }
 
+/* Two lines, not one crowded one: the name owns the full width of the row
+   (it used to fight the ✎/👁 buttons for space and lose to an ellipsis), and
+   the pill links get their own line indented past the cover. The cover+name
+   is a real <button> — it is the app's primary navigation and was a div with
+   an onclick, so it was unreachable by keyboard. */
 .trip-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: 4px; row-gap: 4px;
+  padding: 9px 14px;
+}
+.trip-main {
+  grid-column: 1 / -1; grid-row: 1; min-width: 0;
   display: flex; align-items: center; gap: 10px;
-  padding: 9px 14px; cursor: pointer;
+  background: none; border: none; padding: 0; margin: 0;
+  color: inherit; text-align: left; cursor: pointer;
+}
+.trip-meta { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.trip-sub {
+  grid-column: 1; grid-row: 2; padding-left: 54px; /* clears the 44px cover + gap */
+  font-size: 12px; color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: 6px;
 }
 .trip-row + .trip-row { border-top: 1px dotted var(--line); } /* booklet perforation */
-.trip-row:hover { background: var(--paper-2); }
+.trip-row:hover, .trip-row:focus-within { background: var(--paper-2); }
 .trip-cover {
   flex: none; width: 44px; height: 44px; border-radius: 9px;
   overflow: hidden; box-shadow: 0 0 0 2px var(--c, #1d6fb8), 0 1px 4px rgba(38,34,28,.25);
@@ -248,8 +268,8 @@ body.placing #fab-pin { background: var(--red); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .trip-name .live { color: #fff; font-size: 11px; letter-spacing: 1px; border-radius: 4px; padding: 1px 5px; vertical-align: 2px; }
-.trip-sub { font-size: 12px; color: var(--muted); line-height: 1.9; }
 .trip-eye {
+  grid-row: 2; /* ride the actions line, after the pills */
   flex: none; background: none; border: none; font-size: 15px;
   width: 32px; height: 32px; padding: 0; border-radius: 50%;
   opacity: .75;
@@ -408,28 +428,64 @@ button.linkish, a.linkish {
 }
 #overlay-content { padding: 16px; max-width: 900px; margin: 0 auto; }
 
-/* the passport page: the data strip, then the stamps */
-.passport-stats {
-  display: flex; gap: 6px; justify-content: space-between;
-  padding: 4px 0 14px; margin-bottom: 6px;
-  border-bottom: 3px double var(--line);
-  text-align: center;
+/* ---------- the passport page ----------
+   It reads as a booklet page lying open on the desk, not a responsive card
+   grid: a fixed page width so one stamp looks like a passport just opened
+   rather than a broken layout, a data page at the top, and the stamps below
+   the perforation. The MRZ chevron strip is the one loud flourish, and it
+   carries real data (the holder's name) rather than decorating. */
+
+.passport {
+  max-width: 620px; margin: 0 auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px 14px 14px 4px;   /* bound edge left, trimmed page right */
+  box-shadow: 0 6px 26px rgba(38, 34, 28, .16);
+  padding: 22px 26px 30px;
+  min-height: 60vh;                    /* a page is a page even when empty */
+  position: relative;
 }
-.passport-stats .stat { flex: 1; }
-.passport-stats .stat-n {
-  font-family: var(--stamp); font-size: 32px; line-height: 1;
-  color: var(--navy);
-}
-.passport-stats .stat-label {
-  margin-top: 3px; font-size: 11px; letter-spacing: 1.5px;
-  text-transform: uppercase; color: var(--muted);
+/* the stitched spine */
+.passport::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 5px;
+  border-radius: 4px 0 0 4px;
+  background: repeating-linear-gradient(var(--navy) 0 7px, transparent 7px 13px);
+  opacity: .5;
 }
 
-.stamp-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 20px; padding: 10px 0;
+.pp-head { display: flex; align-items: flex-start; gap: 20px; }
+.pp-crest {
+  flex: none; width: 52px; height: 52px; border-radius: 50%;
+  border: 2px solid var(--gold); color: var(--gold);
+  display: grid; place-items: center; font-size: 23px;
 }
+/* the data page: label left, value right, the way a passport sets its fields */
+.pp-fields { flex: 1; display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; align-items: baseline; }
+.pp-key {
+  font-family: var(--stamp); font-size: 11px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--muted);
+}
+.pp-val { font-family: var(--stamp); font-size: 19px; letter-spacing: 1px; color: var(--navy); text-align: right; }
+
+/* machine-readable zone */
+.pp-mrz {
+  margin: 16px 0 0; padding: 8px 0 0;
+  border-top: 3px double var(--line);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px; letter-spacing: .5px; line-height: 1.6;
+  color: var(--muted); white-space: pre-line; overflow-x: auto;
+}
+
+.pp-perf {
+  margin: 18px -26px 20px; border: 0;
+  border-top: 2px dashed var(--line);
+}
+
+/* stamps sit at their natural size and pack from the left, overlapping a
+   little like ink laid on a page that is filling up */
+.stamp-grid { display: flex; flex-wrap: wrap; gap: 16px 12px; }
 .stamp-card {
+  flex: 0 0 auto; width: 190px;
   border: 3px double var(--c, #1d6fb8); color: var(--c, #1d6fb8);
   border-radius: 10px; padding: 14px 10px 11px; text-align: center;
   transform: rotate(var(--r, 0deg));
@@ -450,6 +506,14 @@ button.linkish, a.linkish {
   font-family: var(--stamp); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
   opacity: .85;
 }
+/* an empty page invites the first stamp instead of just being blank */
+.stamp-blank {
+  width: 190px; padding: 22px 10px; border-radius: 10px;
+  border: 2px dashed var(--line); color: var(--muted);
+  text-align: center; font-family: var(--stamp);
+  font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
+}
+.pp-empty { margin: 12px 0 0; font-size: 14px; color: var(--muted); max-width: 42ch; }
 
 .gallery-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
@@ -556,8 +620,11 @@ button.linkish, a.linkish {
 }
 #story-title {
   margin: 0; font-family: var(--stamp); font-size: 21px; letter-spacing: 1.5px;
-  text-transform: uppercase;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  line-height: 1.15; text-transform: uppercase;
+  /* the panel is 380px on desktop; a long trip name wraps to a second line
+     rather than losing its second half to an ellipsis */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 #story-close {
   flex: none; width: 34px; height: 34px; border-radius: 50%;
@@ -610,6 +677,15 @@ button.linkish, a.linkish {
   box-shadow: 0 0 0 2px #fffdf7, 0 1px 2px rgba(38, 34, 28, .25);
 }
 .story-grid img { cursor: pointer; }
+/* the tail of a long chapter, opened in the lightbox rather than scrolled */
+.story-more {
+  margin-top: 6px; width: 100%;
+  background: none; border: 1px dashed var(--line); border-radius: 6px;
+  padding: 7px; color: var(--muted);
+  font-family: var(--stamp); font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
+}
+.story-more:hover:not(:disabled) { border-color: var(--muted); color: var(--ink); }
+.story-more:disabled { opacity: .5; cursor: default; }
 
 /* the sheet and fabs would collide with (or hide behind) the panel */
 body.storying #sheet, body.storying #fabs { display: none; }
@@ -750,7 +826,7 @@ button.primary.gold {
     --ink: #e6dfcf;
     --navy: #31517a;
     --navy-2: #10151d;
-    --red: #d0685c;
+    --red: #e08578;
     --muted: #98917f;
     --line: #3a4254;
     --field: #2a3140;
@@ -759,5 +835,13 @@ button.primary.gold {
   .leaflet-tile-pane { filter: none; } /* the night plate needs no sepia */
   #map::after { box-shadow: inset 0 0 140px rgba(0, 0, 0, .55); }
   .leaflet-control-attribution { background: rgba(26, 31, 42, .85); }
-  .passport-stats .stat-n { color: var(--gold); }
+  .pp-val { color: var(--gold); }
+  .passport { box-shadow: 0 6px 26px rgba(0, 0, 0, .5); }
+  /* the stamp's uneven-ink highlight is a paper effect; at full strength on
+     the night page it washes the country name out */
+  .stamp-card {
+    background:
+      radial-gradient(ellipse at 30% 20%, rgba(255, 255, 255, .06), transparent 60%),
+      var(--paper);
+  }
 }
