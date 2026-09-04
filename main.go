@@ -163,10 +163,10 @@ func (a *app) housekeeping() {
 const csp = "default-src 'self'; " +
 	"script-src 'self'; " +
 	"style-src 'self' 'unsafe-inline'; " + // Leaflet div-icons carry style attributes
-	"img-src 'self' data: https://*.basemaps.cartocdn.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org; " +
-	// the tile CDN must be in connect-src too: the service worker inherits this
+	"img-src 'self' data: https://server.arcgisonline.com; " +
+	// the tile host must be in connect-src too: the service worker inherits this
 	// CSP, and its tile-cache fetch() calls are connect-src, not img-src
-	"connect-src 'self' https://*.basemaps.cartocdn.com; " +
+	"connect-src 'self' https://server.arcgisonline.com; " +
 	"base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 
 func securityHeaders(next http.Handler) http.Handler {

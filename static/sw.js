@@ -9,14 +9,16 @@
 //     they only ever change together with a bumped CACHE name.
 //   - /api/* is never touched: live data stays live, and failures surface to
 //     the app's own error handling instead of a stale cache lying about state.
-//   - CARTO basemap tiles — cache-first with a FIFO cap. Only tiles actually
+//   - Esri basemap tiles — cache-first with a FIFO cap. Only tiles actually
 //     viewed get cached (no prefetch: bulk downloading is against tile-server
 //     policy); browse an area online once and it renders offline later.
 //   - other cross-origin is never touched.
 
 const CACHE = "shell-v1";
-const TILE_CACHE = "tiles-v1";
-const TILE_HOST = /^[a-d]\.basemaps\.cartocdn\.com$/;
+// v2: tiles-v1 holds CARTO tiles stamped "API KEY REQUIRED", so the rename is
+// what actually clears the defaced basemap off devices that already visited.
+const TILE_CACHE = "tiles-v2";
+const TILE_HOST = /^server\.arcgisonline\.com$/;
 // ~16KB/tile average → cap ≈ 65MB. FIFO, trimmed probabilistically so we
 // don't enumerate thousands of cache keys on every single tile fetch.
 const TILE_MAX = 4000;
@@ -84,9 +86,9 @@ async function serve(path) {
   }
 }
 
-// The a-d subdomains all serve identical tiles, so the cache key drops the
-// shard — a tile fetched from a. still hits when Leaflet later asks b. for it.
-const tileKey = (url) => "https://basemaps.cartocdn.com" + url.pathname;
+// Esri serves every tile from one host, so the path alone identifies a tile
+// (no a-d shard to normalise away as CARTO needed).
+const tileKey = (url) => url.origin + url.pathname;
 
 async function serveTile(e, url) {
   const key = tileKey(url);

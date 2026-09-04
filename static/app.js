@@ -157,21 +157,44 @@ window.addEventListener("online", () => {
 
 const map = L.map("map", { zoomControl: false, worldCopyJump: true });
 L.control.zoom({ position: "bottomright" }).addTo(map);
-// CARTO Voyager: warm muted colours + quiet labels, much closer to an atlas
-// plate than stock OSM. Dark scheme swaps to CARTO's night plate (Dark
-// Matter), matching the CSS token flip in style.css.
+// Esri World Topo: a printed-atlas plate — muted greens, relief shading and
+// italic serif water labels — and still keyless, which CARTO's basemaps
+// stopped being in Aug 2026 (every tile came back stamped "API KEY REQUIRED").
+// Dark scheme swaps to Esri's night plate, matching the CSS token flip in
+// style.css. Note Esri's tile path is {z}/{y}/{x}, not the usual {z}/{x}/{y}.
 const darkScheme = matchMedia("(prefers-color-scheme: dark)");
-const tileURL = () =>
-  `https://{s}.basemaps.cartocdn.com/${darkScheme.matches ? "dark_all" : "rastertiles/voyager"}/{z}/{x}/{y}{r}.png`;
-const tiles = L.tileLayer(tileURL(), {
-  maxZoom: 20,
-  subdomains: "abcd",
-  // CORS mode so the service worker's tile cache stores real responses, not
-  // opaque ones (opaque entries get ~7MB of quota padding each in Chromium)
-  crossOrigin: "anonymous",
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-}).addTo(map);
-darkScheme.addEventListener("change", () => tiles.setUrl(tileURL()));
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
+const esriPlate = (service, opts) =>
+  L.tileLayer(`${ESRI}/${service}/MapServer/tile/{z}/{y}/{x}`, {
+    maxZoom: 20,
+    // deepest level Esri has cached; Leaflet upscales beyond it rather than
+    // dropping to blank tiles when you zoom in on a single caravan pitch
+    maxNativeZoom: 19,
+    // CORS mode so the service worker's tile cache stores real responses, not
+    // opaque ones (opaque entries get ~7MB of quota padding each in Chromium)
+    crossOrigin: "anonymous",
+    attribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a>',
+    ...opts,
+  });
+// Dark Gray ships its labels as a SEPARATE reference layer — the base alone
+// carries no place names at all, so the night plate is two layers stacked.
+const plates = {
+  light: [esriPlate("World_Topo_Map")],
+  dark: [
+    esriPlate("Canvas/World_Dark_Gray_Base", { zIndex: 1 }),
+    esriPlate("Canvas/World_Dark_Gray_Reference", { zIndex: 2, attribution: "" }),
+  ],
+};
+let plate = [];
+function setPlate() {
+  const next = darkScheme.matches ? plates.dark : plates.light;
+  if (next === plate) return;
+  plate.forEach((l) => map.removeLayer(l));
+  plate = next;
+  plate.forEach((l) => l.addTo(map));
+}
+setPlate();
+darkScheme.addEventListener("change", setPlate);
 map.setView([35, 10], 3);
 
 // Pins wear three outfits by zoom: enamel dots at country/world zoom (so a
