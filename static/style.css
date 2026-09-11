@@ -11,13 +11,31 @@
 :root {
   --paper: #f6f1e3;
   --paper-2: #ede5cf;
-  --ink: #26221c;
   --navy: #1c3652;
   --navy-2: #142639;
   --gold: #c6a45e;
   --red: #b3372a;
-  --muted: #6f6354;
-  --line: #dcd1b6;
+  /* Ink on paper. Held one level back so the cover can re-scope --muted for
+     itself (--muted on navy is 2.11:1) and the paper cards sitting on the
+     cover can restore it, without either side hard-coding a hex. */
+  --ink-paper: #26221c;
+  --muted-paper: #6f6354;
+  --line-paper: #dcd1b6;
+  --ink: var(--ink-paper);
+  --muted: var(--muted-paper);
+  --line: var(--line-paper);
+  /* The cover, lifted out of #login so every cover surface shares one source.
+     Gold is legible only here: 5.22:1 on navy, 2.10:1 on paper. */
+  --cover: radial-gradient(120% 100% at 50% 0%, var(--navy) 0%, var(--navy-2) 70%);
+  --foil: rgba(198, 164, 94, .75);
+  --foil-dim: rgba(198, 164, 94, .35);
+  --on-cover: #e7ddc6;        /* 9.16:1 on navy */
+  --on-cover-dim: #b8ae95;    /* 5.61:1 on navy */
+  /* Navy and paper trade places in the dark scheme, so "paper on navy" inverts
+     to 1.82:1 there. These two name the RELATIONSHIP instead of the colour, and
+     the dark block redefines them. Light-mode values are unchanged (10.95:1). */
+  --on-navy: var(--paper);    /* text and icons on a navy fill */
+  --navy-ink: var(--navy);    /* navy-coloured text sitting on paper */
   --shadow: 0 2px 14px rgba(38, 34, 28, .2);
   --stamp: "Staatliches", "Arial Narrow", sans-serif;
   --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -198,12 +216,16 @@ body.placing #map { cursor: crosshair; }
 }
 #fabs button {
   width: 52px; height: 52px; border-radius: 50%;
-  background: var(--navy); color: var(--paper);
-  border: none; font-size: 22px; box-shadow: var(--shadow);
+  display: grid; place-items: center;
+  background: var(--navy); color: var(--on-navy);
+  border: none; box-shadow: var(--shadow);
 }
-#fab-gps { background: var(--paper); font-size: 24px; }
-#fab-pin span { font-size: 14px; vertical-align: 6px; margin-left: -3px; }
-body.placing #fab-pin { background: var(--red); }
+#fabs button svg { width: 25px; height: 25px; display: block; }
+/* placing a pin is the primary map action, so it wears the cover's gold ring;
+   the locator stays paper, as a secondary */
+#fabs #fab-pin { box-shadow: var(--shadow), 0 0 0 1px var(--foil) inset; }
+#fabs #fab-gps { background: var(--paper); color: var(--navy-ink); }
+body.placing #fab-pin { background: var(--red); box-shadow: var(--shadow); }
 
 /* ---------- trips sheet ---------- */
 
@@ -211,15 +233,22 @@ body.placing #fab-pin { background: var(--red); }
   position: fixed; left: 10px; bottom: max(10px, env(safe-area-inset-bottom)); z-index: 1600;
   width: min(340px, calc(100vw - 20px));
 }
+/* The spine of the booklet, lying on the atlas: the login's cover in miniature,
+   down to the double gold frame (border + inset outline). */
 #sheet-pill {
   display: flex; align-items: center; gap: 8px;
-  background: var(--paper); color: var(--ink);
-  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--cover); background-color: var(--navy); color: var(--gold);
+  border: 1px solid var(--foil); border-radius: 999px;
+  outline: 1px solid var(--foil-dim); outline-offset: -4px;
   padding: 9px 16px; box-shadow: var(--shadow);
   font-family: var(--stamp); font-size: 16px; letter-spacing: 1.5px; text-transform: uppercase;
 }
 #pill-dots { display: flex; gap: 3px; }
-#pill-dots i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+/* the trip colours need an edge to survive on navy */
+#pill-dots i {
+  width: 10px; height: 10px; border-radius: 50%; display: block;
+  box-shadow: 0 0 0 1px rgba(231, 221, 198, .4);
+}
 #sheet-body {
   margin-top: 8px;
   background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
@@ -305,13 +334,21 @@ input[type=text], input[type=password], input[type=date], textarea, select {
   background: var(--field, #fffdf7); border: 1px solid var(--line); border-radius: 8px;
   padding: 9px 10px; width: 100%;
 }
-#btn-passport {
-  background: var(--paper); border: 3px double var(--navy); border-radius: 8px;
-  padding: 7px 14px; color: var(--navy);
-  font-family: var(--stamp); font-size: 16px; letter-spacing: 2px; text-transform: uppercase;
+/* Two documents, one strip. They used to stack as two full-width double-bordered
+   blocks and shout as loudly as the primary action; side by side and quieter,
+   they read as what they are — the booklet's other pages. */
+.docs-row { display: flex; gap: 8px; }
+.docs-row button {
+  flex: 1; min-width: 0;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+  border-top-width: 3px; border-top-style: double;
+  padding: 8px 6px; min-height: 40px;
+  font-family: var(--stamp); font-size: 15px; letter-spacing: 2px; text-transform: uppercase;
 }
+#btn-passport { color: var(--navy-ink); border-top-color: var(--navy-ink); }
+.docs-row button:hover { background: var(--paper-2); }
 button.primary {
-  background: var(--navy); color: var(--paper);
+  background: var(--navy); color: var(--on-navy);
   border: none; border-radius: 8px; padding: 10px 14px; min-height: 40px;
 }
 button.primary:hover { filter: brightness(1.12); }
@@ -334,8 +371,31 @@ input[type=text]:focus, input[type=password]:focus, input[type=date]:focus, text
   padding: 0;
 }
 #swatches button.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--paper) inset; }
-#admin-box summary, #pass-box summary { font-size: 13px; color: var(--muted); cursor: pointer; padding: 4px 0; }
+/* The native ▶ marker is browser chrome and reads as unfinished next to the
+   stamped type; this is the same affordance drawn in the app's own hand. */
+#admin-box summary, #pass-box summary {
+  display: flex; align-items: center; gap: 8px;
+  list-style: none; font-size: 13px; color: var(--muted); cursor: pointer; padding: 5px 0;
+}
+#admin-box summary::-webkit-details-marker,
+#pass-box summary::-webkit-details-marker { display: none; }
+#admin-box summary::before, #pass-box summary::before {
+  content: "+"; flex: none;
+  width: 18px; height: 18px; border: 1px solid var(--line); border-radius: 4px;
+  font-family: var(--stamp); font-size: 14px; line-height: 16px; text-align: center;
+  color: var(--navy-ink);
+}
+#admin-box[open] summary::before, #pass-box[open] summary::before { content: "–"; }
+#admin-box summary:hover::before, #pass-box summary:hover::before { border-color: var(--muted); }
 #admin-box form, #pass-box form { margin-top: 8px; }
+
+/* the endpaper: account odds and ends, set apart from the trips */
+.endpaper {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+  margin: 4px -14px -10px; padding: 10px 14px;
+  background: var(--paper-2); border-top: 1px dotted var(--line);
+}
+.endpaper .form-hint { margin-left: auto; }
 button.linkish, a.linkish {
   background: none; border: none; color: var(--muted); font-size: 13px;
   text-decoration: underline; padding: 2px; align-self: flex-start;
@@ -407,26 +467,76 @@ button.linkish, a.linkish {
 
 /* ---------- overlay (passport / gallery / journal) ---------- */
 
+/* Opening the passport: the cover is the ground, the document lies on it.
+   --muted/--ink/--line are re-scoped for the cover here; the paper cards
+   below put them back, so no rule needs to know which side it is on. */
 #overlay {
   position: fixed; inset: 0; z-index: 2500;
-  background: var(--paper-2);
+  background: var(--cover); background-color: var(--navy-2);
   overflow-y: auto;
+  --ink: var(--on-cover);
+  --muted: var(--on-cover-dim);
+  --line: rgba(198, 164, 94, .28);
+  color: var(--on-cover);
 }
 #overlay-head {
   position: sticky; top: 0; z-index: 1;
   display: flex; align-items: center; justify-content: space-between;
-  padding: max(14px, env(safe-area-inset-top)) 16px 12px; background: var(--paper-2);
-  border-bottom: 3px double var(--line);
+  padding: max(14px, env(safe-area-inset-top)) 16px 12px;
+  background: var(--navy-2);           /* opaque: it scrolls over the document */
+  border-bottom: 3px double var(--foil-dim);
 }
 #overlay-title {
   margin: 0; font-family: var(--stamp); font-size: 24px;
   letter-spacing: 2px; text-transform: uppercase;
+  color: var(--gold);
 }
 #overlay-close {
-  background: var(--paper); border: 1px solid var(--line); border-radius: 50%;
+  background: rgba(231, 221, 198, .07); color: var(--gold);
+  border: 1px solid var(--foil-dim); border-radius: 50%;
   width: 40px; height: 40px; font-size: 22px; line-height: 1;
 }
+#overlay-close:hover { background: rgba(231, 221, 198, .14); border-color: var(--foil); }
 #overlay-content { padding: 16px; max-width: 900px; margin: 0 auto; }
+
+#overlay input, #overlay textarea, #overlay select { color: var(--ink-paper); }
+/* On the cover a navy focus border is invisible, so fields there take the foil. */
+#overlay-head :focus-visible, #story-head :focus-visible, .attach-bar :focus-visible {
+  outline-color: var(--gold);
+}
+.attach-bar select:focus, .attach-bar input:focus, .attach-bar textarea:focus {
+  border-color: var(--gold); box-shadow: 0 0 0 2px rgba(198, 164, 94, .35);
+}
+
+/* The documents themselves are pages: paper ink is restored inside them. */
+#overlay .passport, #overlay .manifest, #overlay .journal-read {
+  --ink: var(--ink-paper);
+  --muted: var(--muted-paper);
+  --line: var(--line-paper);
+  color: var(--ink-paper);
+}
+/* The manifest and the journal were bare content on the old cream ground; on
+   the cover they become what they always were — a slip and a page on the desk. */
+#overlay .manifest, #overlay .journal-read {
+  background: var(--paper);
+  border: 1px solid var(--line-paper);
+  border-radius: 4px 12px 12px 4px;
+  box-shadow: 0 6px 26px rgba(0, 0, 0, .28);
+  padding: 20px 22px 26px;
+  min-height: min(78vh, 700px);   /* same page presence as the passport */
+}
+/* On the cover, navy-on-navy is invisible, so the primary takes the login's
+   gold. Inside a paper card it goes back to navy. One rule, no exceptions. */
+#overlay button.primary {
+  background: var(--gold); color: var(--navy-2);
+  font-family: var(--stamp); font-size: 16px; letter-spacing: 2px; text-transform: uppercase;
+}
+#overlay .passport button.primary,
+#overlay .manifest button.primary,
+#overlay .journal-read button.primary {
+  background: var(--navy); color: var(--on-navy);
+  font-family: var(--body); font-size: inherit; letter-spacing: normal; text-transform: none;
+}
 
 /* ---------- the passport page ----------
    It reads as a booklet page lying open on the desk, not a responsive card
@@ -442,7 +552,7 @@ button.linkish, a.linkish {
   border-radius: 4px 14px 14px 4px;   /* bound edge left, trimmed page right */
   box-shadow: 0 6px 26px rgba(38, 34, 28, .16);
   padding: 22px 26px 30px;
-  min-height: 60vh;                    /* a page is a page even when empty */
+  min-height: min(78vh, 700px);        /* a page is a page even when empty */
   position: relative;
 }
 /* the stitched spine */
@@ -521,7 +631,7 @@ button.linkish, a.linkish {
 }
 .gallery-grid img {
   width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px;
-  cursor: pointer; background: var(--paper);
+  cursor: pointer; background: rgba(231, 221, 198, .07);
 }
 .gallery-grid img.sel {
   outline: 3px solid var(--red); outline-offset: -3px;
@@ -536,8 +646,8 @@ button.linkish, a.linkish {
 .attach-bar {
   position: sticky; top: 0; z-index: 2;
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
-  padding: 10px 0 12px; margin-bottom: 4px;
-  background: var(--paper-2); border-bottom: 1px solid var(--line);
+  padding: 10px 12px 12px; margin: 0 -12px 4px;
+  background: var(--navy-2); border-bottom: 1px solid var(--foil-dim);
 }
 .attach-hint { font-size: 13px; color: var(--muted); flex: 1; min-width: 140px; }
 .attach-bar select { width: auto; flex: none; max-width: 55%; }
@@ -573,6 +683,16 @@ button.linkish, a.linkish {
   border: 2px solid var(--red); border-radius: 5px; padding: 1px 7px;
   --r: -6deg; transform: rotate(var(--r)); opacity: .88;
 }
+/* the empty master-lists state: a blank slip, ruled and waiting */
+.mf-blank { margin: 2px 0 4px; }
+.mf-blank-head {
+  margin: 0 0 6px; font-family: var(--stamp); font-size: 16px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--muted);
+  padding-bottom: 8px; border-bottom: 3px double var(--line);
+}
+.mf-blank .mf-row { cursor: default; opacity: .62; }
+.mf-void-cell { flex: none; width: 76px; text-align: center; }
+
 .mf-icon {
   flex: none; width: 30px; height: 30px; border-radius: 50%;
   background: none; border: none; padding: 0;
@@ -586,11 +706,7 @@ button.linkish, a.linkish {
   background: none; border: 1px solid var(--line); border-radius: 8px;
   padding: 10px 14px; color: var(--muted); white-space: nowrap;
 }
-#btn-manifest {
-  background: var(--paper); border: 3px double var(--red); border-radius: 8px;
-  padding: 7px 14px; color: var(--red);
-  font-family: var(--stamp); font-size: 16px; letter-spacing: 2px; text-transform: uppercase;
-}
+#btn-manifest { color: var(--red); border-top-color: var(--red); }
 
 /* ---------- trip story: the map follows the scroll ---------- */
 
@@ -601,8 +717,8 @@ button.linkish, a.linkish {
   height: min(52vh, 520px);
   display: flex; flex-direction: column;
   background: var(--paper);
-  border-top: 3px double var(--line);
   border-radius: 16px 16px 0 0;
+  overflow: hidden;                     /* the cover bar is clipped to the corners */
   box-shadow: 0 -4px 24px rgba(38, 34, 28, .25);
 }
 @media (min-width: 720px) {
@@ -613,13 +729,20 @@ button.linkish, a.linkish {
     box-shadow: 4px 0 24px rgba(38, 34, 28, .2);
   }
 }
+/* The story is the trip's own booklet: cover bar, paper chapters. The trip's
+   colour bleeds along the top edge so it still reads as that trip's document. */
 #story-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 10px 14px 8px;
-  border-bottom: 3px double var(--line);
+  background: var(--navy-2);
+  border-top: 3px solid var(--c, #1d6fb8);
+  border-bottom: 3px double var(--foil-dim);
+  border-radius: 13px 13px 0 0;
 }
+@media (min-width: 720px) { #story-head { border-radius: 0; } }
 #story-title {
-  margin: 0; font-family: var(--stamp); font-size: 21px; letter-spacing: 1.5px;
+  margin: 0; color: var(--gold);
+  font-family: var(--stamp); font-size: 21px; letter-spacing: 1.5px;
   line-height: 1.15; text-transform: uppercase;
   /* the panel is 380px on desktop; a long trip name wraps to a second line
      rather than losing its second half to an ellipsis */
@@ -628,9 +751,11 @@ button.linkish, a.linkish {
 }
 #story-close {
   flex: none; width: 34px; height: 34px; border-radius: 50%;
-  background: var(--paper-2); border: 1px solid var(--line);
+  background: rgba(231, 221, 198, .07); color: var(--gold);
+  border: 1px solid var(--foil-dim);
   font-size: 19px; line-height: 1;
 }
+#story-close:hover { background: rgba(231, 221, 198, .14); border-color: var(--foil); }
 #story-scroll {
   overflow-y: auto; overscroll-behavior: contain;
   padding: 0 14px;
@@ -730,15 +855,15 @@ body.shared #sheet, body.shared #fabs, body.shared #banner { display: none !impo
 
 #login {
   position: fixed; inset: 0; z-index: 4000;
-  background: radial-gradient(120% 100% at 50% 0%, var(--navy) 0%, var(--navy-2) 70%);
+  background: var(--cover);
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
 #login[hidden] { display: none; }
 #login-form {
   width: min(330px, 100%);
   background: linear-gradient(160deg, rgba(255,255,255,.045), rgba(0,0,0,.12)), var(--navy);
-  border: 1px solid rgba(198,164,94,.75); border-radius: 12px;
-  outline: 1px solid rgba(198,164,94,.35); outline-offset: -7px; /* double gold frame */
+  border: 1px solid var(--foil); border-radius: 12px;
+  outline: 1px solid var(--foil-dim); outline-offset: -7px; /* double gold frame */
   box-shadow: 0 12px 40px rgba(0,0,0,.45);
   padding: 30px 26px 26px; display: flex; flex-direction: column; gap: 10px;
 }
@@ -823,12 +948,17 @@ button.primary.gold {
   :root {
     --paper: #222835;
     --paper-2: #1a1f2a;
-    --ink: #e6dfcf;
     --navy: #31517a;
     --navy-2: #10151d;
     --red: #e08578;
-    --muted: #98917f;
-    --line: #3a4254;
+    --ink-paper: #e6dfcf;
+    --muted-paper: #98917f;
+    --line-paper: #3a4254;
+    --cover: radial-gradient(120% 100% at 50% 0%, #1b2c44 0%, var(--navy-2) 70%);
+    /* see the note on these in :root — 6.11:1 and 6.62:1 here, vs 1.82:1 if
+       they kept inheriting --paper / --navy */
+    --on-navy: var(--ink-paper);
+    --navy-ink: #8fb0dd;
     --field: #2a3140;
     --shadow: 0 2px 14px rgba(0, 0, 0, .55);
   }

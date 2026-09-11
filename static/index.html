@@ -30,8 +30,18 @@
 </header>
 
 <div id="fabs">
-  <button id="fab-gps" title="Pin my current location" aria-label="Pin my current location">🧭</button>
-  <button id="fab-pin" title="Add a pin on the map" aria-label="Add a pin on the map">📍<span>+</span></button>
+  <button id="fab-gps" title="Pin my current location" aria-label="Pin my current location">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/>
+      <path d="M15.6 8.4 10.7 10.7 8.4 15.6 13.3 13.3Z" fill="currentColor" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <button id="fab-pin" title="Add a pin on the map" aria-label="Add a pin on the map">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+      <path d="M12 21.2s6.4-6.2 6.4-10.6a6.4 6.4 0 1 0-12.8 0c0 4.4 6.4 10.6 6.4 10.6Z" stroke-linejoin="round"/>
+      <path d="M12 7.9v5.2M9.4 10.5h5.2" stroke-linecap="round"/>
+    </svg>
+  </button>
 </div>
 
 <div id="place-hint" hidden>Tap the map to place your pin <button id="btn-cancel-place">Cancel</button></div>
@@ -46,8 +56,10 @@
     <div id="trip-list"></div>
     <div id="sheet-forms">
       <button id="btn-new-trip" class="primary">Start a holiday</button>
-      <button id="btn-passport">Passport</button>
-      <button id="btn-manifest">Manifest</button>
+      <div class="docs-row">
+        <button id="btn-passport">Passport</button>
+        <button id="btn-manifest">Manifest</button>
+      </div>
       <form id="new-trip-form" hidden>
         <input id="trip-name" type="text" placeholder="Where are you going?" maxlength="60" required>
         <div id="swatches"></div>
@@ -80,9 +92,11 @@
           <button type="submit" class="primary">Change password</button>
         </form>
       </details>
-      <a id="btn-export" class="linkish" href="/api/export" download>Export my data</a>
-      <button id="btn-logout" class="linkish">Sign out</button>
-      <p id="app-version" class="form-hint"></p>
+      <div class="endpaper">
+        <a id="btn-export" class="linkish" href="/api/export" download>Export my data</a>
+        <button id="btn-logout" class="linkish">Sign out</button>
+        <p id="app-version" class="form-hint"></p>
+      </div>
     </div>
   </div>
 </div>

@@ -1411,8 +1411,21 @@ async function openMasterLists() {
       "Master lists hold the things you always pack. Bring one onto a trip from its manifest, and tick items off there."));
 
     if (!templates.length) {
-      box.appendChild(el("p", "empty-note", "No master lists yet."));
-      const starter = el("button", "primary", "Create starter lists — caravan · beach · city break");
+      // A blank slip: ruled leader lines show the shape a list takes, so the
+      // empty state is an invitation rather than a void.
+      const blank = el("div", "mf-blank");
+      blank.appendChild(el("p", "mf-blank-head", "Nothing on your lists yet"));
+      const ruled = el("div", "mf-list");
+      for (let i = 0; i < 4; i++) {
+        const row = el("div", "mf-row");
+        const cell = el("span", "mf-void-cell");
+        cell.appendChild(el("span", "mf-void"));
+        row.append(el("span", "mf-label", "\u00a0"), el("span", "mf-lead"), cell);
+        ruled.appendChild(row);
+      }
+      blank.appendChild(ruled);
+      box.appendChild(blank);
+      const starter = el("button", "primary", "Start with caravan, beach and city break lists");
       starter.onclick = async () => {
         try {
           for (const [name, items] of Object.entries(STARTER_LISTS)) {
@@ -1495,7 +1508,7 @@ async function openMasterLists() {
       box.appendChild(newForm);
     }
 
-    openOverlay("Manifest — master lists", box);
+    openOverlay("Master lists", box);
   } catch (err) {
     toast(err.message);
   }
