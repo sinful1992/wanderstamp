@@ -40,6 +40,13 @@
   --shadow: 0 2px 14px rgba(38, 34, 28, .2);
   --stamp: "Staatliches", "Arial Narrow", sans-serif;
   --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Staatliches is display type: it holds at 40px on the cover and collapses at
+     button sizes, where its narrow apexed A jams into its neighbours. Controls
+     therefore speak in the cover's OTHER voice -- the tracked sans caps of the
+     eyebrow above the login title. The rule: the stamp face names things
+     (trips, places, chapters, stamps); controls say what they do. */
+  --control: 600 13px/1.1 var(--body);
+  --control-track: 1.4px;
   --prose: Georgia, "Times New Roman", serif;
 }
 
@@ -314,7 +321,7 @@ body.placing #fab-pin { background: var(--red); box-shadow: var(--shadow); }
 .sub-link {
   display: inline-block;
   background: none; border: 1px solid var(--line); border-radius: 999px;
-  padding: 0 8px; font-size: 11.5px; line-height: 18px;
+  padding: 2px 9px;
   color: var(--muted); text-decoration: none; cursor: pointer;
 }
 .sub-link:hover { border-color: var(--muted); color: var(--ink); }
@@ -329,7 +336,7 @@ body.placing #fab-pin { background: var(--red); box-shadow: var(--shadow); }
 .trip-edit textarea { resize: vertical; min-height: 64px; font: inherit; }
 button.danger {
   background: none; border: 1px solid var(--red); color: var(--red);
-  border-radius: 8px; padding: 10px 14px;
+  border-radius: 8px; padding: 10px 14px; font-size: 14px;
 }
 
 #sheet-forms { border-top: 1px solid var(--line); padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
@@ -345,17 +352,23 @@ input[type=text], input[type=password], input[type=date], textarea, select {
 .docs-row { display: flex; gap: 8px; }
 .docs-row button {
   flex: 1; min-width: 0;
-  background: rgba(231, 221, 198, .05); border: 1px solid var(--line); border-radius: 8px;
-  border-top-width: 3px; border-top-style: double;
+  background: rgba(231, 221, 198, .08); border: 1px solid var(--foil); border-radius: 8px;
   padding: 8px 6px; min-height: 40px;
-  font-family: var(--stamp); font-size: 15px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--on-cover);
 }
-#btn-passport { color: var(--gold); border-top-color: var(--gold); }
-.docs-row button:hover { background: rgba(231, 221, 198, .12); }
+.docs-row button:hover { background: rgba(231, 221, 198, .18); border-color: var(--foil); }
 button.primary {
   background: var(--navy); color: var(--on-navy);
   border: none; border-radius: 8px; padding: 10px 14px; min-height: 40px;
 }
+/* Every control, one voice -- declared once so the login's button and the
+   menu's cannot drift apart. */
+button.primary, .docs-row button, .story-more, .sub-link {
+  font: var(--control); letter-spacing: var(--control-track); text-transform: uppercase;
+}
+/* the row's pills are the same voice at pill scale; this is the smallest type
+   in the app, so it trades tracking for size rather than the other way round */
+.sub-link { font-size: 11.5px; letter-spacing: .8px; }
 button.primary:hover { filter: brightness(1.12); }
 button.primary:active { opacity: .85; }
 input[type=text]:focus, input[type=password]:focus, input[type=date]:focus, textarea:focus, select:focus {
@@ -364,6 +377,7 @@ input[type=text]:focus, input[type=password]:focus, input[type=date]:focus, text
 }
 #btn-cancel-trip, .form-row button:not(.primary):not(.danger) {
   background: none; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; color: var(--muted);
+  font-size: 14px;
 }
 .form-row { display: flex; gap: 8px; }
 .form-row .primary { flex: 1; }
@@ -495,7 +509,6 @@ button.linkish, a.linkish {
 }
 #overlay button.primary, #sheet-body button.primary {
   background: var(--gold); color: var(--navy-2);
-  font-family: var(--stamp); font-size: 16px; letter-spacing: 2px; text-transform: uppercase;
 }
 
 #overlay {
@@ -715,9 +728,9 @@ button.linkish, a.linkish {
 .mf-head .day-head { flex: 1; margin-bottom: 0; }
 .manifest .form-row button:not(.primary) {
   background: none; border: 1px solid var(--line); border-radius: 8px;
-  padding: 10px 14px; color: var(--muted); white-space: nowrap;
+  padding: 10px 14px; color: var(--muted); white-space: nowrap; font-size: 14px;
 }
-#btn-manifest { color: var(--red); border-top-color: var(--red); }
+
 
 /* ---------- trip story: the map follows the scroll ---------- */
 
@@ -818,7 +831,6 @@ button.linkish, a.linkish {
   margin-top: 6px; width: 100%;
   background: none; border: 1px dashed var(--line); border-radius: 6px;
   padding: 7px; color: var(--muted);
-  font-family: var(--stamp); font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
 }
 .story-more:hover:not(:disabled) { border-color: var(--muted); color: var(--ink); }
 .story-more:disabled { opacity: .5; cursor: default; }
@@ -903,10 +915,7 @@ body.shared #sheet, body.shared #fabs, body.shared #banner { display: none !impo
 #login-form input {
   background: var(--paper); border-color: transparent;
 }
-button.primary.gold {
-  background: var(--gold); color: var(--navy-2);
-  font-family: var(--stamp); font-size: 17px; letter-spacing: 2px; text-transform: uppercase;
-}
+button.primary.gold { background: var(--gold); color: var(--navy-2); }
 #login-error { color: #e8a89e; font-size: 13px; margin: 0; text-align: center; }
 
 /* ---------- toast ---------- */
