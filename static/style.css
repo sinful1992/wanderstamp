@@ -306,7 +306,12 @@ body.placing #fab-pin { background: var(--red); box-shadow: var(--shadow); }
 .trip-info { min-width: 0; flex: 1; }
 .trip-name {
   font-family: var(--stamp); font-size: 17px; letter-spacing: 1px; text-transform: uppercase;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  line-height: 1.15;
+  /* A name is the one thing on the row that must not be cut: "BRANSGORE CARAVAN
+     PA..." told you less than nothing. Wrap to a second line before clipping
+     -- two lines of the stamp face still sit level with the 44px cover. */
+  overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
 .trip-name .live { color: #fff; font-size: 11px; letter-spacing: 1px; border-radius: 4px; padding: 1px 5px; vertical-align: 2px; }
 .trip-eye {
