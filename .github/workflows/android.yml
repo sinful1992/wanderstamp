@@ -47,6 +47,23 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
+      # Your own server, app id and name come from repo variables so the public
+      # source stays generic. Unset = build the example config as committed.
+      # APP_ID is the Android application id: keep it stable across builds or
+      # phones will install the new APK beside the old one instead of upgrading.
+      - name: Point the app at your server
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          APP_ID: ${{ vars.APP_ID }}
+          APP_NAME: ${{ vars.APP_NAME }}
+        run: |
+          set -e
+          [ -n "$APP_URL" ]  && sed -i "s#https://wanderstamp.example.com#$APP_URL#g" src-tauri/tauri.conf.json dist/index.html
+          [ -n "$APP_ID" ]   && sed -i "s#\"identifier\": \"app.wanderstamp\"#\"identifier\": \"$APP_ID\"#" src-tauri/tauri.conf.json
+          [ -n "$APP_NAME" ] && sed -i "s#\"productName\": \"Wanderstamp\"#\"productName\": \"$APP_NAME\"#; s#\"title\": \"Wanderstamp\"#\"title\": \"$APP_NAME\"#" src-tauri/tauri.conf.json \
+                             && sed -i "s#<title>Wanderstamp</title>#<title>$APP_NAME</title>#; s#<h1>Wanderstamp</h1>#<h1>$APP_NAME</h1>#" dist/index.html
+          echo "url=$(grep -o '"url": "[^"]*' src-tauri/tauri.conf.json) id=$(grep -o '"identifier": "[^"]*' src-tauri/tauri.conf.json)"
+
       - name: Init Android project
         run: cargo tauri android init
 
@@ -78,13 +95,13 @@ jobs:
             --ks-pass "pass:$KEYSTORE_PASSWORD" \
             --ks-key-alias "$KEY_ALIAS" \
             --key-pass "pass:$KEY_PASSWORD" \
-            --out "$RUNNER_TEMP/holiday-map.apk" \
+            --out "$RUNNER_TEMP/wanderstamp.apk" \
             "$RUNNER_TEMP/aligned.apk"
-          "$BT/apksigner" verify --verbose "$RUNNER_TEMP/holiday-map.apk"
+          "$BT/apksigner" verify --verbose --print-certs "$RUNNER_TEMP/wanderstamp.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: holiday-map-apk
-          path: ${{ runner.temp }}/holiday-map.apk
+          name: wanderstamp-apk
+          path: ${{ runner.temp }}/wanderstamp.apk
           if-no-files-found: error
