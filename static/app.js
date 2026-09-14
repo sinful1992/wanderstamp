@@ -1290,10 +1290,10 @@ async function openManifest(h) {
       row.onclick = toggle;
       const star = el("button", "mf-icon", "☆");
       star.type = "button";
-      star.title = "Always pack this — add it to a master list";
+      star.title = "Always pack this — add it to a packing list";
       star.onclick = (e) => {
         e.stopPropagation();
-        if (!templates.length) { toast("No master lists yet — Manifest in the trips sheet creates them"); return; }
+        if (!templates.length) { toast("No packing lists yet — Packing lists in the trips menu creates them"); return; }
         if (templates.length === 1) { promote(it, templates[0]); return; }
         if (row.querySelector("select")) return;
         const pick = el("select");
@@ -1333,7 +1333,7 @@ async function openManifest(h) {
     const renderRows = () => {
       list.textContent = "";
       if (!items.length) {
-        list.appendChild(el("p", "empty-note", "An empty manifest — add items below, or bring in a master list."));
+        list.appendChild(el("p", "empty-note", "An empty manifest — add items below, or bring in a packing list."));
       }
       for (const it of items) list.appendChild(mfRow(it));
       syncCounts();
@@ -1363,7 +1363,7 @@ async function openManifest(h) {
     if (templates.length) {
       const applyRow = el("div", "form-row");
       const pick = el("select");
-      const ph = el("option", null, "Bring in a master list…");
+      const ph = el("option", null, "Bring in a packing list…");
       ph.value = "";
       pick.appendChild(ph);
       for (const t of templates) {
@@ -1391,7 +1391,7 @@ async function openManifest(h) {
       box.appendChild(applyRow);
     }
 
-    const editLists = el("button", "linkish", "Edit master lists");
+    const editLists = el("button", "linkish", "Edit packing lists");
     editLists.onclick = () => openMasterLists();
     box.appendChild(editLists);
 
@@ -1408,7 +1408,7 @@ async function openMasterLists() {
     const templates = await api("GET", "/api/packing/templates");
     const box = el("div", "manifest");
     box.appendChild(el("p", "form-hint",
-      "Master lists hold the things you always pack. Bring one onto a trip from its manifest, and tick items off there."));
+      "Packing lists hold the things you always pack. Bring one onto a trip from its manifest, and tick items off there."));
 
     if (!templates.length) {
       // A blank slip: ruled leader lines show the shape a list takes, so the
@@ -1445,7 +1445,7 @@ async function openMasterLists() {
       head.appendChild(el("h3", "day-head", `${t.name} · ${t.items.length}`));
       const delList = el("button", "linkish", "delete list");
       delList.onclick = async () => {
-        if (!confirm(`Delete the "${t.name}" master list? Trips keep their own copies.`)) return;
+        if (!confirm(`Delete the "${t.name}" packing list? Trips keep their own copies.`)) return;
         await api("DELETE", `/api/packing/templates/${t.id}`);
         openMasterLists();
       };
@@ -1492,7 +1492,7 @@ async function openMasterLists() {
     if (templates.length) {
       const newForm = el("form", "form-row");
       const inp = el("input");
-      inp.type = "text"; inp.placeholder = "New master list — e.g. Ski"; inp.maxLength = 80; inp.required = true;
+      inp.type = "text"; inp.placeholder = "New packing list — e.g. Ski"; inp.maxLength = 80; inp.required = true;
       const btn = el("button", "primary", "Create");
       btn.type = "submit";
       newForm.append(inp, btn);
@@ -1508,7 +1508,7 @@ async function openMasterLists() {
       box.appendChild(newForm);
     }
 
-    openOverlay("Master lists", box);
+    openOverlay("Packing lists", box);
   } catch (err) {
     toast(err.message);
   }

@@ -91,7 +91,7 @@ func (a *app) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	res, err := tx.Exec(`INSERT INTO packing_templates (name) VALUES (?)`, name)
 	if err != nil {
-		httpError(w, http.StatusConflict, "a master list with that name already exists")
+		httpError(w, http.StatusConflict, "a packing list with that name already exists")
 		return
 	}
 	id, _ := res.LastInsertId()
@@ -243,7 +243,7 @@ func (a *app) handleApplyTemplate(w http.ResponseWriter, r *http.Request) {
 		FROM packing_template_items ti WHERE ti.template_id = ?
 		ON CONFLICT DO NOTHING`, id, id, req.TemplateID)
 	if err != nil {
-		httpError(w, http.StatusBadRequest, "no such holiday or master list")
+		httpError(w, http.StatusBadRequest, "no such holiday or packing list")
 		return
 	}
 	added, _ := res.RowsAffected()
@@ -296,7 +296,7 @@ func (a *app) handlePromoteItem(w http.ResponseWriter, r *http.Request) {
 		FROM packing_items pi WHERE pi.id = ?
 		ON CONFLICT DO NOTHING`, req.TemplateID, req.TemplateID, id)
 	if err != nil {
-		httpError(w, http.StatusBadRequest, "no such master list")
+		httpError(w, http.StatusBadRequest, "no such packing list")
 		return
 	}
 	added, _ := res.RowsAffected()
