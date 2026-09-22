@@ -1,14 +1,14 @@
 [package]
-name = "holiday-map-app"
-version = "1.0.0"
-description = "Holiday Map — family travel log"
-authors = ["Giedrius"]
+name = "wanderstamp-app"
+version = "1.1.0"
+description = "Wanderstamp — family travel log"
+authors = ["sinful1992"]
 edition = "2021"
 rust-version = "1.77.2"
 
 # The library is what the Android (and desktop) entry points call into.
 [lib]
-name = "holiday_map_lib"
+name = "wanderstamp_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

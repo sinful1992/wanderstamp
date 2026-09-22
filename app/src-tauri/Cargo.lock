@@ -1430,8 +1430,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "holiday-map-app"
-version = "1.0.0"
+name = "wanderstamp-app"
+version = "1.1.0"
 dependencies = [
  "tauri",
  "tauri-build",

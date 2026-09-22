@@ -2,9 +2,16 @@ name: Build Android APK
 
 # Builds a sideloadable Wanderstamp APK in the cloud — no local Android toolchain
 # needed. Run manually from the Actions tab after setting the 4 signing secrets
-# (see app/README.md).
+# (see app/README.md), or push an `app-vX.Y.Z` tag to publish the APK as a
+# GitHub release. Server tags (`vX.Y.Z`) build the Docker image instead, so the
+# two release lines never collide.
 on:
   workflow_dispatch:
+  push:
+    tags: ["app-v*"]
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -47,32 +54,14 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
-      # Your own server, app id and name come from repo settings so the public
-      # source stays generic. Unset = build the example config as committed.
-      # APP_ID is the Android application id: keep it stable across builds or
-      # phones will install the new APK beside the old one instead of upgrading.
+      # Nothing is substituted into the app here, on purpose. The APK is built
+      # in public: its logs and its artifacts are world-readable, so anything
+      # baked in at build time — a server address above all — is published
+      # along with it. The shell asks for the server address on first run
+      # instead, and keeps it on the phone.
       #
-      # APP_URL is a SECRET, not a variable: on a public repo, run logs are
-      # world-readable and variables appear in them verbatim, so a private
-      # server address set as a variable is published. Secrets are masked.
-      # Nothing in this step echoes the substituted config, for the same reason.
-      # NOTE: the built APK still embeds APP_URL, and artifacts of a public repo
-      # are downloadable by anyone — don't build a private-server APK here.
-      - name: Point the app at your server
-        env:
-          APP_URL: ${{ secrets.APP_URL }}
-          APP_ID: ${{ vars.APP_ID }}
-          APP_NAME: ${{ vars.APP_NAME }}
-        run: |
-          set -e
-          [ -n "$APP_URL" ]  && sed -i "s#https://wanderstamp.example.com#$APP_URL#g" src-tauri/tauri.conf.json dist/index.html
-          [ -n "$APP_ID" ]   && sed -i "s#\"identifier\": \"app.wanderstamp\"#\"identifier\": \"$APP_ID\"#" src-tauri/tauri.conf.json
-          [ -n "$APP_NAME" ] && sed -i "s#\"productName\": \"Wanderstamp\"#\"productName\": \"$APP_NAME\"#; s#\"title\": \"Wanderstamp\"#\"title\": \"$APP_NAME\"#" src-tauri/tauri.conf.json \
-                             && sed -i "s#<title>Wanderstamp</title>#<title>$APP_NAME</title>#; s#<h1>Wanderstamp</h1>#<h1>$APP_NAME</h1>#" dist/index.html
-          # Report only whether substitution happened — never the value.
-          grep -q "wanderstamp.example.com" src-tauri/tauri.conf.json \
-            && echo "server url: example config (APP_URL unset)" \
-            || echo "server url: overridden from APP_URL"
+      # Rebranding a fork (name, application id) is a source edit in
+      # tauri.conf.json, not a build-time secret.
 
       - name: Init Android project
         run: cargo tauri android init
@@ -115,3 +104,28 @@ jobs:
           name: wanderstamp-apk
           path: ${{ runner.temp }}/wanderstamp.apk
           if-no-files-found: error
+
+      # Tag builds publish the APK; dispatch builds stop at the artifact above.
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          cp "$RUNNER_TEMP/wanderstamp.apk" "$RUNNER_TEMP/wanderstamp-$TAG.apk"
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          Sideloadable Android APK — a thin native shell around your own Wanderstamp
+          server.
+
+          Install it, then enter the address of your server on first run. Nothing is
+          baked into the build, so this same APK works for everyone; the address stays
+          on the phone.
+
+          Requires Android 7.0 (API 24) or newer, and unknown-sources install — the app
+          is not on any store.
+          NOTES
+          gh release create "$TAG" "$RUNNER_TEMP/wanderstamp-$TAG.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Wanderstamp Android ${TAG#app-}" \
+            --notes-file "$RUNNER_TEMP/notes.md"

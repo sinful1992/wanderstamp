@@ -123,11 +123,11 @@ src.backup(dst)
 
 [`app/`](app/) contains a thin [Tauri 2](https://tauri.app) shell that loads
 your Wanderstamp instance in a same-origin WebView (logins, cookies and the
-photo proxy all just work — and updating the server needs no app rebuild),
-plus a GitHub Actions workflow that builds a signed, sideloadable APK in the
-cloud with no local Android toolchain. Fork the repo, point
-`app/src-tauri/tauri.conf.json` at your server's URL, add your signing
-secrets, and run the workflow. Details in [`app/README.md`](app/README.md).
+photo proxy all just work — and updating the server needs no app rebuild).
+Grab the APK from the [latest release](../../releases) and sideload it: it asks
+for your server's address on first run, so nothing about your instance is built
+into it. To build your own signed APK in the cloud instead — no local Android
+toolchain — see [`app/README.md`](app/README.md).
 
 ## Development
 
