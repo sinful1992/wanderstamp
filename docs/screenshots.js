@@ -1,8 +1,9 @@
 // Regenerates docs/map.png + docs/story.png: run a throwaway container with a fresh DB on :8097
 // (ADMIN_USERNAME=demo ADMIN_PASSWORD=demo-pass-1234), then `OUT=docs node docs/screenshots.js`
-// from a directory with playwright installed. Seeds three fictional trips on first run.
+// from a directory with playwright installed (set CHROME=/path/to/headless-shell if
+// playwright can't find its own). Seeds three fictional trips on first run.
 const { chromium } = require('playwright');
-const EXE='/home/giedrius/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell';
+const EXE=process.env.CHROME||'';
 const BASE='http://localhost:8097', OUT=process.env.OUT||'.';
 const trips=[
  {name:'Scottish Highlands',color:'#2e7d4f',start:'2025-05-12',end:'2025-05-18',pins:[
@@ -18,7 +19,7 @@ const trips=[
    [40.628,14.485,'Positano','Steps, lemons, the sea.','2025-06-24T16:00:00Z']]},
 ];
 (async()=>{
- const b=await chromium.launch({executablePath:EXE});
+ const b=await chromium.launch(EXE?{executablePath:EXE}:{});
  const ctx=await b.newContext({viewport:{width:1280,height:800},deviceScaleFactor:2,serviceWorkers:'block',colorScheme:'light'});
  const p=await ctx.newPage();
  await p.goto(BASE,{waitUntil:'networkidle'});

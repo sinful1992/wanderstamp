@@ -47,13 +47,20 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
-      # Your own server, app id and name come from repo variables so the public
+      # Your own server, app id and name come from repo settings so the public
       # source stays generic. Unset = build the example config as committed.
       # APP_ID is the Android application id: keep it stable across builds or
       # phones will install the new APK beside the old one instead of upgrading.
+      #
+      # APP_URL is a SECRET, not a variable: on a public repo, run logs are
+      # world-readable and variables appear in them verbatim, so a private
+      # server address set as a variable is published. Secrets are masked.
+      # Nothing in this step echoes the substituted config, for the same reason.
+      # NOTE: the built APK still embeds APP_URL, and artifacts of a public repo
+      # are downloadable by anyone — don't build a private-server APK here.
       - name: Point the app at your server
         env:
-          APP_URL: ${{ vars.APP_URL }}
+          APP_URL: ${{ secrets.APP_URL }}
           APP_ID: ${{ vars.APP_ID }}
           APP_NAME: ${{ vars.APP_NAME }}
         run: |
@@ -62,7 +69,10 @@ jobs:
           [ -n "$APP_ID" ]   && sed -i "s#\"identifier\": \"app.wanderstamp\"#\"identifier\": \"$APP_ID\"#" src-tauri/tauri.conf.json
           [ -n "$APP_NAME" ] && sed -i "s#\"productName\": \"Wanderstamp\"#\"productName\": \"$APP_NAME\"#; s#\"title\": \"Wanderstamp\"#\"title\": \"$APP_NAME\"#" src-tauri/tauri.conf.json \
                              && sed -i "s#<title>Wanderstamp</title>#<title>$APP_NAME</title>#; s#<h1>Wanderstamp</h1>#<h1>$APP_NAME</h1>#" dist/index.html
-          echo "url=$(grep -o '"url": "[^"]*' src-tauri/tauri.conf.json) id=$(grep -o '"identifier": "[^"]*' src-tauri/tauri.conf.json)"
+          # Report only whether substitution happened — never the value.
+          grep -q "wanderstamp.example.com" src-tauri/tauri.conf.json \
+            && echo "server url: example config (APP_URL unset)" \
+            || echo "server url: overridden from APP_URL"
 
       - name: Init Android project
         run: cargo tauri android init
