@@ -5,9 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Wanderstamp</title>
 <style>
-  /* The passport cover, redrawn standalone: this page ships inside the APK and
-     must render before the server is even known, so it carries its own copy of
-     the palette, the two type voices, and the stamp face itself. */
+  /* This page ships inside the APK and has to render before the server is even
+     known, so it carries its own copy of the app's palette and type voices.
+     It is deliberately NOT the passport cover: the cover is the login screen
+     that follows, and two covers in a row read as one. This is the landing
+     card you fill in before you are let through. */
   @font-face {
     font-family: "Staatliches";
     src: url("staatliches.woff2") format("woff2");
@@ -15,12 +17,16 @@
   }
   :root {
     --paper: #f6f1e3;
+    --paper-2: #ede5cf;
     --navy: #1c3652;
     --navy-2: #142639;
     --gold: #c6a45e;
-    --on-cover: #e7ddc6;
-    --cover: radial-gradient(120% 100% at 50% 0%, var(--navy) 0%, var(--navy-2) 70%);
+    --ink: #26221c;
+    --muted: #6f6354;
+    --line: #dcd1b6;
+    --red: #b3372a;
     --stamp: "Staatliches", "Roboto Condensed", "Arial Narrow", sans-serif;
+    --prose: Georgia, "Times New Roman", serif;
     --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --control: 600 13px/1.1 var(--body);
     color-scheme: dark;
@@ -29,69 +35,144 @@
   [hidden] { display: none !important; }
   html, body { height: 100%; margin: 0; }
   body {
-    background: var(--cover); color: var(--on-cover); font-family: var(--body);
+    background: radial-gradient(120% 100% at 50% 0%, var(--navy) 0%, var(--navy-2) 70%);
+    color: var(--ink); font-family: var(--body);
     display: flex; align-items: center; justify-content: center;
-    padding: 24px calc(24px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
+    padding: 24px calc(20px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
   }
-  form { display: flex; flex-direction: column; width: 100%; max-width: 340px; }
-  .cover-eyebrow {
-    margin: 0; text-align: center;
-    color: var(--gold); font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+
+  /* ---------- the card ---------- */
+
+  .card {
+    position: relative; width: 100%; max-width: 380px;
+    background: var(--paper); border-radius: 4px;
+    /* A foil hairline so the card reads as one object; without it the navy
+       masthead dissolves into the navy ground and the card looks topless. */
+    border: 1px solid rgba(198, 164, 94, .45);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, .38);
+    display: flex; flex-direction: column;
   }
-  .cover-crest {
-    align-self: center; margin: 6px 0 2px;
-    width: 54px; height: 54px; border-radius: 50%;
-    border: 2px solid var(--gold); color: var(--gold);
-    display: flex; align-items: center; justify-content: center; font-size: 24px;
+  .masthead {
+    display: flex; align-items: center; gap: 9px;
+    background: var(--navy-2); border-radius: 4px 4px 0 0;
+    padding: 11px 20px; color: var(--gold);
   }
-  .cover-title {
-    margin: 2px 0 4px; text-align: center;
-    font-family: var(--stamp); font-weight: 400;
-    font-size: 40px; line-height: .95; letter-spacing: 4px; text-transform: uppercase;
-    color: var(--gold); text-shadow: 0 1px 0 rgba(0,0,0,.4);
+  .masthead .crest {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 1.5px solid var(--gold); display: flex; align-items: center; justify-content: center;
+    font-size: 11px; flex: none;
   }
-  .cover-rule { align-self: center; width: 72px; margin-bottom: 14px; border-top: 3px double var(--gold); opacity: .7; }
-  p.lede { margin: 0 0 14px; text-align: center; font-size: 13.5px; line-height: 1.5; opacity: .85; }
+  .masthead .mark {
+    font-family: var(--stamp); font-size: 17px; letter-spacing: 2.5px; text-transform: uppercase;
+  }
+
+  .body { padding: 22px 20px 18px; }
+  h1 {
+    font-family: var(--prose); font-weight: 400; font-size: 22px; line-height: 1.32;
+    margin: 0 0 18px; max-width: 19ch;
+  }
+  label {
+    display: block; font-size: 11.5px; font-weight: 600; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 2px;
+  }
+  /* A ruled entry line, the way a form on a real card is filled in. */
   input {
-    font: inherit; font-size: 16px; /* 16px: anything smaller zooms the page on focus */
-    background: var(--paper); color: #26221c;
-    border: 1px solid transparent; border-radius: 8px; padding: 12px 14px; margin-bottom: 10px;
+    width: 100%; font-family: var(--body); font-size: 16px; /* 16px or the page zooms on focus */
+    color: var(--ink); background: none; caret-color: var(--navy);
+    border: 0; border-bottom: 1.5px solid var(--line); border-radius: 0;
+    padding: 8px 2px; margin-bottom: 4px;
   }
-  input:focus { outline: none; box-shadow: 0 0 0 2px rgba(198, 164, 94, .5); }
+  input::placeholder { color: #b3a68c; }
+  input:focus { outline: none; border-bottom-color: var(--navy); }
+  /* Keyboard focus thickens the rule rather than boxing it in — the global
+     outline below would fight the ruled-line form. */
+  input:focus-visible { outline: none; box-shadow: 0 2px 0 0 var(--navy); }
+
+  .note { font-size: 13px; line-height: 1.45; color: var(--muted); margin: 6px 0 0; min-height: 1px; }
+  .note.bad { color: var(--red); }
+
+  .actions { margin-top: 18px; display: flex; flex-direction: column; gap: 9px; }
   button {
     font: var(--control); letter-spacing: 1.4px; text-transform: uppercase;
-    border: 0; border-radius: 8px; padding: 13px 16px; cursor: pointer;
-    background: var(--gold); color: var(--navy-2);
+    border: 0; border-radius: 3px; padding: 14px 16px; cursor: pointer;
+    background: var(--navy); color: var(--paper);
   }
-  button.quiet { background: none; color: var(--on-cover); border: 1px solid rgba(198,164,94,.45); margin-top: 8px; }
-  button:active { opacity: .85; }
-  .msg { margin: 0 0 12px; text-align: center; font-size: 13px; line-height: 1.45; }
-  .msg.bad { color: #e8a89e; }
-  .hint { margin: 14px 0 0; text-align: center; font-size: 11.5px; letter-spacing: .3px; opacity: .55; line-height: 1.5; }
-  /* The connecting state reuses the crest as the only moving part. */
-  .waiting .cover-crest { animation: pulse 1.1s ease-in-out infinite; }
-  @keyframes pulse { 50% { opacity: .35; } }
-  @media (prefers-reduced-motion: reduce) { .waiting .cover-crest { animation: none; } }
+  button:disabled { opacity: .55; cursor: default; }
+  button:not(:disabled):active { filter: brightness(1.15); }
+  button.quiet {
+    background: none; color: var(--muted); padding: 4px;
+    text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500;
+    text-decoration: underline; text-underline-offset: 3px;
+  }
+  :focus-visible { outline: 2px solid var(--navy); outline-offset: 2px; }
+
+  /* The stub below the tear line keeps the one thing worth keeping. */
+  .stub {
+    border-top: 1.5px dashed var(--line); margin: 0 12px;
+    padding: 12px 8px 14px; background: var(--paper-2); border-radius: 0 0 4px 4px;
+  }
+  .stub p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+
+  /* ---------- the stamp ---------- */
+
+  /* Lands in the clear space to the right of the question, the way a stamp
+     finds the empty part of a page — not over the controls. */
+  .stamp {
+    position: absolute; right: 16px; top: 86px; z-index: 2; max-width: 148px;
+    border: 2.5px solid var(--navy); border-radius: 6px; padding: 7px 11px 6px;
+    color: var(--navy); text-align: center; background: rgba(246, 241, 227, .55);
+    transform: rotate(-9deg);
+    animation: land .42s cubic-bezier(.2, 1.5, .4, 1) both;
+  }
+  .stamp .place {
+    font-family: var(--stamp); font-size: 20px; letter-spacing: 1.5px; text-transform: uppercase;
+    line-height: 1; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* A long host shrinks to fit rather than being cut: a stamp with half a place
+     name on it is worse than a small one. */
+  .stamp.mid .place { font-size: 15px; letter-spacing: 1px; }
+  /* A very long host wraps inside the stamp instead of being cut — two short
+     lines read as a place name, "TRAVEL-ARCH…" does not. */
+  .stamp.long .place {
+    font-size: 12px; letter-spacing: .4px; white-space: normal;
+    overflow-wrap: anywhere; line-height: 1.08;
+  }
+  .stamp .date { font-size: 9.5px; letter-spacing: .16em; display: block; margin-top: 3px; opacity: .85; }
+  @keyframes land {
+    from { opacity: 0; transform: rotate(-24deg) scale(2.1); }
+    to   { opacity: 1; transform: rotate(-9deg) scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) { .stamp { animation: none; } }
+
+  @media (max-height: 560px) { h1 { font-size: 19px; margin-bottom: 14px; } .body { padding-top: 18px; } }
 </style>
 </head>
 <body>
 
-<form id="setup" hidden>
-  <p class="cover-eyebrow">Family travel record</p>
-  <div class="cover-crest" aria-hidden="true">✈</div>
-  <h1 class="cover-title">Wander<br>stamp</h1>
-  <div class="cover-rule" aria-hidden="true"></div>
+<form class="card" id="setup" hidden>
+  <div class="masthead">
+    <span class="crest" aria-hidden="true">✈</span>
+    <span class="mark" id="wordmark">Wanderstamp</span>
+  </div>
 
-  <p class="lede" id="lede">Enter the address of your Wanderstamp server.</p>
-  <p class="msg bad" id="error" hidden></p>
+  <div class="body">
+    <h1 id="lede">Where does your travel record live?</h1>
 
-  <input id="url" type="url" inputmode="url" autocomplete="url" autocapitalize="off" autocorrect="off"
-         spellcheck="false" placeholder="wanderstamp.example.com" required>
-  <button type="submit" id="go">Connect</button>
-  <button type="button" class="quiet" id="forget" hidden>Use a different address</button>
+    <label for="url">Server address</label>
+    <input id="url" type="url" inputmode="url" autocomplete="url" autocapitalize="off"
+           autocorrect="off" spellcheck="false" placeholder="wanderstamp.example.com" required>
+    <p class="note" id="error" role="status" hidden></p>
 
-  <p class="hint">The phone needs to reach the server: same Wi‑Fi, a VPN such as
-    Tailscale, or a public address. Nothing is sent anywhere else.</p>
+    <div class="actions">
+      <button type="submit" id="go">Connect</button>
+      <button type="button" class="quiet" id="forget" hidden>Use a different address</button>
+    </div>
+  </div>
+
+  <div class="stub">
+    <p>The phone needs to reach the server: same Wi‑Fi, a VPN such as Tailscale,
+       or a public address. The address stays on this phone.</p>
+  </div>
 </form>
 
 <script>
@@ -146,36 +227,56 @@
   }
 
   function show(opts) {
-    document.body.classList.remove('waiting');
     lede.textContent = opts.lede;
     err.hidden = !opts.error;
+    err.className = 'note' + (opts.error ? ' bad' : '');
     if (opts.error) err.textContent = opts.error;
     input.value = opts.value || '';
+    input.disabled = false;
+    go.disabled = false;
     go.textContent = opts.button || 'Connect';
     forget.hidden = !opts.canForget;
     setup.hidden = false;
     if (!opts.value) input.focus();
   }
 
+  // The entry stamp: place and date, the way a real one reads. It is the only
+  // moment of motion in the app, and it earns its place by confirming the
+  // connection before the site has had time to paint.
+  function stampAndGo(url) {
+    var host = new URL(url).hostname.split('.')[0] || new URL(url).hostname;
+    var d = new Date();
+    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var el = document.createElement('div');
+    el.className = 'stamp' + (host.length > 13 ? ' long' : host.length > 8 ? ' mid' : '');
+    el.innerHTML = '<span class="place"></span><span class="date"></span>';
+    el.querySelector('.place').textContent = host;
+    el.querySelector('.date').textContent =
+      d.getDate() + ' ' + months[d.getMonth()].toUpperCase() + ' ' + d.getFullYear();
+    setup.appendChild(el);
+
+    var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    setTimeout(function () {
+      // A plain assignment keeps the launcher in history, so Android's back
+      // button returns here; the flag stops it bouncing straight out again.
+      flag('left', '1');
+      location.href = url;
+    }, still ? 120 : 520);
+  }
+
   function connect(url) {
     setup.hidden = false;
-    document.body.classList.add('waiting');
-    lede.textContent = 'Connecting to ' + new URL(url).host + '…';
     err.hidden = true;
-    input.hidden = go.hidden = forget.hidden = true;
+    input.value = url;
+    input.disabled = true;
+    go.disabled = true;
+    go.textContent = 'Connecting…';
+    forget.hidden = true;
     reachable(url).then(function (ok) {
-      input.hidden = go.hidden = false;
-      if (ok) {
-        store(KEY, url);
-        // A plain assignment keeps the launcher in history, so Android's back
-        // button returns here; the flag stops it bouncing straight out again.
-        flag('left', '1');
-        location.href = url;
-        return;
-      }
+      if (ok) { store(KEY, url); stampAndGo(url); return; }
       show({
-        lede: 'Check the phone’s connection, or the address.',
-        error: 'Can’t reach ' + new URL(url).host,
+        lede: 'Where does your travel record live?',
+        error: 'Can’t reach ' + new URL(url).host + '. Check the phone’s connection, or try another address.',
         value: url, button: 'Try again', canForget: true
       });
     });
@@ -185,7 +286,11 @@
     e.preventDefault();
     var url = normalise(input.value);
     if (!url) {
-      show({ lede: lede.textContent, error: 'That doesn’t look like an address.', value: input.value, canForget: !!store(KEY) });
+      show({
+        lede: 'Where does your travel record live?',
+        error: 'That doesn’t look like an address. It looks like wanderstamp.example.com, or 192.168.1.10:8095.',
+        value: input.value, canForget: !!store(KEY)
+      });
       return;
     }
     connect(url);
@@ -193,7 +298,7 @@
 
   forget.addEventListener('click', function () {
     try { localStorage.removeItem(KEY); } catch (e) {}
-    show({ lede: 'Enter the address of your Wanderstamp server.' });
+    show({ lede: 'Where does your travel record live?' });
   });
 
   var saved = store(KEY);
@@ -202,7 +307,7 @@
 
   if (saved && !cameBack) connect(saved);
   else if (saved) show({ lede: 'Connect again, or point the app somewhere else.', value: saved, canForget: true });
-  else show({ lede: 'Enter the address of your Wanderstamp server.' });
+  else show({ lede: 'Where does your travel record live?' });
 })();
 </script>
 </body>
