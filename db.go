@@ -121,6 +121,10 @@ var migrations = []string{
 	`DROP INDEX IF EXISTS one_active_holiday`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS one_live_holiday
 	  ON holidays ((end_at IS NULL)) WHERE end_at IS NULL AND planned = 0`,
+	// the family page: when each account was last used ('' = never), and
+	// whether it holds a temporary password an admin set
+	`ALTER TABLE users ADD COLUMN last_seen TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`,
 }
 
 func openDB(path string) (*sql.DB, error) {

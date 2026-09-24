@@ -25,6 +25,7 @@
   --navy-2: #142639;
   --gold: #c6a45e;
   --red: #b3372a;
+  --red-paper: #b3372a;       /* what --red is on a paper document, whatever it sits on */
   /* Ink on paper. Held one level back so the cover can re-scope --muted for
      itself (--muted on navy is 2.11:1) and the paper cards sitting on the
      cover can restore it, without either side hard-coding a hex. */
@@ -440,21 +441,20 @@ input[type=text]:focus, input[type=password]:focus, input[type=date]:focus, text
 #swatches button.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--paper) inset; }
 /* The native ▶ marker is browser chrome and reads as unfinished next to the
    stamped type; this is the same affordance drawn in the app's own hand. */
-#admin-box summary, #pass-box summary {
+#pass-box summary {
   display: flex; align-items: center; gap: 8px;
   list-style: none; font-size: 13px; color: var(--muted); cursor: pointer; padding: 5px 0;
 }
-#admin-box summary::-webkit-details-marker,
 #pass-box summary::-webkit-details-marker { display: none; }
-#admin-box summary::before, #pass-box summary::before {
+#pass-box summary::before {
   content: "+"; flex: none;
   width: 18px; height: 18px; border: 1px solid var(--line); border-radius: 4px;
   font-family: var(--stamp); font-size: 14px; line-height: 16px; text-align: center;
   color: var(--gold);
 }
-#admin-box[open] summary::before, #pass-box[open] summary::before { content: "–"; }
-#admin-box summary:hover::before, #pass-box summary:hover::before { border-color: var(--muted); }
-#admin-box form, #pass-box form { margin-top: 8px; }
+#pass-box[open] summary::before { content: "–"; }
+#pass-box summary:hover::before { border-color: var(--muted); }
+#pass-box form { margin-top: 8px; }
 
 /* the endpaper: account odds and ends, set apart from the trips */
 .endpaper {
@@ -589,6 +589,7 @@ button.linkish, a.linkish {
   --ink: var(--ink-paper);
   --muted: var(--muted-paper);
   --line: var(--line-paper);
+  --red: var(--red-paper);
   color: var(--ink-paper);
 }
 /* The manifest and the journal were bare content on the old cream ground; on
@@ -964,7 +965,7 @@ body.shared #sheet, body.shared #fabs, body.shared #banner { display: none !impo
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
 #login[hidden] { display: none; }
-#login-form {
+.cover-form {
   width: min(330px, 100%);
   background: linear-gradient(160deg, rgba(255,255,255,.045), rgba(0,0,0,.12)), var(--navy);
   border: 1px solid var(--foil); border-radius: 12px;
@@ -994,11 +995,14 @@ body.shared #sheet, body.shared #fabs, body.shared #banner { display: none !impo
   align-self: center; width: 72px; margin-bottom: 10px;
   border-top: 3px double var(--gold); opacity: .7;
 }
-#login-form input {
+.cover-form input {
   background: var(--paper); border-color: transparent;
 }
+.cover-form[hidden], .cover-form input[hidden] { display: none; }
+.cover-note { margin: 0 0 4px; color: var(--on-cover); font-size: 14px; line-height: 1.45; text-align: center; }
+#choose-signout { align-self: center; color: var(--on-cover-dim); }
 button.primary.gold { background: var(--gold); color: var(--navy-2); }
-#login-error { color: #e8a89e; font-size: 13px; margin: 0; text-align: center; }
+#login-error, #choose-error { color: #e8a89e; font-size: 13px; margin: 0; text-align: center; }
 
 /* ---------- toast ---------- */
 
@@ -1053,6 +1057,7 @@ button.primary.gold { background: var(--gold); color: var(--navy-2); }
     --navy: #31517a;
     --navy-2: #10151d;
     --red: #e08578;
+    --red-paper: #e08578;
     --ink-paper: #e6dfcf;
     --muted-paper: #98917f;
     --line-paper: #3a4254;
@@ -1077,3 +1082,38 @@ button.primary.gold { background: var(--gold); color: var(--navy-2); }
       var(--paper);
   }
 }
+
+/* ---------- family accounts: the register ----------
+   The manifest's paper slip, one entry per person. Everything is quiet ink
+   except the LOCKED mark, a visa-red rubber stamp: the thing you're looking
+   for when someone says they can't get in. */
+
+.fm-list { display: flex; flex-direction: column; }
+.fm-row { padding: 12px 2px 10px; }
+.fm-row + .fm-row { border-top: 1px dotted var(--line); }
+.fm-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fm-name {
+  font-family: var(--stamp); font-size: 21px; letter-spacing: 1.5px; text-transform: uppercase;
+  line-height: 1.1; overflow-wrap: anywhere;
+}
+.fm-role {
+  font-size: 12px; font-weight: 600; color: var(--ink);
+  border: 1px solid currentColor; border-radius: 999px; padding: 1px 8px;
+}
+.fm-locked {
+  margin-left: auto;
+  font-family: var(--stamp); font-size: 15px; letter-spacing: 2.5px; text-transform: uppercase;
+  color: var(--red); border: 2.5px solid var(--red); border-radius: 5px; padding: 2px 9px 1px;
+  transform: rotate(-5deg); opacity: .9;
+}
+.fm-meta { margin: 3px 0 0; font-size: 13.5px; color: var(--muted); }
+.fm-row.locked .fm-meta { color: var(--ink); }
+.fm-actions { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; }
+.fm-actions:empty { display: none; }
+#overlay .register button.linkish { color: var(--ink); padding: 4px 0; min-height: 32px; }
+#overlay .register button.linkish.danger { color: var(--red); }
+.fm-reset, .fm-add { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.fm-reset input, .fm-add input { flex: 1 1 180px; min-width: 0; }
+.fm-reset input, .fm-add input[aria-label] { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; letter-spacing: .5px; }
+.fm-reset .form-hint, .fm-add .form-hint { flex-basis: 100%; margin: 0; }
+.fm-reset[hidden] { display: none; }

@@ -59,6 +59,11 @@ async function api(method, path, body) {
     showLogin();
     throw new Error("not logged in");
   }
+  if (resp.status === 428) {
+    // signed in on a temporary password: the server opens nothing else
+    showChoosePassword(null);
+    throw new Error("choose your own password first");
+  }
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || resp.statusText);
   return data;
@@ -1121,7 +1126,9 @@ function openOverlay(title, contentNode) {
   const c = $("overlay-content");
   c.textContent = "";
   c.appendChild(contentNode);
-  modalOpen("overlay", $("overlay-close"));
+  // a page that redraws itself (packing lists, family) re-opens in place;
+  // opening it again would stack a second modal level that one close can't undo
+  if ($("overlay").hidden) modalOpen("overlay", $("overlay-close"));
 }
 
 function closeOverlay() {
@@ -1799,16 +1806,7 @@ $("sheet-pill").onclick = () => setSheet($("sheet").classList.contains("collapse
 
 $("btn-manifest").onclick = () => openMasterLists();
 
-$("new-user-form").onsubmit = async (e) => {
-  e.preventDefault();
-  try {
-    await api("POST", "/api/users", { username: $("user-name").value.trim(), password: $("user-pass").value });
-    $("user-name").value = ""; $("user-pass").value = "";
-    toast("Account created");
-  } catch (err) {
-    toast(err.message);
-  }
-};
+$("btn-family").onclick = () => openFamily();
 
 $("password-form").onsubmit = async (e) => {
   e.preventDefault();
@@ -1890,13 +1888,236 @@ $("login-form").onsubmit = async (e) => {
   const err = $("login-error");
   err.hidden = true;
   try {
-    await api("POST", "/api/login", { username: $("login-user").value.trim(), password: $("login-pass").value });
+    const me = await api("POST", "/api/login", { username: $("login-user").value.trim(), password: $("login-pass").value });
+    if (me.must_change_password) return showChoosePassword($("login-pass").value);
     location.reload();
   } catch (ex) {
     err.textContent = ex.message === "invalid credentials" ? "Wrong username or password." : ex.message;
     err.hidden = false;
   }
 };
+
+// The cover's second face: a temporary password (one an admin set) is good
+// for exactly this. Straight after signing in the page still holds it, so
+// only the two new fields show; after a reload it has to be typed again.
+function showChoosePassword(temp) {
+  $("login").hidden = false;
+  $("login-form").hidden = true;
+  $("choose-form").hidden = false;
+  $("choose-temp").hidden = !!temp;
+  $("choose-temp").required = !temp;
+  $("choose-temp").value = temp || "";
+  (temp ? $("choose-new") : $("choose-temp")).focus();
+}
+
+$("choose-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const err = $("choose-error");
+  err.hidden = true;
+  if ($("choose-new").value !== $("choose-again").value) {
+    err.textContent = "The two new passwords don't match.";
+    err.hidden = false;
+    return;
+  }
+  try {
+    await api("POST", "/api/password", {
+      current_password: $("choose-temp").value,
+      new_password: $("choose-new").value,
+    });
+    location.reload();
+  } catch (ex) {
+    err.textContent = ex.message === "current password is wrong"
+      ? "That isn't the password you were given." : ex.message;
+    err.hidden = false;
+    if ($("choose-temp").hidden && ex.message === "current password is wrong") {
+      $("choose-temp").hidden = false; // shouldn't happen; let them type it
+      $("choose-temp").required = true;
+    }
+  }
+};
+
+$("choose-signout").onclick = async () => {
+  await api("POST", "/api/logout", {}).catch(() => {});
+  location.reload();
+};
+
+/* ---------- family accounts (admins) ---------- */
+
+// A temporary password to read out or text: no 0/O or 1/l/I to mistype.
+function tempPassword() {
+  const abc = "abcdefghjkmnpqrstuvwxyz23456789";
+  const pick = crypto.getRandomValues(new Uint32Array(12));
+  const s = Array.from(pick, (n) => abc[n % abc.length]).join("");
+  return `${s.slice(0, 4)}-${s.slice(4, 8)}-${s.slice(8)}`;
+}
+
+function seenText(u) {
+  if (!u.last_seen) return "Never signed in";
+  const mins = Math.round((Date.now() - new Date(u.last_seen)) / 60000);
+  if (mins < 10) return "Here now";
+  if (mins < 60) return `Last seen ${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `Last seen ${hrs} ${hrs === 1 ? "hour" : "hours"} ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 45) return `Last seen ${days} ${days === 1 ? "day" : "days"} ago`;
+  return `Last seen ${fmtDate(u.last_seen)}`;
+}
+
+async function openFamily() {
+  let users;
+  try {
+    users = await api("GET", "/api/users");
+  } catch (err) {
+    toast(err.message);
+    return;
+  }
+  const box = el("div", "manifest register");
+  box.appendChild(el("p", "form-hint",
+    "Everyone here sees the same trips. Removing an account only removes the sign-in; what they recorded stays."));
+
+  const act = (label, fn, cls = "") => {
+    const b = el("button", "linkish" + (cls ? " " + cls : ""), label);
+    b.type = "button";
+    b.onclick = async () => {
+      try {
+        await fn();
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+    return b;
+  };
+
+  const list = el("div", "fm-list");
+  for (const u of users) {
+    const row = el("div", "fm-row" + (u.locked_seconds > 0 ? " locked" : ""));
+    const head = el("div", "fm-head");
+    head.appendChild(el("span", "fm-name", u.username));
+    if (u.is_admin) head.appendChild(el("span", "fm-role", "Admin"));
+    if (u.locked_seconds > 0) {
+      // the one loud mark on the page: it's what you're looking for when
+      // someone says they can't get in
+      head.appendChild(el("span", "fm-locked", "Locked"));
+    }
+    row.appendChild(head);
+
+    const facts = [u.you ? "You" : seenText(u)];
+    if (u.sessions > 1) facts.push(`signed in on ${u.sessions} devices`);
+    if (u.locked_seconds > 0) facts.push(`too many wrong passwords, ${Math.ceil(u.locked_seconds / 60)} min left`);
+    if (u.must_change_password) facts.push(u.last_seen ? "still on a temporary password" : "has a temporary password");
+    row.appendChild(el("p", "fm-meta", facts.join(" · ")));
+
+    const actions = el("div", "fm-actions");
+    if (u.you) {
+      if (u.sessions > 1) {
+        actions.appendChild(act("Sign out my other devices", async () => {
+          const r = await api("POST", `/api/users/${u.id}/signout`);
+          toast(`Signed out ${r.signed_out} other ${r.signed_out === 1 ? "device" : "devices"}`);
+          openFamily();
+        }));
+      }
+    } else {
+      if (u.locked_seconds > 0) {
+        actions.appendChild(act("Unlock", async () => {
+          await api("POST", `/api/users/${u.id}/unlock`);
+          toast(`${u.username} can sign in again`);
+          openFamily();
+        }));
+      }
+      const reset = el("form", "fm-reset");
+      reset.hidden = true;
+      const temp = el("input");
+      temp.type = "text";
+      temp.autocomplete = "off";
+      temp.spellcheck = false;
+      temp.minLength = 8;
+      temp.required = true;
+      temp.setAttribute("aria-label", `Temporary password for ${u.username}`);
+      const set = el("button", "primary", "Set temporary password");
+      set.type = "submit";
+      reset.append(temp, set, el("p", "form-hint",
+        `Give ${u.username} this password. It signs them out everywhere, and they choose their own the next time they sign in.`));
+      reset.onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+          await api("POST", `/api/users/${u.id}/password`, { password: temp.value });
+          toast(`Temporary password set for ${u.username}`);
+          openFamily();
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+      actions.appendChild(act("Reset password", () => {
+        reset.hidden = !reset.hidden;
+        if (!reset.hidden) { temp.value = tempPassword(); temp.select(); }
+      }));
+      if (u.sessions > 0) {
+        actions.appendChild(act("Sign out everywhere", async () => {
+          const r = await api("POST", `/api/users/${u.id}/signout`);
+          toast(`${u.username} signed out of ${r.signed_out} ${r.signed_out === 1 ? "device" : "devices"}`);
+          openFamily();
+        }));
+      }
+      actions.appendChild(u.is_admin
+        ? act("Remove admin", async () => {
+          await api("PATCH", `/api/users/${u.id}`, { is_admin: false });
+          toast(`${u.username} is no longer an admin`);
+          openFamily();
+        })
+        : act("Make admin", async () => {
+          if (!confirm(`Make ${u.username} an admin? They'll be able to manage every account, yours included.`)) return;
+          await api("PATCH", `/api/users/${u.id}`, { is_admin: true });
+          toast(`${u.username} is now an admin`);
+          openFamily();
+        }));
+      actions.appendChild(act("Remove", async () => {
+        if (!confirm(`Remove ${u.username}'s account? They're signed out, and the trips stay.`)) return;
+        await api("DELETE", `/api/users/${u.id}`);
+        toast(`Removed ${u.username}`);
+        openFamily();
+      }, "danger"));
+      row.append(actions, reset);
+      list.appendChild(row);
+      continue;
+    }
+    row.appendChild(actions);
+    list.appendChild(row);
+  }
+  box.appendChild(list);
+
+  box.appendChild(el("h3", "day-head", "Add a family member"));
+  const add = el("form", "fm-add");
+  const name = el("input");
+  name.type = "text";
+  name.placeholder = "Username";
+  name.autocomplete = "off";
+  name.maxLength = 64;
+  name.required = true;
+  const pass = el("input");
+  pass.type = "text";
+  pass.autocomplete = "off";
+  pass.spellcheck = false;
+  pass.minLength = 8;
+  pass.required = true;
+  pass.value = tempPassword();
+  pass.setAttribute("aria-label", "Temporary password");
+  const create = el("button", "primary", "Create account");
+  create.type = "submit";
+  add.append(name, pass, create, el("p", "form-hint",
+    "Give them this temporary password. They choose their own the first time they sign in."));
+  add.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api("POST", "/api/users", { username: name.value.trim(), password: pass.value });
+      toast(`Account created for ${name.value.trim()}`);
+      openFamily();
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  box.appendChild(add);
+  openOverlay("Family", box);
+}
 
 /* ---------- boot ---------- */
 
@@ -1926,7 +2147,8 @@ $("login-form").onsubmit = async (e) => {
     }
     return; // on 401 the login overlay is already shown
   }
-  $("admin-box").hidden = !state.me.is_admin;
+  if (state.me.must_change_password) return showChoosePassword(null);
+  $("btn-family").hidden = !state.me.is_admin;
   $("app-version").textContent = state.me.version === "dev" ? "dev build" : state.me.version;
   try {
     await loadData(true);

@@ -36,9 +36,10 @@ type ctxKey int
 const userKey ctxKey = 0
 
 type sessionUser struct {
-	ID       int64  `json:"-"`
-	Username string `json:"username"`
-	IsAdmin  bool   `json:"is_admin"`
+	ID         int64  `json:"-"`
+	Username   string `json:"username"`
+	IsAdmin    bool   `json:"is_admin"`
+	MustChange bool   `json:"must_change_password"`
 }
 
 // --- login rate limiting ---
@@ -67,6 +68,18 @@ func (l *loginLimiter) locked(key string) bool {
 	defer l.mu.Unlock()
 	a := l.attempts[key]
 	return a != nil && time.Now().Before(a.lockedUntil)
+}
+
+// lockedFor is how long the account stays locked; zero when it isn't.
+func (l *loginLimiter) lockedFor(key string) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if a := l.attempts[key]; a != nil {
+		if d := time.Until(a.lockedUntil); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 func (l *loginLimiter) fail(key string) {
@@ -117,7 +130,7 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// case-folded so "Giedrius" and "giedrius" can't get ten tries between them
-	key := strings.ToLower(strings.TrimSpace(req.Username))
+	key := limiterKey(req.Username)
 	if len(key) > 64 { // no such account can exist; don't let junk names grow the limiter
 		httpError(w, http.StatusUnauthorized, "invalid credentials")
 		return
@@ -128,12 +141,13 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var (
-		id      int64
-		hash    string
-		isAdmin bool
+		id         int64
+		hash       string
+		isAdmin    bool
+		mustChange bool
 	)
-	err := a.db.QueryRow(`SELECT id, password_hash, is_admin FROM users WHERE username = ?`, req.Username).
-		Scan(&id, &hash, &isAdmin)
+	err := a.db.QueryRow(`SELECT id, password_hash, is_admin, must_change_password FROM users WHERE username = ?`, req.Username).
+		Scan(&id, &hash, &isAdmin, &mustChange)
 	if err == sql.ErrNoRows {
 		bcrypt.CompareHashAndPassword(dummyHash, []byte(req.Password))
 		a.limiter.fail(key)
@@ -164,7 +178,8 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, a.sessionCookie(token, int(sessionTTL.Seconds())))
-	writeJSON(w, http.StatusOK, sessionUser{Username: req.Username, IsAdmin: isAdmin})
+	a.db.Exec(`UPDATE users SET last_seen = ? WHERE id = ?`, time.Now().UTC().Format(time.RFC3339), id)
+	writeJSON(w, http.StatusOK, sessionUser{Username: req.Username, IsAdmin: isAdmin, MustChange: mustChange})
 }
 
 func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -179,17 +194,14 @@ func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (a *app) handleMe(w http.ResponseWriter, r *http.Request) {
 	u := r.Context().Value(userKey).(sessionUser)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"username": u.Username,
-		"is_admin": u.IsAdmin,
-		"version":  version,
+		"username":             u.Username,
+		"is_admin":             u.IsAdmin,
+		"must_change_password": u.MustChange,
+		"version":              version,
 	})
 }
 
 func (a *app) handleCreateUser(w http.ResponseWriter, r *http.Request) {
-	if !r.Context().Value(userKey).(sessionUser).IsAdmin {
-		httpError(w, http.StatusForbidden, "admin only")
-		return
-	}
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -197,12 +209,20 @@ func (a *app) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.Username == "" || len(req.Username) > 64 || len(req.Password) < 8 {
-		httpError(w, http.StatusBadRequest, "username required, password must be at least 8 characters")
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || len(req.Username) > 64 {
+		httpError(w, http.StatusBadRequest, "username required, at most 64 characters")
 		return
 	}
-	if len(req.Password) > maxPassword {
-		httpError(w, http.StatusBadRequest, "password must be at most 72 characters")
+	if msg := passwordProblem(req.Password); msg != "" {
+		httpError(w, http.StatusBadRequest, msg)
+		return
+	}
+	// the limiter already treats "Kid" and "kid" as one account; so does this
+	var taken int
+	a.db.QueryRow(`SELECT COUNT(*) FROM users WHERE lower(username) = lower(?)`, req.Username).Scan(&taken)
+	if taken > 0 {
+		httpError(w, http.StatusConflict, "username already exists")
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcryptCost)
@@ -210,7 +230,9 @@ func (a *app) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "hash error")
 		return
 	}
-	if _, err := a.db.Exec(`INSERT INTO users (username, password_hash) VALUES (?, ?)`, req.Username, hash); err != nil {
+	// the admin chose this password, so it's temporary: the first sign-in
+	// asks for their own
+	if _, err := a.db.Exec(`INSERT INTO users (username, password_hash, must_change_password) VALUES (?, ?, 1)`, req.Username, hash); err != nil {
 		httpError(w, http.StatusConflict, "username already exists")
 		return
 	}
@@ -226,12 +248,8 @@ func (a *app) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if len(req.NewPassword) < 8 {
-		httpError(w, http.StatusBadRequest, "new password must be at least 8 characters")
-		return
-	}
-	if len(req.NewPassword) > maxPassword {
-		httpError(w, http.StatusBadRequest, "new password must be at most 72 characters")
+	if msg := passwordProblem(req.NewPassword); msg != "" {
+		httpError(w, http.StatusBadRequest, "new "+msg)
 		return
 	}
 	var hash string
@@ -248,7 +266,11 @@ func (a *app) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "hash error")
 		return
 	}
-	if _, err := a.db.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, newHash, u.ID); err != nil {
+	if req.NewPassword == req.CurrentPassword {
+		httpError(w, http.StatusBadRequest, "choose a password different from the current one")
+		return
+	}
+	if _, err := a.db.Exec(`UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?`, newHash, u.ID); err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
 	}
@@ -284,16 +306,17 @@ func (a *app) auth(next http.HandlerFunc) http.HandlerFunc {
 		var (
 			u         sessionUser
 			expiresAt string
+			lastSeen  string
 		)
 		lookup := `
-			SELECT u.id, u.username, u.is_admin, s.expires_at
+			SELECT u.id, u.username, u.is_admin, u.must_change_password, u.last_seen, s.expires_at
 			FROM sessions s JOIN users u ON u.id = s.user_id
 			WHERE s.token = ?`
-		err = a.db.QueryRow(lookup, key).Scan(&u.ID, &u.Username, &u.IsAdmin, &expiresAt)
+		err = a.db.QueryRow(lookup, key).Scan(&u.ID, &u.Username, &u.IsAdmin, &u.MustChange, &lastSeen, &expiresAt)
 		if err == sql.ErrNoRows {
 			// Session created before tokens were hashed at rest: accept once
 			// and upgrade the row in place, so nobody gets logged out.
-			if a.db.QueryRow(lookup, c.Value).Scan(&u.ID, &u.Username, &u.IsAdmin, &expiresAt) == nil {
+			if a.db.QueryRow(lookup, c.Value).Scan(&u.ID, &u.Username, &u.IsAdmin, &u.MustChange, &lastSeen, &expiresAt) == nil {
 				a.db.Exec(`UPDATE sessions SET token = ? WHERE token = ?`, key, c.Value)
 				err = nil
 			}
@@ -314,6 +337,26 @@ func (a *app) auth(next http.HandlerFunc) http.HandlerFunc {
 			a.db.Exec(`UPDATE sessions SET expires_at = ? WHERE token = ?`, newExp.Format(time.RFC3339), key)
 			http.SetCookie(w, a.sessionCookie(c.Value, int(sessionTTL.Seconds())))
 		}
+		// Last seen, for the family page: written at most every five minutes
+		// so a burst of requests isn't a burst of writes.
+		if t, err := time.Parse(time.RFC3339, lastSeen); err != nil || time.Since(t) > 5*time.Minute {
+			a.db.Exec(`UPDATE users SET last_seen = ? WHERE id = ?`, time.Now().UTC().Format(time.RFC3339), u.ID)
+		}
+		// A temporary password opens one door: choosing your own. Checked
+		// here rather than in the page, so the API holds the rule.
+		if u.MustChange && !mustChangeAllowed(r) {
+			httpError(w, http.StatusPreconditionRequired, "choose your own password first")
+			return
+		}
 		next(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
 	}
+}
+
+// mustChangeAllowed lists what a temporary password may reach.
+func mustChangeAllowed(r *http.Request) bool {
+	switch r.Method + " " + r.URL.Path {
+	case "GET /api/me", "POST /api/password", "POST /api/logout":
+		return true
+	}
+	return false
 }

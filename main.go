@@ -73,11 +73,7 @@ func main() {
 	go a.housekeeping()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/login", a.handleLogin)
-	mux.HandleFunc("POST /api/logout", a.auth(a.handleLogout))
-	mux.HandleFunc("GET /api/me", a.auth(a.handleMe))
-	mux.HandleFunc("POST /api/users", a.auth(a.handleCreateUser))
-	mux.HandleFunc("POST /api/password", a.auth(a.handleChangePassword))
+	a.accountRoutes(mux)
 
 	mux.HandleFunc("GET /api/holidays", a.auth(a.handleListHolidays))
 	mux.HandleFunc("POST /api/holidays", a.auth(a.handleCreateHoliday))

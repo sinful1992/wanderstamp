@@ -80,14 +80,6 @@
           <button type="button" id="btn-cancel-trip">Cancel</button>
         </div>
       </form>
-      <details id="admin-box" hidden>
-        <summary>Add a family member</summary>
-        <form id="new-user-form">
-          <input id="user-name" type="text" placeholder="Username" autocomplete="off" required>
-          <input id="user-pass" type="password" placeholder="Password (8+ characters)" minlength="8" required>
-          <button type="submit" class="primary">Create account</button>
-        </form>
-      </details>
       <details id="pass-box">
         <summary>Change my password</summary>
         <form id="password-form">
@@ -97,6 +89,7 @@
         </form>
       </details>
       <div class="endpaper">
+        <button id="btn-family" class="linkish" hidden>Family accounts</button>
         <a id="btn-export" class="linkish" href="/api/export" download>Export my data</a>
         <button id="btn-logout" class="linkish">Sign out</button>
         <p id="app-version" class="form-hint"></p>
@@ -134,7 +127,7 @@
 
 <!-- Sign-in: passport cover -->
 <div id="login" hidden>
-  <form id="login-form">
+  <form id="login-form" class="cover-form">
     <p class="cover-eyebrow">Family travel record</p>
     <div class="cover-crest" aria-hidden="true">✈</div>
     <h1 class="cover-title">Wander<br>stamp</h1>
@@ -143,6 +136,20 @@
     <input id="login-pass" type="password" placeholder="Password" autocomplete="current-password" required>
     <button type="submit" class="primary gold">Sign in</button>
     <p id="login-error" hidden></p>
+  </form>
+  <!-- after signing in with a password an admin set: the same cover asks for their own -->
+  <form id="choose-form" class="cover-form" hidden>
+    <p class="cover-eyebrow">Family travel record</p>
+    <div class="cover-crest" aria-hidden="true">✈</div>
+    <h1 class="cover-title">Wander<br>stamp</h1>
+    <div class="cover-rule" aria-hidden="true"></div>
+    <p class="cover-note">You signed in with a password you were given. Choose your own to carry on.</p>
+    <input id="choose-temp" type="password" placeholder="Password you were given" autocomplete="current-password">
+    <input id="choose-new" type="password" placeholder="New password (8+ characters)" autocomplete="new-password" minlength="8" required>
+    <input id="choose-again" type="password" placeholder="New password again" autocomplete="new-password" minlength="8" required>
+    <button type="submit" class="primary gold">Save my password</button>
+    <p id="choose-error" hidden></p>
+    <button type="button" id="choose-signout" class="linkish">Sign out</button>
   </form>
 </div>
 
