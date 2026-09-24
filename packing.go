@@ -18,10 +18,7 @@ func cleanLabel(w http.ResponseWriter, s string) (string, bool) {
 		httpError(w, http.StatusBadRequest, "item cannot be empty")
 		return "", false
 	}
-	if len(s) > maxLabelLen {
-		s = s[:maxLabelLen]
-	}
-	return s, true
+	return truncate(s, maxLabelLen), true
 }
 
 // --- master lists ---
@@ -100,9 +97,7 @@ func (a *app) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 		if label == "" {
 			continue
 		}
-		if len(label) > maxLabelLen {
-			label = label[:maxLabelLen]
-		}
+		label = truncate(label, maxLabelLen)
 		if _, err := tx.Exec(`INSERT INTO packing_template_items (template_id, label, sort)
 			VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, id, label, i); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")

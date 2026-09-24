@@ -1014,13 +1014,19 @@ function tripEditForm(h) {
   wrap.append(journal, shareRow, btnRow);
   wrap.onsubmit = async (e) => {
     e.preventDefault();
-    const body = { name: name.value, color, start_at: start.value, journal: journal.value };
+    // Dates go out only when they changed: a bare date means midnight (or
+    // 23:59:59 for the end), so re-sending it on every rename would drag the
+    // exact start/end moments to the day's edges and widen the photo window.
+    const body = { name: name.value, color, journal: journal.value };
+    const startChanged = start.value !== h.start_at.slice(0, 10);
+    const endChanged = !h.active && end.value && end.value !== (h.end_at || "").slice(0, 10);
+    if (startChanged) body.start_at = start.value;
+    if (endChanged) body.end_at = end.value;
     if (cover && cover !== h.cover_asset) body.cover_asset = cover;
-    if (!h.active && end.value) body.end_at = end.value;
     try {
       await api("PATCH", `/api/holidays/${h.id}`, body);
       toast("Trip saved");
-      const dates = (!h.active && end.value !== (h.end_at || "").slice(0, 10)) || start.value !== h.start_at.slice(0, 10);
+      const dates = startChanged || endChanged;
       loadData();
       if (dates) api("POST", `/api/holidays/${h.id}/sync`).then(() => loadData()).catch(() => {});
     } catch (err) {

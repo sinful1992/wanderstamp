@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -33,6 +34,19 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 	return true
+}
+
+// truncate caps s at max bytes without splitting a multi-byte character —
+// place names like "Łódź" or "東京" would otherwise be stored as invalid UTF-8.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	// back up to the start of the character that straddles the cut
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
 }
 
 func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
@@ -148,10 +162,7 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 		s := t.Format(time.RFC3339)
 		endAt = &s
 	}
-	req.DestName = strings.TrimSpace(req.DestName)
-	if len(req.DestName) > 120 {
-		req.DestName = req.DestName[:120]
-	}
+	req.DestName = truncate(strings.TrimSpace(req.DestName), 120)
 	if req.DestName != "" && (req.DestLat < -90 || req.DestLat > 90 || req.DestLng < -180 || req.DestLng > 180) {
 		httpError(w, http.StatusBadRequest, "invalid destination coordinates")
 		return
@@ -213,6 +224,49 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	if req.StartAt != nil || req.EndAt != nil {
+		// Either end can move, so check the order against whichever side
+		// is staying put.
+		var curStart string
+		var curEnd *string
+		if err := a.db.QueryRow(`SELECT start_at, end_at FROM holidays WHERE id = ?`, id).Scan(&curStart, &curEnd); err != nil {
+			httpError(w, http.StatusNotFound, "no such holiday")
+			return
+		}
+		start, _ := time.Parse(time.RFC3339, curStart)
+		if req.StartAt != nil {
+			t, ok := parseWhen(*req.StartAt, false)
+			if !ok {
+				httpError(w, http.StatusBadRequest, "start_at must be RFC3339 or YYYY-MM-DD")
+				return
+			}
+			start = t
+		}
+		var end *time.Time
+		if curEnd != nil {
+			if t, err := time.Parse(time.RFC3339, *curEnd); err == nil {
+				end = &t
+			}
+		}
+		if req.EndAt != nil {
+			t, ok := parseWhen(*req.EndAt, true)
+			if !ok {
+				httpError(w, http.StatusBadRequest, "end_at must be RFC3339 or YYYY-MM-DD")
+				return
+			}
+			end = &t
+		}
+		if end != nil && end.Before(start) {
+			httpError(w, http.StatusBadRequest, "the trip can't end before it starts")
+			return
+		}
+		if req.StartAt != nil {
+			a.db.Exec(`UPDATE holidays SET start_at = ? WHERE id = ?`, start.Format(time.RFC3339), id)
+		}
+		if req.EndAt != nil {
+			a.db.Exec(`UPDATE holidays SET end_at = ? WHERE id = ?`, end.Format(time.RFC3339), id)
+		}
+	}
 	if req.Journal != nil {
 		a.db.Exec(`UPDATE holidays SET journal = ? WHERE id = ?`, *req.Journal, id)
 	}
@@ -247,25 +301,6 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.db.Exec(`UPDATE holidays SET color = ? WHERE id = ?`, *req.Color, id)
-	}
-	if req.StartAt != nil {
-		t, ok := parseWhen(*req.StartAt, false)
-		if !ok {
-			httpError(w, http.StatusBadRequest, "start_at must be RFC3339 or YYYY-MM-DD")
-			return
-		}
-		a.db.Exec(`UPDATE holidays SET start_at = ? WHERE id = ?`, t.Format(time.RFC3339), id)
-	}
-	if req.EndAt != nil {
-		t, ok := parseWhen(*req.EndAt, true)
-		if !ok {
-			httpError(w, http.StatusBadRequest, "end_at must be RFC3339 or YYYY-MM-DD")
-			return
-		}
-		if _, err := a.db.Exec(`UPDATE holidays SET end_at = ? WHERE id = ?`, t.Format(time.RFC3339), id); err != nil {
-			httpError(w, http.StatusConflict, "a holiday is already active")
-			return
-		}
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
