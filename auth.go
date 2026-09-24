@@ -6,8 +6,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,6 +43,10 @@ type sessionUser struct {
 
 // --- login rate limiting ---
 
+// Failures are counted per account, not per client address: behind
+// tailscale serve every remote device arrives from the same address, so an
+// IP-keyed lockout let one person's typos lock the whole family out.
+
 type loginLimiter struct {
 	mu       sync.Mutex
 	attempts map[string]*loginAttempts
@@ -58,20 +62,20 @@ func newLoginLimiter() *loginLimiter {
 	return &loginLimiter{attempts: make(map[string]*loginAttempts)}
 }
 
-func (l *loginLimiter) locked(ip string) bool {
+func (l *loginLimiter) locked(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	a := l.attempts[ip]
+	a := l.attempts[key]
 	return a != nil && time.Now().Before(a.lockedUntil)
 }
 
-func (l *loginLimiter) fail(ip string) {
+func (l *loginLimiter) fail(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	a := l.attempts[ip]
+	a := l.attempts[key]
 	if a == nil {
 		a = &loginAttempts{}
-		l.attempts[ip] = a
+		l.attempts[key] = a
 	}
 	a.fails++
 	a.lastFail = time.Now()
@@ -84,10 +88,10 @@ func (l *loginLimiter) fail(ip string) {
 	}
 }
 
-func (l *loginLimiter) success(ip string) {
+func (l *loginLimiter) success(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.attempts, ip)
+	delete(l.attempts, key)
 }
 
 // gc drops entries whose last failure is old, so the map can't grow forever.
@@ -95,34 +99,31 @@ func (l *loginLimiter) gc() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	cutoff := time.Now().Add(-time.Hour)
-	for ip, a := range l.attempts {
+	for key, a := range l.attempts {
 		if a.lastFail.Before(cutoff) && time.Now().After(a.lockedUntil) {
-			delete(l.attempts, ip)
+			delete(l.attempts, key)
 		}
 	}
-}
-
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 // --- handlers ---
 
 func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-	if a.limiter.locked(ip) {
-		httpError(w, http.StatusTooManyRequests, "too many failed logins, try again later")
-		return
-	}
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if !readJSON(w, r, &req) {
+		return
+	}
+	// case-folded so "Giedrius" and "giedrius" can't get ten tries between them
+	key := strings.ToLower(strings.TrimSpace(req.Username))
+	if len(key) > 64 { // no such account can exist; don't let junk names grow the limiter
+		httpError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if a.limiter.locked(key) {
+		httpError(w, http.StatusTooManyRequests, "too many failed logins for this account, try again in a few minutes")
 		return
 	}
 
@@ -135,7 +136,7 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Scan(&id, &hash, &isAdmin)
 	if err == sql.ErrNoRows {
 		bcrypt.CompareHashAndPassword(dummyHash, []byte(req.Password))
-		a.limiter.fail(ip)
+		a.limiter.fail(key)
 		httpError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -144,11 +145,11 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
-		a.limiter.fail(ip)
+		a.limiter.fail(key)
 		httpError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	a.limiter.success(ip)
+	a.limiter.success(key)
 
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
