@@ -835,7 +835,12 @@ function renderSheet() {
   const list = $("trip-list");
   list.textContent = "";
   if (!state.holidays.length) {
-    list.appendChild(el("p", "empty-note", "No trips yet — start your first holiday below."));
+    // the sheet's first page: the same blank stamp the passport shows
+    const blank = el("div", "sheet-blank");
+    blank.appendChild(el("div", "stamp-blank", "No entries yet"));
+    blank.appendChild(el("p", "form-hint",
+      "Start a holiday as you set off, or add a past trip by giving it both dates."));
+    list.appendChild(blank);
   }
   for (const h of state.holidays) {
     const row = el("div", "trip-row"
@@ -1078,7 +1083,12 @@ $("overlay-close").onclick = closeOverlay;
 $("btn-passport").onclick = async () => {
   try {
     const stamps = await api("GET", "/api/stamps");
-    const page = el("div", "passport");
+    // An open booklet: the data page on the left, the visa page facing it.
+    // On a phone the two pages stack, and each keeps its own stitched edge.
+    const spread = el("div", "pp-spread");
+    const page = el("div", "passport pp-data");
+    const visas = el("div", "passport pp-visas");
+    spread.append(page, visas);
 
     const days = state.holidays.reduce((sum, h) => {
       const end = h.end_at ? new Date(h.end_at) : new Date();
@@ -1105,15 +1115,15 @@ $("btn-passport").onclick = async () => {
     head.appendChild(fields);
     page.appendChild(head);
 
-    // The machine-readable zone, built from the record it actually describes.
+    // The machine-readable zone sits at the foot of the data page, as it does
+    // in a real passport, built from the record it actually describes.
     const mrz = (t) => t.toUpperCase().replace(/[^A-Z0-9]+/g, "<").slice(0, 44).padEnd(44, "<");
     const holder = state.me ? state.me.username : "traveller";
     page.appendChild(el("p", "pp-mrz",
       mrz("P<GBR<" + holder) + "\n" +
       mrz(countries.size + " countries " + state.holidays.length + " trips " + days + " days")));
 
-    page.appendChild(el("hr", "pp-perf"));
-
+    visas.appendChild(el("h3", "pp-runhead", "Visas"));
     const wrap = el("div", "stamp-grid");
     stamps.forEach((s, i) => {
       const card = el("button", "stamp-card");
@@ -1135,12 +1145,12 @@ $("btn-passport").onclick = async () => {
     if (!stamps.length) {
       wrap.appendChild(el("div", "stamp-blank", "Awaiting first entry"));
     }
-    page.appendChild(wrap);
+    visas.appendChild(wrap);
     if (!stamps.length) {
-      page.appendChild(el("p", "pp-empty",
+      visas.appendChild(el("p", "pp-empty",
         "A country is stamped here once a trip has photos with a location on them."));
     }
-    openOverlay("Passport", page);
+    openOverlay("Passport", spread);
   } catch (err) {
     toast(err.message);
   }
@@ -1583,10 +1593,14 @@ function buildSwatches() {
 // Destination picker: search places (Nominatim, proxied by the server so the
 // browser never talks to a third party) or type "lat, lng" straight in.
 let chosenDest = null;
+// The name the last place pick filled in: a later pick may replace it, but
+// never a name the person typed themselves.
+let autoName = "";
 const COORD_RE = /^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/;
 
 function resetDest() {
   chosenDest = null;
+  autoName = "";
   $("trip-dest").value = "";
   $("dest-results").textContent = "";
 }
@@ -1620,6 +1634,11 @@ async function searchDest() {
       b.onclick = () => {
         chosenDest = { name: hit.name.split(",").slice(0, 2).join(","), lat: hit.lat, lng: hit.lng };
         res.querySelectorAll(".dest-opt").forEach((x) => x.classList.toggle("sel", x === b));
+        const name = $("trip-name");
+        if (!name.value.trim() || name.value === autoName) {
+          autoName = hit.name.split(",")[0].trim();
+          name.value = autoName;
+        }
       };
       res.appendChild(b);
     }
@@ -1639,7 +1658,7 @@ $("btn-new-trip").onclick = () => {
   resetDest();
   $("new-trip-form").hidden = false;
   $("btn-new-trip").hidden = true;
-  $("trip-name").focus();
+  $("trip-dest").focus();
 };
 $("btn-cancel-trip").onclick = () => {
   $("new-trip-form").hidden = true;

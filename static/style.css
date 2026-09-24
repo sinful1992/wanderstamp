@@ -615,9 +615,36 @@ button.linkish, a.linkish {
   color: var(--muted); white-space: pre-line; overflow-x: auto;
 }
 
-.pp-perf {
-  margin: 18px -26px 20px; border: 0;
-  border-top: 2px dashed var(--line);
+/* ---- the spread ----
+   Phone: the two pages stack, each a page in its own right. Wide: the
+   booklet lies open, the stitching moves to the fold between the pages and
+   each page darkens a little into the gutter. */
+.pp-spread { max-width: 620px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.pp-spread .passport { max-width: none; margin: 0; }
+.pp-data { min-height: 0; display: flex; flex-direction: column; }
+.pp-data .pp-mrz { margin-top: auto; }
+.pp-data .pp-head { margin-bottom: 24px; }
+.pp-visas { min-height: min(56vh, 520px); }
+/* the running head a passport prints on its visa pages */
+.pp-runhead {
+  margin: 0 0 18px; text-align: center;
+  font-family: var(--stamp); font-weight: 400; font-size: 17px; letter-spacing: 3px;
+  text-transform: uppercase; color: var(--muted);
+}
+@media (min-width: 900px) {
+  #overlay-content:has(.pp-spread) { max-width: 1040px; }
+  .pp-spread { max-width: none; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0; }
+  .pp-spread .passport { min-height: min(66vh, 580px); }
+  .pp-data {
+    border-radius: 14px 3px 3px 14px; border-right: 0;
+    background: linear-gradient(to left, rgba(38, 34, 28, .09), transparent 34px), var(--paper);
+  }
+  .pp-data::before { display: none; }  /* the stitching lives at the fold */
+  .pp-visas {
+    border-radius: 3px 14px 14px 3px;
+    background: linear-gradient(to right, rgba(38, 34, 28, .09), transparent 34px), var(--paper);
+  }
+  .pp-visas::before { width: 3px; left: -1.5px; border-radius: 0; opacity: .6; }
 }
 
 /* stamps sit at their natural size and pack from the left, overlapping a
@@ -651,6 +678,13 @@ button.linkish, a.linkish {
   border: 2px dashed var(--line); color: var(--muted);
   text-align: center; font-family: var(--stamp);
   font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
+}
+/* the empty trips sheet shows the same blank stamp, laid on the cover in foil */
+.sheet-blank { padding: 18px 14px 6px; display: grid; justify-items: start; gap: 10px; }
+.sheet-blank .stamp-blank {
+  border-color: var(--gold); color: var(--gold);
+  width: auto; padding: 16px 24px;
+  font-size: 17px; transform: rotate(-2deg);
 }
 .pp-empty { margin: 12px 0 0; font-size: 14px; color: var(--muted); max-width: 42ch; }
 
