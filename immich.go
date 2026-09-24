@@ -86,6 +86,14 @@ func (c *immichClient) searchRange(after, before time.Time) ([]immichAsset, erro
 		if err != nil {
 			return nil, err
 		}
+		// Immich error bodies are JSON too ({"message":...}) and decode cleanly
+		// into an empty page — which the sync would read as "every photo is
+		// gone" and prune the whole trip. Any non-200 page fails the search.
+		if resp.StatusCode != http.StatusOK {
+			snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+			resp.Body.Close()
+			return nil, fmt.Errorf("immich search page %d: %s: %s", page, resp.Status, strings.TrimSpace(string(snippet)))
+		}
 		var result struct {
 			Assets struct {
 				Items    []immichAsset `json:"items"`
