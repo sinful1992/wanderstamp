@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"log"
 	"mime"
@@ -151,13 +152,31 @@ func main() {
 }
 
 // housekeeping purges expired sessions and stale login-limiter entries so
-// neither grows without bound.
+// neither grows without bound, and folds the WAL back into the database.
 func (a *app) housekeeping() {
 	for {
 		a.db.Exec(`DELETE FROM sessions WHERE expires_at < ?`, time.Now().UTC().Format(time.RFC3339))
 		a.limiter.gc()
+		if err := checkpoint(a.db); err != nil {
+			log.Printf("wal checkpoint: %v", err)
+		}
 		time.Sleep(time.Hour)
 	}
+}
+
+// checkpoint copies the WAL into the main database file and truncates it.
+// A small travel log never reaches SQLite's 1000-page auto-checkpoint and the
+// process is stopped without closing the DB, so otherwise every write since
+// the first boot lives only in the -wal file and the .db stays an empty shell.
+func checkpoint(db *sql.DB) error {
+	var busy, logPages, done int
+	if err := db.QueryRow(`PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logPages, &done); err != nil {
+		return err
+	}
+	if busy != 0 {
+		return fmt.Errorf("busy, %d of %d pages copied", done, logPages)
+	}
+	return nil
 }
 
 const csp = "default-src 'self'; " +
