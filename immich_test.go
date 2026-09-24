@@ -94,3 +94,53 @@ func TestSyncHolidayKeepsDataWhenImmichFails(t *testing.T) {
 		t.Errorf("after failed sync: %d pinned photos (want 2), %d unplaced (want 1)", photos, unplaced)
 	}
 }
+
+func TestAlbumGoneOnlyForMissingAlbums(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{&immichError{status: 400, msg: `immich PUT /api/albums/x/assets: 400 Bad Request: {"message":"Album not found"}`}, true},
+		{&immichError{status: 404, msg: "immich PUT: 404"}, true},
+		{&immichError{status: 502, msg: "immich PUT: 502 Bad Gateway"}, false},
+		{&immichError{status: 400, msg: `{"message":"ids must be an array"}`}, false},
+	} {
+		if got := albumGone(tc.err); got != tc.want {
+			t.Errorf("albumGone(%v) = %v, want %v", tc.err, got, tc.want)
+		}
+	}
+}
+
+// Immich answering 200 with nothing (a key for the wrong account, a changed
+// response shape) must not read as "every photo was deleted".
+func TestSyncHolidayRefusesSuddenlyEmptyResult(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"assets":{"items":[],"nextPage":null}}`))
+	}))
+	defer srv.Close()
+	db, err := openDB(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	a := &app{db: db, immich: newImmichClient(srv.URL, "key"), lastSync: map[int64]time.Time{}}
+	db.Exec(`INSERT INTO holidays (id, name, color, start_at, end_at) VALUES (1, 'Trip', '#123456', '2026-07-01T00:00:00Z', '2026-07-08T00:00:00Z')`)
+	db.Exec(`INSERT INTO pins (id, holiday_id, kind, cluster_key, lat, lng) VALUES (1, 1, 'photo', 'k', 50, -1.8)`)
+	db.Exec(`INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng) VALUES (1, 'p', '2026-07-02T10:00:00Z', 50, -1.8)`)
+
+	if _, _, err := a.syncHoliday(1); err == nil {
+		t.Error("an empty result for a trip with photos should be refused")
+	}
+	var n int
+	db.QueryRow(`SELECT COUNT(*) FROM pin_photos`).Scan(&n)
+	if n != 1 {
+		t.Errorf("photos pruned on an empty result: %d left", n)
+	}
+
+	// a trip with no photos yet syncs an empty result normally
+	db.Exec(`INSERT INTO holidays (id, name, color, start_at, end_at) VALUES (2, 'New', '#123456', '2026-08-01T00:00:00Z', '2026-08-02T00:00:00Z')`)
+	if _, _, err := a.syncHoliday(2); err != nil {
+		t.Errorf("empty trip, empty result: %v", err)
+	}
+}

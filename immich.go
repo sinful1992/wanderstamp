@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -115,6 +116,23 @@ func (c *immichClient) searchRange(after, before time.Time) ([]immichAsset, erro
 
 // --- albums ---
 
+type immichError struct {
+	status int
+	msg    string
+}
+
+func (e *immichError) Error() string { return e.msg }
+
+// albumGone reports whether Immich said the album doesn't exist (it answers
+// 400 "Album not found", verified on 3.2.2; 404 is accepted too). Anything
+// else — a restart, a 5xx, a timeout — is transient, and recreating the album
+// then would leave a duplicate "Holiday: …" album behind every hiccup.
+func albumGone(err error) bool {
+	var ie *immichError
+	return errors.As(err, &ie) && (ie.status == http.StatusNotFound ||
+		(ie.status == http.StatusBadRequest && strings.Contains(strings.ToLower(ie.msg), "not found")))
+}
+
 func (c *immichClient) apiJSON(method, path string, body any, out any) error {
 	data, _ := json.Marshal(body)
 	req, _ := http.NewRequest(method, c.baseURL+path, bytes.NewReader(data))
@@ -126,7 +144,9 @@ func (c *immichClient) apiJSON(method, path string, body any, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("immich %s %s: %s", method, path, resp.Status)
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+		return &immichError{status: resp.StatusCode, msg: fmt.Sprintf("immich %s %s: %s: %s",
+			method, path, resp.Status, strings.TrimSpace(string(msg)))}
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
@@ -166,8 +186,12 @@ func (a *app) syncAlbum(holidayID int64, assetIDs []string) {
 		if err == nil {
 			return
 		}
-		// Album may have been deleted in Immich; fall through and recreate.
-		log.Printf("album %s add failed (%v), recreating", albumID, err)
+		if !albumGone(err) {
+			log.Printf("album %s add failed, will retry next sync: %v", albumID, err)
+			return
+		}
+		// Deleted in Immich; recreate it.
+		log.Printf("album %s is gone (%v), recreating", albumID, err)
 	}
 	newID, err := a.immich.createAlbum("Holiday: "+name, assetIDs)
 	if err != nil {
@@ -227,6 +251,22 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 	assets, err := a.immich.searchRange(start.Add(-startGrace), before)
 	if err != nil {
 		return 0, 0, fmt.Errorf("immich search: %w", err)
+	}
+
+	// A trip that already has photos coming back empty is far likelier to be
+	// Immich answering for the wrong account, or a changed response shape,
+	// than every photo being deleted at once — so refuse rather than prune.
+	// Someone who really did delete them all can remove the trip's pins by hand.
+	if len(assets) == 0 {
+		var have int
+		a.db.QueryRow(`
+			SELECT (SELECT COUNT(*) FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
+			        WHERE p.holiday_id = ? AND p.kind = 'photo')
+			     + (SELECT COUNT(*) FROM unplaced_photos WHERE holiday_id = ?)`,
+			holidayID, holidayID).Scan(&have)
+		if have > 0 {
+			return 0, 0, fmt.Errorf("immich returned no photos for a trip that has %d; not pruning", have)
+		}
 	}
 
 	tx, err := a.db.Begin()
