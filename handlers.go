@@ -293,6 +293,11 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.StartAt != nil {
 			a.db.Exec(`UPDATE holidays SET start_at = ? WHERE id = ?`, start.Format(time.RFC3339), id)
+			// An open trip moved to a first day still ahead goes back to
+			// counting down; one moved into the past is promotePlanned's.
+			if end == nil && start.After(time.Now().UTC()) {
+				a.db.Exec(`UPDATE holidays SET planned = 1 WHERE id = ?`, id)
+			}
 		}
 		if req.EndAt != nil {
 			a.db.Exec(`UPDATE holidays SET end_at = ? WHERE id = ?`, end.Format(time.RFC3339), id)

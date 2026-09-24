@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -136,6 +137,13 @@ func openDB(path string) (*sql.DB, error) {
 	}
 	for _, stmt := range migrations {
 		db.Exec(stmt)
+	}
+	// Before planned trips existed (<= 1.8.2) a future first day made a live
+	// trip. An open trip whose first day is still ahead is a planned one.
+	if _, err := db.Exec(`UPDATE holidays SET planned = 1
+		WHERE end_at IS NULL AND planned = 0 AND start_at > ?`,
+		time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return nil, fmt.Errorf("re-plan future trips: %w", err)
 	}
 	return db, nil
 }

@@ -180,3 +180,47 @@ func TestOldActiveIndexIsReplaced(t *testing.T) {
 		t.Errorf("planned trip beside the migrated live one: got %d", code)
 	}
 }
+
+// A trip made by 1.8.2 or earlier with a future first day was stored live;
+// reopening the database re-plans it.
+func TestOldFutureLiveTripIsReplannedOnOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	db, err := openDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Exec(`INSERT INTO holidays (name, color, start_at, planned) VALUES ('Tomorrow', '#aa3300', ?, 0)`, day(1)+"T00:00:00Z")
+	db.Exec(`INSERT INTO holidays (name, color, start_at, end_at, planned) VALUES ('Past', '#aa3300', ?, ?, 0)`, day(-9)+"T00:00:00Z", day(-2)+"T23:59:59Z")
+	db.Close()
+	db, err = openDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	hs := listHolidays(t, &app{db: db})
+	if h := hs["Tomorrow"]; !h.Planned || h.Active {
+		t.Errorf("future open trip: planned=%v active=%v, want planned", h.Planned, h.Active)
+	}
+	if h := hs["Past"]; h.Planned {
+		t.Errorf("ended trip was re-planned")
+	}
+}
+
+func TestMovingALiveTripsFirstDayAheadPlansIt(t *testing.T) {
+	a := newTestApp(t)
+	if code, _ := createHoliday(t, a, map[string]any{"name": "Now"}); code != http.StatusCreated {
+		t.Fatalf("live trip: %d", code)
+	}
+	b, _ := json.Marshal(map[string]any{"start_at": day(3)})
+	req := httptest.NewRequest("PATCH", "/api/holidays/1", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", "1")
+	rec := httptest.NewRecorder()
+	a.handleUpdateHoliday(rec, req)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+		t.Fatalf("patch: %d %s", rec.Code, rec.Body)
+	}
+	if h := listHolidays(t, a)["Now"]; !h.Planned || h.Active {
+		t.Errorf("after moving ahead: planned=%v active=%v, want planned", h.Planned, h.Active)
+	}
+}
