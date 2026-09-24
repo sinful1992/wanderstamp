@@ -728,11 +728,13 @@ function placePin(latlng) {
   // to any past holiday after the fact.
   const trip = el("select");
   for (const h of state.holidays) {
-    const opt = el("option", null, h.active ? h.name + " (now)" : h.name);
+    const opt = el("option", null, h.active ? h.name + " (now)" : h.planned ? h.name + " (planned)" : h.name);
     opt.value = h.id;
     trip.appendChild(opt);
   }
-  trip.value = String((active || state.holidays[0]).id);
+  // With nothing live, the latest trip taken, not the furthest-off plan
+  // (they sort first, by start date).
+  trip.value = String((active || state.holidays.find((h) => !h.planned) || state.holidays[0]).id);
   const save = el("button", "primary", "Add pin");
   save.type = "submit";
   // Exactly where this pin lands; tap to copy (clipboard needs HTTPS, so it
@@ -1062,7 +1064,8 @@ function tripEditForm(h) {
     };
     shareRow.appendChild(revoke);
   }
-  wrap.append(journal, shareRow, btnRow);
+  // nothing to show anyone until the trip has begun
+  wrap.append(journal, h.planned ? el("span") : shareRow, btnRow);
   wrap.onsubmit = async (e) => {
     e.preventDefault();
     // Dates go out only when they changed: a bare date means midnight (or
