@@ -191,9 +191,18 @@ button { font: inherit; cursor: pointer; }
   text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 #banner-day { font-size: 12px; opacity: .85; white-space: nowrap; }
-/* counting down: the tag is still in the drawer, so it wears a dashed edge */
-#banner.planned { outline: 2px dashed rgba(255,255,255,.6); outline-offset: -5px; }
-#banner.planned #banner-day { font-weight: 600; opacity: 1; }
+/* Counting down, the tag grows a claim stub: the days left, torn along a
+   perforation. The trip name is what gives way on a narrow screen. */
+#banner-stub {
+  flex: none; display: grid; justify-items: center; align-self: stretch; align-content: center;
+  margin: -8px 0; padding: 0 12px;
+  border-left: 2px dashed rgba(255,255,255,.55);
+  border-right: 2px dashed rgba(255,255,255,.55);
+}
+#stub-n { font-family: var(--stamp); font-size: 24px; line-height: 1; letter-spacing: 1px; }
+#stub-unit { font-size: 11px; font-weight: 600; line-height: 1.2; white-space: nowrap; }
+#stub-unit:empty { display: none; }
+#banner.planned .tag-text { flex: 1; }
 .tag-actions { display: flex; gap: 6px; margin-left: auto; }
 .tag-actions button {
   border: 1px solid rgba(255,255,255,.55); border-radius: 7px;
@@ -204,6 +213,8 @@ button { font: inherit; cursor: pointer; }
 @media (max-width: 480px) {
   #banner { gap: 7px; padding: 6px 8px 6px 10px; }
   #banner-name { font-size: 17px; letter-spacing: 1px; }
+  #banner-stub { margin: -6px 0; padding: 0 9px; }
+  #stub-n { font-size: 21px; }
   .tag-actions { gap: 4px; }
   .tag-actions button { padding: 4px 7px; font-size: 12px; }
 }
@@ -317,10 +328,15 @@ body.placing #fab-pin { background: var(--red); box-shadow: var(--shadow); }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
 .trip-name .live { color: #fff; font-size: 11px; letter-spacing: 1px; border-radius: 4px; padding: 1px 5px; vertical-align: 2px; }
-.trip-name .soon {
-  border: 1.5px dashed var(--c); font-size: 11px; letter-spacing: 1px;
-  border-radius: 4px; padding: 0 4px; vertical-align: 2px;
+/* A planned trip's empty cover counts down to the photos that will fill it.
+   The ring carries the trip colour; the numeral keeps the cover's own ink,
+   because a dark swatch on navy can't be read. */
+.trip-cover.countdown {
+  display: grid; place-items: center;
+  background: none;
+  box-shadow: none; border: 2px dashed var(--c, #1d6fb8);
 }
+.countdown-n { font-family: var(--stamp); font-size: 22px; line-height: 1; color: var(--on-cover); }
 .trip-eye {
   grid-row: 2; /* ride the actions line, after the pills */
   flex: none; background: none; border: none; font-size: 15px;

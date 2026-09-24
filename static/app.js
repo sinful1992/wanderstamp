@@ -826,24 +826,36 @@ function fmtRange(a, b) {
 // the viewer's own timezone. start_at is midnight UTC of the chosen date, so
 // only its date part is the departure; round, because a day with a DST change
 // is 23 or 25 hours long.
-function daysUntil(h) {
+function departureDay(h) {
   const [y, m, d] = h.start_at.slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function daysUntil(h) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  return Math.round((new Date(y, m - 1, d) - today) / 86400000);
+  return Math.round((departureDay(h) - today) / 86400000);
 }
 
 function countdown(h) {
   const n = daysUntil(h);
-  if (n > 1) return `in ${n} days`;
-  if (n === 1) return "tomorrow";
-  // The day has come. It waits for a trip that is still live; with none,
-  // it is only the hour between local and UTC midnight before it goes live.
-  return state.holidays.some((t) => t.active) ? "departs when the current trip ends" : "today";
+  return n > 0 ? `${n} ${n === 1 ? "day" : "days"} to go` : "Departs today";
+}
+
+// A planned trip's line under its name. Once its day has come it can still be
+// planned: another trip is live (it goes the moment that one ends), or it's
+// the hour between local and UTC midnight.
+function plannedMeta(h) {
+  // the departure is a calendar day, so it's formatted as one: fmtDate would
+  // shift UTC midnight into the day before anywhere west of Greenwich
+  const date = departureDay(h).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  if (daysUntil(h) > 0) return `Departs ${date} · ${countdown(h)}`;
+  const live = state.holidays.find((t) => t.active);
+  return live ? `Due ${date} · goes live when ${live.name} ends` : "Departs today";
 }
 
 function tripRange(h) {
-  if (h.planned) return `departs ${fmtDate(h.start_at)}`;
+  if (h.planned) return plannedMeta(h);
   if (h.active) return `since ${fmtDate(h.start_at)}`;
   return fmtRange(h.start_at, h.end_at);
 }
@@ -877,7 +889,13 @@ function renderSheet() {
     // a plain colour dot for trips with no photos yet.
     const cover = el("span", "trip-cover");
     cover.style.setProperty("--c", h.color);
-    if (h.cover_asset) {
+    if (h.planned) {
+      // No photos yet, so the slot they'll fill counts down to them instead.
+      const n = daysUntil(h);
+      cover.classList.add("countdown");
+      cover.appendChild(el("span", "countdown-n", n > 0 ? String(n) : "\u2708"));
+      cover.setAttribute("aria-hidden", "true"); // the meta line says it in words
+    } else if (h.cover_asset) {
       const img = el("img");
       img.loading = "lazy";
       img.src = photoURL(h.cover_asset, "thumb");
@@ -892,14 +910,9 @@ function renderSheet() {
       const live = el("span", "live", "NOW");
       live.style.background = h.color;
       name.appendChild(live);
-    } else if (h.planned) {
-      const n = daysUntil(h);
-      const soon = el("span", "soon", n > 1 ? `${n} DAYS` : n === 1 ? "TOMORROW" : "TODAY");
-      soon.style.setProperty("--c", h.color);
-      name.appendChild(soon);
     }
     info.append(name, el("div", "trip-meta", h.planned
-      ? `${tripRange(h)} · ${countdown(h)}`
+      ? tripRange(h)
       : `${tripRange(h)} · ${h.pin_count} pins · ${h.photo_count} photos`));
 
     // The cover + name is the trip's own control. It used to be a click
@@ -1575,14 +1588,19 @@ function renderBanner() {
     .sort((a, b) => a.start_at.localeCompare(b.start_at))[0];
   banner.classList.toggle("planned", !!next);
   $("btn-sync").hidden = $("btn-end").hidden = !active;
-  $("btn-pack").hidden = !next;
+  $("btn-pack").hidden = $("banner-stub").hidden = !next;
   if (next) {
     banner.hidden = false;
     banner.style.setProperty("--c", next.color);
     $("banner-name").textContent = next.name;
-    $("banner-day").textContent = countdown(next);
+    $("banner-day").textContent = "";
+    const n = daysUntil(next);
+    $("stub-n").textContent = n > 0 ? String(n) : "Today";
+    $("stub-unit").textContent = n > 0 ? (n === 1 ? "day to go" : "days to go") : "";
+    $("banner-stub").setAttribute("aria-label", countdown(next));
     const left = (next.pack_total || 0) - (next.pack_done || 0);
-    $("btn-pack").textContent = !next.pack_total ? "Pack" : left ? `Pack · ${left}` : "Packed ✓";
+    $("btn-pack").textContent = !next.pack_total ? "Manifest" : left ? `Manifest · ${left}` : "Manifest ✓";
+    $("btn-pack").title = left ? `${left} still to pack` : "Open this trip's manifest";
     $("btn-pack").onclick = () => openManifest(next);
     return;
   }
@@ -1750,7 +1768,7 @@ $("new-trip-form").onsubmit = async (e) => {
     $("trip-end").value = "";
     const dest = chosenDest;
     resetDest();
-    toast(created.planned ? `Planned — ${created.name} goes live on the day`
+    toast(created.planned ? `Planned ${created.name}: ${countdown(created)}`
       : created.active ? "Holiday started — pins and photos now attach to it" : "Past trip added — pulling its photos…");
     await loadData();
     if (dest) map.flyTo([dest.lat, dest.lng], 10);
