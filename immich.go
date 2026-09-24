@@ -231,9 +231,14 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 
 	var startStr string
 	var endStr *string
-	err := a.db.QueryRow(`SELECT start_at, end_at FROM holidays WHERE id = ?`, holidayID).Scan(&startStr, &endStr)
+	var planned bool
+	err := a.db.QueryRow(`SELECT start_at, end_at, planned FROM holidays WHERE id = ?`, holidayID).Scan(&startStr, &endStr, &planned)
 	if err != nil {
 		return 0, 0, err
+	}
+	if planned {
+		// nothing has been taken yet, and its window would run backwards
+		return 0, 0, nil
 	}
 	start, err := time.Parse(time.RFC3339, startStr)
 	if err != nil {
@@ -485,7 +490,7 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 // of hanging on Immich — and failures are logged, never surfaced.
 func (a *app) maybeSyncActive() {
 	var id int64
-	err := a.db.QueryRow(`SELECT id FROM holidays WHERE end_at IS NULL`).Scan(&id)
+	err := a.db.QueryRow(`SELECT id FROM holidays WHERE end_at IS NULL AND planned = 0`).Scan(&id)
 	if err != nil {
 		return
 	}

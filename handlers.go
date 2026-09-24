@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -69,6 +70,7 @@ type holidayOut struct {
 	StartAt       string  `json:"start_at"`
 	EndAt         *string `json:"end_at"`
 	Active        bool    `json:"active"`
+	Planned       bool    `json:"planned"`
 	Journal       string  `json:"journal"`
 	CoverAsset    string  `json:"cover_asset"`
 	PinCount      int     `json:"pin_count"`
@@ -83,6 +85,9 @@ type holidayOut struct {
 }
 
 func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
+	// A countdown that reached zero goes live the moment anyone looks,
+	// rather than waiting up to an hour for housekeeping.
+	a.promotePlanned()
 	rows, err := a.db.Query(`
 		SELECT h.id, h.name, h.color, h.start_at, h.end_at, h.journal,
 		       COALESCE((SELECT pp.asset_id FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
@@ -97,7 +102,7 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 		       EXISTS (SELECT 1 FROM shares s WHERE s.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id AND pi.checked = 1),
-		       h.dest_name, h.dest_lat, h.dest_lng
+		       h.dest_name, h.dest_lat, h.dest_lng, h.planned
 		FROM holidays h ORDER BY h.start_at DESC`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
@@ -107,11 +112,11 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 	out := []holidayOut{}
 	for rows.Next() {
 		var h holidayOut
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
-		h.Active = h.EndAt == nil
+		h.Active = h.EndAt == nil && !h.Planned
 		out = append(out, h)
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -148,6 +153,14 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 		}
 		start = t
 	}
+	// A first day after today makes a planned trip: it counts down, collects
+	// nothing, and goes live on the day. Its last day is set by ending it,
+	// like any live trip — a future end_at would leave it ended before it began.
+	planned := start.After(time.Now().UTC())
+	if planned && req.EndAt != "" {
+		httpError(w, http.StatusBadRequest, "a planned trip gets its last day when you end it — leave Last day empty")
+		return
+	}
 	var endAt *string
 	if req.EndAt != "" {
 		t, ok := parseWhen(req.EndAt, true)
@@ -170,8 +183,8 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 	if req.DestName == "" {
 		req.DestLat, req.DestLng = 0, 0
 	}
-	res, err := a.db.Exec(`INSERT INTO holidays (name, color, start_at, end_at, dest_name, dest_lat, dest_lng) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		req.Name, req.Color, start.Format(time.RFC3339), endAt, req.DestName, req.DestLat, req.DestLng)
+	res, err := a.db.Exec(`INSERT INTO holidays (name, color, start_at, end_at, dest_name, dest_lat, dest_lng, planned) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.Name, req.Color, start.Format(time.RFC3339), endAt, req.DestName, req.DestLat, req.DestLng, planned)
 	if err != nil {
 		httpError(w, http.StatusConflict, "a holiday is already active — end it first")
 		return
@@ -179,9 +192,22 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 	id, _ := res.LastInsertId()
 	writeJSON(w, http.StatusCreated, holidayOut{
 		ID: id, Name: req.Name, Color: req.Color,
-		StartAt: start.Format(time.RFC3339), EndAt: endAt, Active: endAt == nil,
+		StartAt: start.Format(time.RFC3339), EndAt: endAt, Active: endAt == nil && !planned, Planned: planned,
 		DestName: req.DestName, DestLat: req.DestLat, DestLng: req.DestLng,
 	})
+}
+
+// promotePlanned puts the earliest planned trip whose first day has come live.
+// While another trip is still live it waits; it goes the moment that one ends.
+func (a *app) promotePlanned() {
+	if _, err := a.db.Exec(`
+		UPDATE holidays SET planned = 0
+		WHERE id = (SELECT id FROM holidays WHERE planned = 1 AND start_at <= ?
+		            ORDER BY start_at LIMIT 1)
+		  AND NOT EXISTS (SELECT 1 FROM holidays WHERE end_at IS NULL AND planned = 0)`,
+		time.Now().UTC().Format(time.RFC3339)); err != nil {
+		log.Printf("promote planned trip: %v", err)
+	}
 }
 
 func (a *app) handleEndHoliday(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +216,7 @@ func (a *app) handleEndHoliday(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	end := time.Now().UTC().Format(time.RFC3339)
-	res, err := a.db.Exec(`UPDATE holidays SET end_at = ? WHERE id = ? AND end_at IS NULL`, end, id)
+	res, err := a.db.Exec(`UPDATE holidays SET end_at = ? WHERE id = ? AND end_at IS NULL AND planned = 0`, end, id)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
@@ -229,8 +255,13 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 		// is staying put.
 		var curStart string
 		var curEnd *string
-		if err := a.db.QueryRow(`SELECT start_at, end_at FROM holidays WHERE id = ?`, id).Scan(&curStart, &curEnd); err != nil {
+		var planned bool
+		if err := a.db.QueryRow(`SELECT start_at, end_at, planned FROM holidays WHERE id = ?`, id).Scan(&curStart, &curEnd, &planned); err != nil {
 			httpError(w, http.StatusNotFound, "no such holiday")
+			return
+		}
+		if planned && req.EndAt != nil {
+			httpError(w, http.StatusBadRequest, "a planned trip gets its last day when you end it")
 			return
 		}
 		start, _ := time.Parse(time.RFC3339, curStart)
@@ -581,7 +612,7 @@ func (a *app) handleCreatePin(w http.ResponseWriter, r *http.Request) {
 		createdAt = t.UTC()
 	}
 	if req.HolidayID == 0 {
-		if err := a.db.QueryRow(`SELECT id FROM holidays WHERE end_at IS NULL`).Scan(&req.HolidayID); err != nil {
+		if err := a.db.QueryRow(`SELECT id FROM holidays WHERE end_at IS NULL AND planned = 0`).Scan(&req.HolidayID); err != nil {
 			httpError(w, http.StatusBadRequest, "no active holiday — start one or pass holiday_id")
 			return
 		}

@@ -822,6 +822,32 @@ function fmtRange(a, b) {
   return `${fmtDate(a)} – ${fmtDate(b)}`;
 }
 
+// Whole days until a planned trip's first day, counted on the calendar in
+// the viewer's own timezone. start_at is midnight UTC of the chosen date, so
+// only its date part is the departure; round, because a day with a DST change
+// is 23 or 25 hours long.
+function daysUntil(h) {
+  const [y, m, d] = h.start_at.slice(0, 10).split("-").map(Number);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((new Date(y, m - 1, d) - today) / 86400000);
+}
+
+function countdown(h) {
+  const n = daysUntil(h);
+  if (n > 1) return `in ${n} days`;
+  if (n === 1) return "tomorrow";
+  // The day has come. It waits for a trip that is still live; with none,
+  // it is only the hour between local and UTC midnight before it goes live.
+  return state.holidays.some((t) => t.active) ? "departs when the current trip ends" : "today";
+}
+
+function tripRange(h) {
+  if (h.planned) return `departs ${fmtDate(h.start_at)}`;
+  if (h.active) return `since ${fmtDate(h.start_at)}`;
+  return fmtRange(h.start_at, h.end_at);
+}
+
 function renderSheet() {
   const dots = $("pill-dots");
   dots.textContent = "";
@@ -866,9 +892,15 @@ function renderSheet() {
       const live = el("span", "live", "NOW");
       live.style.background = h.color;
       name.appendChild(live);
+    } else if (h.planned) {
+      const n = daysUntil(h);
+      const soon = el("span", "soon", n > 1 ? `${n} DAYS` : n === 1 ? "TOMORROW" : "TODAY");
+      soon.style.setProperty("--c", h.color);
+      name.appendChild(soon);
     }
-    const range = h.active ? `since ${fmtDate(h.start_at)}` : fmtRange(h.start_at, h.end_at);
-    info.append(name, el("div", "trip-meta", `${range} · ${h.pin_count} pins · ${h.photo_count} photos`));
+    info.append(name, el("div", "trip-meta", h.planned
+      ? `${tripRange(h)} · ${countdown(h)}`
+      : `${tripRange(h)} · ${h.pin_count} pins · ${h.photo_count} photos`));
 
     // The cover + name is the trip's own control. It used to be a click
     // handler on the row div, which no keyboard could ever reach.
@@ -983,7 +1015,8 @@ function tripEditForm(h) {
   const btnRow = el("div", "form-row");
   btnRow.append(save, del);
   let cover = h.cover_asset;
-  wrap.append(name, sw, startRow, h.active ? el("span") : endRow);
+  // A live or planned trip gets its last day by being ended.
+  wrap.append(name, sw, startRow, h.active || h.planned ? el("span") : endRow);
   if (h.photo_count > 0 || h.unplaced_count > 0) {
     wrap.appendChild(coverPick(api("GET", `/api/holidays/${h.id}/timeline`), h.cover_asset, (a) => { cover = a; }));
   }
@@ -1024,7 +1057,7 @@ function tripEditForm(h) {
     // exact start/end moments to the day's edges and widen the photo window.
     const body = { name: name.value, color, journal: journal.value };
     const startChanged = start.value !== h.start_at.slice(0, 10);
-    const endChanged = !h.active && end.value && end.value !== (h.end_at || "").slice(0, 10);
+    const endChanged = !h.active && !h.planned && end.value && end.value !== (h.end_at || "").slice(0, 10);
     if (startChanged) body.start_at = start.value;
     if (endChanged) body.end_at = end.value;
     if (cover && cover !== h.cover_asset) body.cover_asset = cover;
@@ -1090,7 +1123,9 @@ $("btn-passport").onclick = async () => {
     const visas = el("div", "passport pp-visas");
     spread.append(page, visas);
 
-    const days = state.holidays.reduce((sum, h) => {
+    // a planned trip hasn't been anywhere yet
+    const taken = state.holidays.filter((h) => !h.planned);
+    const days = taken.reduce((sum, h) => {
       const end = h.end_at ? new Date(h.end_at) : new Date();
       return sum + Math.max(1, Math.round((end - new Date(h.start_at)) / 86400000) + 1);
     }, 0);
@@ -1104,7 +1139,7 @@ $("btn-passport").onclick = async () => {
     const fields = el("dl", "pp-fields");
     for (const [k, v] of [
       ["Holder", state.me ? state.me.username : "\u2014"],
-      ["Trips", String(state.holidays.length)],
+      ["Trips", String(taken.length)],
       ["Countries", String(countries.size)],
       ["Days away", String(days)],
       ["Places pinned", String(places)],
@@ -1121,7 +1156,7 @@ $("btn-passport").onclick = async () => {
     const holder = state.me ? state.me.username : "traveller";
     page.appendChild(el("p", "pp-mrz",
       mrz("P<GBR<" + holder) + "\n" +
-      mrz(countries.size + " countries " + state.holidays.length + " trips " + days + " days")));
+      mrz(countries.size + " countries " + taken.length + " trips " + days + " days")));
 
     visas.appendChild(el("h3", "pp-runhead", "Visas"));
     const wrap = el("div", "stamp-grid");
@@ -1235,8 +1270,7 @@ async function openUnplaced(h) {
 
 function openJournal(h) {
   const box = el("div", "journal-read");
-  const range = h.active ? `since ${fmtDate(h.start_at)}` : `${fmtDate(h.start_at)} – ${fmtDate(h.end_at)}`;
-  box.appendChild(el("p", "pop-sub", range));
+  box.appendChild(el("p", "pop-sub", tripRange(h)));
   box.appendChild(el("p", "journal-text", h.journal));
   openOverlay(h.name, box);
 }
@@ -1535,6 +1569,23 @@ async function openMasterLists() {
 function renderBanner() {
   const banner = $("banner");
   const active = state.holidays.find((h) => h.active);
+  // Nothing live: the tag counts down to the next planned trip instead, and
+  // its button opens that trip's packing list.
+  const next = active ? null : state.holidays.filter((h) => h.planned)
+    .sort((a, b) => a.start_at.localeCompare(b.start_at))[0];
+  banner.classList.toggle("planned", !!next);
+  $("btn-sync").hidden = $("btn-end").hidden = !active;
+  $("btn-pack").hidden = !next;
+  if (next) {
+    banner.hidden = false;
+    banner.style.setProperty("--c", next.color);
+    $("banner-name").textContent = next.name;
+    $("banner-day").textContent = countdown(next);
+    const left = (next.pack_total || 0) - (next.pack_done || 0);
+    $("btn-pack").textContent = !next.pack_total ? "Pack" : left ? `Pack · ${left}` : "Packed ✓";
+    $("btn-pack").onclick = () => openManifest(next);
+    return;
+  }
   if (!active) { banner.hidden = true; return; }
   banner.hidden = false;
   banner.style.setProperty("--c", active.color);
@@ -1652,9 +1703,23 @@ $("trip-dest").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); searchDest(); }
 });
 
+// A first day after today plans the trip; a planned trip has no last day
+// yet, so the field goes away and the button says what will happen.
+function syncTripForm() {
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const planned = $("trip-start").value > today;
+  $("trip-end-row").hidden = planned;
+  if (planned) $("trip-end").value = "";
+  $("trip-submit").textContent = planned ? "Plan" : $("trip-end").value ? "Add" : "Start";
+}
+$("trip-start").oninput = syncTripForm;
+$("trip-end").oninput = syncTripForm;
+
 $("btn-new-trip").onclick = () => {
   buildSwatches();
   $("trip-start").value = new Date().toISOString().slice(0, 10);
+  syncTripForm();
   resetDest();
   $("new-trip-form").hidden = false;
   $("btn-new-trip").hidden = true;
@@ -1685,9 +1750,11 @@ $("new-trip-form").onsubmit = async (e) => {
     $("trip-end").value = "";
     const dest = chosenDest;
     resetDest();
-    toast(created.active ? "Holiday started — pins and photos now attach to it" : "Past trip added — pulling its photos…");
+    toast(created.planned ? `Planned — ${created.name} goes live on the day`
+      : created.active ? "Holiday started — pins and photos now attach to it" : "Past trip added — pulling its photos…");
     await loadData();
     if (dest) map.flyTo([dest.lat, dest.lng], 10);
+    if (created.planned) return; // nothing to pull until it starts
     api("POST", `/api/holidays/${created.id}/sync`)
       .then((r) => { toast(`Found ${r.photos} photos across ${r.photo_pins} places`); loadData(); })
       .catch(() => {});

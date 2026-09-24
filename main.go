@@ -157,6 +157,7 @@ func (a *app) housekeeping() {
 	for {
 		a.db.Exec(`DELETE FROM sessions WHERE expires_at < ?`, time.Now().UTC().Format(time.RFC3339))
 		a.limiter.gc()
+		a.promotePlanned()
 		if err := checkpoint(a.db); err != nil {
 			log.Printf("wal checkpoint: %v", err)
 		}

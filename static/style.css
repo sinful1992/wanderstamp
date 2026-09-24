@@ -191,6 +191,9 @@ button { font: inherit; cursor: pointer; }
   text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 #banner-day { font-size: 12px; opacity: .85; white-space: nowrap; }
+/* counting down: the tag is still in the drawer, so it wears a dashed edge */
+#banner.planned { outline: 2px dashed rgba(255,255,255,.6); outline-offset: -5px; }
+#banner.planned #banner-day { font-weight: 600; opacity: 1; }
 .tag-actions { display: flex; gap: 6px; margin-left: auto; }
 .tag-actions button {
   border: 1px solid rgba(255,255,255,.55); border-radius: 7px;
@@ -314,6 +317,10 @@ body.placing #fab-pin { background: var(--red); box-shadow: var(--shadow); }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
 .trip-name .live { color: #fff; font-size: 11px; letter-spacing: 1px; border-radius: 4px; padding: 1px 5px; vertical-align: 2px; }
+.trip-name .soon {
+  border: 1.5px dashed var(--c); font-size: 11px; letter-spacing: 1px;
+  border-radius: 4px; padding: 0 4px; vertical-align: 2px;
+}
 .trip-eye {
   grid-row: 2; /* ride the actions line, after the pills */
   flex: none; background: none; border: none; font-size: 15px;

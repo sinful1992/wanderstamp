@@ -26,6 +26,7 @@
   <div class="tag-actions">
     <button id="btn-sync" title="Sync photos from Immich">Sync</button>
     <button id="btn-end" title="End this holiday">End</button>
+    <button id="btn-pack" title="Open this trip's packing list" hidden>Pack</button>
   </div>
 </header>
 
@@ -69,10 +70,10 @@
         <input id="trip-name" type="text" placeholder="Trip name" aria-label="Trip name" maxlength="60" required>
         <div id="swatches"></div>
         <label class="date-row">First day <input id="trip-start" type="date"></label>
-        <label class="date-row">Last day <input id="trip-end" type="date"></label>
-        <p class="form-hint">No last day means the trip starts now and stays live until you end it.</p>
+        <label class="date-row" id="trip-end-row">Last day <input id="trip-end" type="date"></label>
+        <p class="form-hint">No last day: the trip stays live until you end it. A first day still to come plans it, with a countdown.</p>
         <div class="form-row">
-          <button type="submit" class="primary">Start</button>
+          <button type="submit" class="primary" id="trip-submit">Start</button>
           <button type="button" id="btn-cancel-trip">Cancel</button>
         </div>
       </form>

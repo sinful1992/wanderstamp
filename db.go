@@ -33,9 +33,6 @@ CREATE TABLE IF NOT EXISTS holidays (
   cover_asset TEXT NOT NULL DEFAULT ''
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS one_active_holiday
-  ON holidays ((end_at IS NULL)) WHERE end_at IS NULL;
-
 CREATE TABLE IF NOT EXISTS pins (
   id          INTEGER PRIMARY KEY,
   holiday_id  INTEGER NOT NULL REFERENCES holidays(id) ON DELETE CASCADE,
@@ -116,6 +113,13 @@ var migrations = []string{
 	`ALTER TABLE holidays ADD COLUMN dest_name TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE holidays ADD COLUMN dest_lat REAL NOT NULL DEFAULT 0`,
 	`ALTER TABLE holidays ADD COLUMN dest_lng REAL NOT NULL DEFAULT 0`,
+	// planned = 1: a trip with a future first day, counting down. It has no
+	// end_at yet, so the one-live-trip index must not count it. The index is
+	// built here, not in schema, because it needs the planned column.
+	`ALTER TABLE holidays ADD COLUMN planned INTEGER NOT NULL DEFAULT 0`,
+	`DROP INDEX IF EXISTS one_active_holiday`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS one_live_holiday
+	  ON holidays ((end_at IS NULL)) WHERE end_at IS NULL AND planned = 0`,
 }
 
 func openDB(path string) (*sql.DB, error) {
