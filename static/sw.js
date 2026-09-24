@@ -14,7 +14,7 @@
 //     policy); browse an area online once and it renders offline later.
 //   - other cross-origin is never touched.
 
-const CACHE = "shell-v1";
+const CACHE = "shell-v2";
 // v2: tiles-v1 holds CARTO tiles stamped "API KEY REQUIRED", so the rename is
 // what actually clears the defaced basemap off devices that already visited.
 const TILE_CACHE = "tiles-v2";
@@ -30,7 +30,8 @@ const SHELL = [
   "/manifest.webmanifest",
   "/leaflet/leaflet.css",
   "/leaflet/leaflet.js",
-  "/staatliches.woff2",
+  "/staatliches-latin.woff2",
+  "/staatliches-latin-ext.woff2",
   "/leaflet/images/marker-icon.png",
   "/leaflet/images/marker-icon-2x.png",
   "/leaflet/images/marker-shadow.png",

@@ -8,7 +8,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📍</text></svg>">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
-<link rel="preload" href="/staatliches.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/staatliches-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/leaflet/leaflet.css">
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -19,13 +19,15 @@
 <!-- Active holiday: luggage-tag strap -->
 <header id="banner" hidden>
   <span class="tag-hole"></span>
-  <div class="tag-text">
-    <span id="banner-name"></span>
-    <span id="banner-day"></span>
-  </div>
+  <span id="banner-name"></span>
   <div id="banner-stub" role="img" hidden><span id="stub-n"></span><span id="stub-unit"></span></div>
   <div class="tag-actions">
-    <button id="btn-sync" title="Sync photos from Immich">Sync</button>
+    <button id="btn-sync" class="icon" title="Sync photos from Immich" aria-label="Sync photos from Immich">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M19.5 12a7.5 7.5 0 0 1-13.2 4.9M4.5 12a7.5 7.5 0 0 1 13.2-4.9"/>
+        <path d="M18.2 3.6v3.8h-3.8M5.8 20.4v-3.8h3.8"/>
+      </svg>
+    </button>
     <button id="btn-end" title="End this holiday">End</button>
     <button id="btn-pack" hidden>Manifest</button>
   </div>

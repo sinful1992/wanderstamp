@@ -1591,15 +1591,18 @@ function renderBanner() {
     .sort((a, b) => a.start_at.localeCompare(b.start_at))[0];
   banner.classList.toggle("planned", !!next);
   $("btn-sync").hidden = $("btn-end").hidden = !active;
-  $("btn-pack").hidden = $("banner-stub").hidden = !next;
+  $("btn-pack").hidden = !next;
   if (next) {
     banner.hidden = false;
+    $("banner-stub").hidden = false;
     banner.style.setProperty("--c", next.color);
     $("banner-name").textContent = next.name;
-    $("banner-day").textContent = "";
     const n = daysUntil(next);
-    $("stub-n").textContent = n > 0 ? String(n) : "Today";
-    $("stub-unit").textContent = n > 0 ? (n === 1 ? "day to go" : "days to go") : "";
+    // Staatliches draws 1 as a bare bar, so the one count it could be misread
+    // at is said in words.
+    $("stub-n").textContent = n > 1 ? String(n) : n === 1 ? "Tomorrow" : "Today";
+    $("stub-unit").textContent = n > 1 ? "days to go" : "";
+    $("stub-n").classList.toggle("word", n <= 1);
     $("banner-stub").setAttribute("aria-label", countdown(next));
     const left = (next.pack_total || 0) - (next.pack_done || 0);
     $("btn-pack").textContent = !next.pack_total ? "Manifest" : left ? `Manifest · ${left}` : "Manifest ✓";
@@ -1611,8 +1614,14 @@ function renderBanner() {
   banner.hidden = false;
   banner.style.setProperty("--c", active.color);
   $("banner-name").textContent = active.name;
-  const day = Math.floor((Date.now() - new Date(active.start_at)) / 86400000) + 1;
-  $("banner-day").textContent = `day ${day}`;
+  // Live, the same stub counts up instead: which day of the trip this is.
+  // Never below 1 — a start later today is still the first day.
+  const day = Math.max(1, Math.floor((Date.now() - new Date(active.start_at)) / 86400000) + 1);
+  $("banner-stub").hidden = false;
+  $("stub-n").textContent = day > 1 ? String(day) : "day";
+  $("stub-unit").textContent = day > 1 ? "day" : "first";
+  $("stub-n").classList.remove("word");
+  $("banner-stub").setAttribute("aria-label", `Day ${day} of ${active.name}`);
   $("btn-end").onclick = async () => {
     if (!confirm(`End "${active.name}"? Photos taken from now on won't join it.`)) return;
     const r = await api("POST", `/api/holidays/${active.id}/end`);
