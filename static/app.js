@@ -272,8 +272,14 @@ function hasDest(h) {
 }
 
 // The destination's own name: "Warwick Castle, Castle Hill, …" -> "Warwick Castle".
+// "lat, lng" as typed into a destination field
+const COORD_RE = /^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/;
+
+// A destination still named by its coordinates (typed while the place
+// lookup was unreachable, or saved before it existed) has no short name —
+// cutting "50.70000, -1.70000" at the comma would leave half a number.
 function destShort(h) {
-  return h.dest_name.split(",")[0].trim();
+  return COORD_RE.test(h.dest_name) ? "your destination" : h.dest_name.split(",")[0].trim();
 }
 
 function kmBetween(a, b) {
@@ -673,7 +679,8 @@ function openStory(h, pinId) {
       : last ? `Still to go · ${Math.round(kmBetween(last, { lat: h.dest_lat, lng: h.dest_lng }))} km as the crow flies`
       : "Heading here";
     sec.appendChild(el("p", "story-day", label));
-    sec.appendChild(el("h3", "story-place", destShort(h)));
+    const short = destShort(h);
+    sec.appendChild(el("h3", "story-place", short.charAt(0).toUpperCase() + short.slice(1)));
     if (h.dest_name !== destShort(h)) sec.appendChild(el("p", "story-dest-full", h.dest_name));
     sec.onclick = () => activateSection(sec);
     scroll.appendChild(sec);
@@ -1863,7 +1870,6 @@ let chosenDest = null;
 // The name the last place pick filled in: a later pick may replace it, but
 // never a name the person typed themselves.
 let autoName = "";
-const COORD_RE = /^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/;
 
 function resetDest() {
   chosenDest = null;
@@ -1882,10 +1888,18 @@ async function placeSearch(q, res, onPick) {
   if (m) {
     const lat = +m[1], lng = +m[2];
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) { toast("Coordinates out of range"); return; }
-    const d = { name: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, lat, lng };
+    const coords = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    const d = { name: coords, lat, lng };
     res.textContent = "";
-    res.appendChild(el("p", "form-hint", `Destination set: ${d.name}`));
-    onPick(d); // coordinates make a poor trip name
+    const hint = res.appendChild(el("p", "form-hint", "Looking up the place…"));
+    // Name the spot after the town it's in; the numbers stay if nothing
+    // answers (offline, open sea). No outline: the spot is the destination.
+    try {
+      const r = await api("GET", `/api/geocode/reverse?lat=${lat}&lng=${lng}`);
+      if (r.name) d.name = r.name;
+    } catch { /* keep the coordinates */ }
+    hint.textContent = d.name === coords ? `Destination set: ${coords}` : `Destination set: ${d.name} (${coords})`;
+    onPick(d, d.name === coords ? undefined : d.name.split(",")[0].trim());
     return;
   }
   res.textContent = "";

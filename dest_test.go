@@ -23,6 +23,14 @@ func fakeNominatim(t *testing.T) *int {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
+		if r.URL.Path == "/reverse" {
+			if r.URL.Query().Get("lat") == "0.000000" {
+				fmt.Fprint(w, `{"error":"Unable to geocode"}`) // the open sea
+				return
+			}
+			fmt.Fprint(w, `{"display_name":"Bransgore, New Forest, Hampshire, England, United Kingdom"}`)
+			return
+		}
 		geo := map[string]string{"R7444": parisGeo, "R2202162": franceGeo, "N1": `{"type":"Point","coordinates":[1,1]}`}[r.URL.Query().Get("osm_ids")]
 		if geo == "" {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -163,3 +171,24 @@ func TestOSMRef(t *testing.T) {
 
 func cos(f float64) float64 { return math.Cos(f) }
 func sin(f float64) float64 { return math.Sin(f) }
+
+func TestReverseNamesTypedCoordinates(t *testing.T) {
+	fakeNominatim(t)
+	a := newTestApp(t)
+	get := func(q string) (int, string) {
+		rec := httptest.NewRecorder()
+		a.handleReverse(rec, httptest.NewRequest("GET", "/api/geocode/reverse?"+q, nil))
+		var out struct{ Name string }
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out.Name
+	}
+	if code, name := get("lat=50.77&lng=-1.73"); code != 200 || name != "Bransgore, New Forest" {
+		t.Errorf("got %d %q", code, name)
+	}
+	if code, name := get("lat=0&lng=0"); code != 200 || name != "" {
+		t.Errorf("open sea: got %d %q, want an empty name", code, name)
+	}
+	if code, _ := get("lat=95&lng=0"); code != http.StatusBadRequest {
+		t.Errorf("bad lat: got %d", code)
+	}
+}

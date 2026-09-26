@@ -73,3 +73,36 @@ func osmRef(kind string, id int64) string {
 	}
 	return strings.ToUpper(kind[:1]) + strconv.FormatInt(id, 10)
 }
+
+// handleReverse names a typed "lat, lng": the town or village it falls in,
+// at the same two-part length as a search pick ("Bransgore, New Forest").
+// zoom=14 asks for the village or town (10 answers with the district —
+// "New Forest" for Bransgore), not the nearest house or road.
+func (a *app) handleReverse(w http.ResponseWriter, r *http.Request) {
+	lat, e1 := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
+	lng, e2 := strconv.ParseFloat(r.URL.Query().Get("lng"), 64)
+	if e1 != nil || e2 != nil || lat < -90 || lat > 90 || lng < -180 || lng > 180 {
+		httpError(w, http.StatusBadRequest, "lat and lng required")
+		return
+	}
+	resp, err := nominatimGet(r.Context(), "/reverse?format=jsonv2&zoom=14&lat="+
+		strconv.FormatFloat(lat, 'f', 6, 64)+"&lon="+strconv.FormatFloat(lng, 'f', 6, 64))
+	if err != nil {
+		httpError(w, http.StatusBadGateway, "place lookup unavailable")
+		return
+	}
+	defer resp.Body.Close()
+	var out struct {
+		DisplayName string `json:"display_name"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil {
+		httpError(w, http.StatusBadGateway, "place lookup unavailable")
+		return
+	}
+	// the open sea has no name: an empty answer, and the caller keeps the numbers
+	name := out.DisplayName
+	if parts := strings.Split(name, ","); len(parts) > 2 {
+		name = strings.Join(parts[:2], ",")
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": strings.TrimSpace(name)})
+}
