@@ -144,3 +144,74 @@ func TestSyncHolidayRefusesSuddenlyEmptyResult(t *testing.T) {
 		t.Errorf("empty trip, empty result: %v", err)
 	}
 }
+
+// A pin placed by hand at the hotel holds the photos taken there: sync must
+// not grow a town photo pin 25 m beside it, and must move photos off one that
+// an older sync already made.
+func TestSyncFilesPhotosOnNearbyHandPlacedPin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/search/metadata" {
+			w.Write([]byte(`{}`))
+			return
+		}
+		w.Write([]byte(`{"assets":{"items":[
+			{"id":"hotel-1","type":"IMAGE","fileCreatedAt":"2026-09-25T16:21:00Z","exifInfo":{"latitude":52.53681,"longitude":-1.39994,"city":"Hinckley","country":"United Kingdom"}},
+			{"id":"hotel-2","type":"IMAGE","fileCreatedAt":"2026-09-25T18:00:00Z","exifInfo":{"latitude":52.5370,"longitude":-1.4001,"city":"Hinckley","country":"United Kingdom"}},
+			{"id":"town","type":"IMAGE","fileCreatedAt":"2026-09-25T19:00:00Z","exifInfo":{"latitude":52.5410,"longitude":-1.3740,"city":"Hinckley","country":"United Kingdom"}}
+		],"nextPage":null}}`))
+	}))
+	defer srv.Close()
+	db, err := openDB(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	a := &app{db: db, immich: newImmichClient(srv.URL, "key"), lastSync: map[int64]time.Time{}}
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustExec(`INSERT INTO holidays (id, name, color, start_at) VALUES (1, 'Warwick', '#123456', '2026-09-25T00:00:00Z')`)
+	mustExec(`INSERT INTO pins (id, holiday_id, kind, lat, lng, title) VALUES (5, 1, 'manual', 52.5369686, -1.4002928, 'Premier Inn')`)
+	// what the live trip looked like: an earlier sync had filed hotel-1 on its own photo pin
+	mustExec(`INSERT INTO pins (id, holiday_id, kind, cluster_key, lat, lng, title) VALUES (7, 1, 'photo', '2626,-70', 52.53681, -1.39994, 'Hinckley, United Kingdom')`)
+	mustExec(`INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng) VALUES (7, 'hotel-1', '2026-09-25T16:21:00Z', 52.53681, -1.39994)`)
+
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatal(err)
+	}
+	pinOf := func(asset string) (id int64, kind string) {
+		db.QueryRow(`SELECT p.id, p.kind FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id WHERE pp.asset_id = ?`, asset).Scan(&id, &kind)
+		return
+	}
+	for _, asset := range []string{"hotel-1", "hotel-2"} {
+		if id, _ := pinOf(asset); id != 5 {
+			t.Errorf("%s is on pin %d, want the hotel pin 5", asset, id)
+		}
+	}
+	if _, kind := pinOf("town"); kind != "photo" {
+		t.Errorf("a photo 1.8 km from the hotel went to a %q pin, want a town photo pin", kind)
+	}
+	var lat float64
+	db.QueryRow(`SELECT lat FROM pins WHERE id = 5`).Scan(&lat)
+	if lat != 52.5369686 {
+		t.Errorf("the hand-placed pin moved to %v", lat)
+	}
+	var n int
+	db.QueryRow(`SELECT COUNT(*) FROM pin_photos WHERE pin_id = 7`).Scan(&n)
+	if n != 1 {
+		t.Errorf("the old photo pin beside the hotel holds %d photos, want just the town one", n)
+	}
+
+	// removing the hand pin gives its photos back to a photo pin on the next sync
+	mustExec(`DELETE FROM pins WHERE id = 5`)
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatal(err)
+	}
+	if _, kind := pinOf("hotel-2"); kind != "photo" {
+		t.Errorf("after deleting the hand pin hotel-2 is on a %q pin", kind)
+	}
+}

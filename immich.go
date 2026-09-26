@@ -25,6 +25,9 @@ const (
 	// syncInterval is how stale the active holiday's photos may get before a
 	// map load triggers a re-sync.
 	syncInterval = 10 * time.Minute
+	// manualPinKM is how close a photo must be to a pin placed by hand to be
+	// filed on it: a hotel or a castle's grounds, not the whole town.
+	manualPinKM = 0.4
 )
 
 type immichClient struct {
@@ -266,7 +269,7 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 		var have int
 		a.db.QueryRow(`
 			SELECT (SELECT COUNT(*) FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
-			        WHERE p.holiday_id = ? AND p.kind = 'photo')
+			        WHERE p.holiday_id = ?)
 			     + (SELECT COUNT(*) FROM unplaced_photos WHERE holiday_id = ?)`,
 			holidayID, holidayID).Scan(&have)
 		if have > 0 {
@@ -300,6 +303,39 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 			pinByKey[key] = id
 		}
 		rows.Close()
+	}
+
+	// Pins placed by hand claim the photos taken at them, so a hotel pin
+	// holds the hotel photos instead of a town photo pin appearing beside it.
+	type spot struct {
+		id       int64
+		lat, lng float64
+	}
+	var manual []spot
+	{
+		rows, err := tx.Query(`SELECT id, lat, lng FROM pins WHERE holiday_id = ? AND kind = 'manual'`, holidayID)
+		if err != nil {
+			return 0, 0, err
+		}
+		for rows.Next() {
+			var m spot
+			if err := rows.Scan(&m.id, &m.lat, &m.lng); err != nil {
+				rows.Close()
+				return 0, 0, err
+			}
+			manual = append(manual, m)
+		}
+		rows.Close()
+	}
+	nearestManual := func(lat, lng float64) int64 {
+		var id int64
+		best := manualPinKM
+		for _, m := range manual {
+			if d := haversineKM(lat, lng, m.lat, m.lng); d <= best {
+				id, best = m.id, d
+			}
+		}
+		return id
 	}
 
 	// Photos already attached to this holiday's pins by hand (from the
@@ -353,8 +389,11 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 		if e.Country != nil {
 			country = *e.Country
 		}
-		var pinID int64
+		pinID := nearestManual(lat, lng)
 		for _, key := range neighborKeys(lat, lng) {
+			if pinID != 0 {
+				break
+			}
 			if id, ok := pinByKey[key]; ok {
 				pinID = id
 				break
@@ -387,8 +426,9 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 		if _, err := tx.Exec(`
 			INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng)
 			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT (asset_id) DO NOTHING`,
-			pinID, asset.ID, takenAt, lat, lng); err != nil {
+			ON CONFLICT (asset_id) DO UPDATE SET pin_id = excluded.pin_id
+			WHERE pin_photos.pin_id IN (SELECT id FROM pins WHERE holiday_id = ?)`,
+			pinID, asset.ID, takenAt, lat, lng, holidayID); err != nil {
 			return 0, 0, err
 		}
 		seen[asset.ID] = true
@@ -424,7 +464,7 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 	rows, err := tx.Query(`
 		SELECT pp.asset_id FROM pin_photos pp
 		JOIN pins p ON p.id = pp.pin_id
-		WHERE p.holiday_id = ? AND p.kind = 'photo'`, holidayID)
+		WHERE p.holiday_id = ?`, holidayID)
 	if err != nil {
 		return 0, 0, err
 	}

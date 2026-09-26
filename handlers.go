@@ -679,6 +679,7 @@ func (a *app) handleCreatePin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
+	a.resyncSoon(req.HolidayID)
 	writeJSON(w, http.StatusCreated, pinOut{
 		ID: id, HolidayID: req.HolidayID, Kind: "manual",
 		Lat: req.Lat, Lng: req.Lng, Title: strings.TrimSpace(req.Title), Note: req.Note,
@@ -725,6 +726,7 @@ func (a *app) handleUpdatePin(w http.ResponseWriter, r *http.Request) {
 	if req.Lat != nil && req.Lng != nil {
 		// Only manual pins move by hand; photo pins follow their photos.
 		a.db.Exec(`UPDATE pins SET lat = ?, lng = ? WHERE id = ? AND kind = 'manual'`, *req.Lat, *req.Lng, id)
+		a.resyncPinSoon(id)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -734,8 +736,25 @@ func (a *app) handleDeletePin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Its photos go with it until the next sync files them again.
+	a.resyncPinSoon(id)
 	a.db.Exec(`DELETE FROM pins WHERE id = ?`, id)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// resyncSoon makes the next map load re-sync the trip, so a pin placed,
+// moved or removed by hand gathers or releases its photos straight away.
+func (a *app) resyncSoon(holidayID int64) {
+	a.stateMu.Lock()
+	delete(a.lastSync, holidayID)
+	a.stateMu.Unlock()
+}
+
+func (a *app) resyncPinSoon(pinID int64) {
+	var holidayID int64
+	if a.db.QueryRow(`SELECT holiday_id FROM pins WHERE id = ?`, pinID).Scan(&holidayID) == nil {
+		a.resyncSoon(holidayID)
+	}
 }
 
 func (a *app) handlePinPhotos(w http.ResponseWriter, r *http.Request) {
