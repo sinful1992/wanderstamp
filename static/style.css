@@ -76,12 +76,12 @@ button { font: inherit; cursor: pointer; }
 
 #map { position: fixed; inset: 0; background: var(--paper-2); }
 /* Voyager is already warm; just a whisper of sepia to sit it on the paper */
-.leaflet-tile-pane { filter: sepia(.08) saturate(.92) contrast(.98); }
-/* soft vignette above the tiles, below pins and popups */
-#map::after {
-  content: ""; position: absolute; inset: 0; z-index: 250;
-  pointer-events: none;
-  box-shadow: inset 0 0 140px rgba(70, 52, 24, .22);
+/* The plate's age (see the wash pane in app.js). Oversized so a pan never
+   reaches its edge before it re-centres; 300vmax covers any fling. */
+.plate-wash {
+  position: absolute; left: -100vmax; top: -100vmax;
+  width: 300vmax; height: 300vmax;
+  background: rgba(255, 246, 205, .12);
 }
 
 /* ---------- markers ---------- */
@@ -326,6 +326,20 @@ body.placing #fab-pin { background: var(--red); box-shadow: var(--shadow); }
   padding: 9px 16px; box-shadow: var(--shadow);
   font-family: var(--stamp); font-size: 16px; letter-spacing: 1.5px; text-transform: uppercase;
 }
+/* the pill and the holder's disc sit together on the atlas: one is the
+   booklet's spine, the other its owner */
+.sheet-bar { display: flex; align-items: center; gap: 8px; }
+#btn-account {
+  flex: none; width: 42px; height: 42px; border-radius: 50%; padding: 0;
+  display: grid; place-items: center;
+  background: var(--cover); background-color: var(--navy-2); color: var(--gold);
+  border: 1px solid var(--foil); outline: 1px solid var(--foil-dim); outline-offset: -4px;
+  box-shadow: var(--shadow);
+  font-family: var(--stamp); font-size: 19px; line-height: 1;
+}
+#btn-account[hidden] { display: none; }
+#btn-account:hover { filter: brightness(1.15); }
+#btn-account:focus-visible, #sheet-pill:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 #pill-dots { display: flex; gap: 3px; }
 /* the trip colours need an edge to survive on navy */
 #pill-dots i {
@@ -479,30 +493,7 @@ input[type=text]:focus, input[type=password]:focus, input[type=date]:focus, text
   padding: 0;
 }
 #swatches button.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--paper) inset; }
-/* The native ▶ marker is browser chrome and reads as unfinished next to the
-   stamped type; this is the same affordance drawn in the app's own hand. */
-#pass-box summary {
-  display: flex; align-items: center; gap: 8px;
-  list-style: none; font-size: 13px; color: var(--muted); cursor: pointer; padding: 5px 0;
-}
-#pass-box summary::-webkit-details-marker { display: none; }
-#pass-box summary::before {
-  content: "+"; flex: none;
-  width: 18px; height: 18px; border: 1px solid var(--line); border-radius: 4px;
-  font-family: var(--stamp); font-size: 14px; line-height: 16px; text-align: center;
-  color: var(--gold);
-}
-#pass-box[open] summary::before { content: "–"; }
-#pass-box summary:hover::before { border-color: var(--muted); }
-#pass-box form { margin-top: 8px; }
 
-/* the endpaper: account odds and ends, set apart from the trips */
-.endpaper {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
-  margin: 4px -14px -10px; padding: 10px 14px;
-  background: rgba(0, 0, 0, .22); border-top: 1px dotted var(--line);
-}
-.endpaper .form-hint { margin-left: auto; }
 button.linkish, a.linkish {
   background: none; border: none; color: var(--muted); font-size: 13px;
   text-decoration: underline; padding: 2px; align-self: flex-start;
@@ -1189,8 +1180,7 @@ button.primary.gold { background: var(--gold); color: var(--navy-2); }
     --field: #2a3140;
     --shadow: 0 2px 14px rgba(0, 0, 0, .55);
   }
-  .leaflet-tile-pane { filter: none; } /* the night plate needs no sepia */
-  #map::after { box-shadow: inset 0 0 140px rgba(0, 0, 0, .55); }
+  .plate-wash { display: none; } /* the night plate needs no age */
   .leaflet-control-attribution { background: rgba(26, 31, 42, .85); }
   .pp-val { color: var(--gold); }
   .passport { box-shadow: 0 6px 26px rgba(0, 0, 0, .5); }
@@ -1230,10 +1220,20 @@ button.primary.gold { background: var(--gold); color: var(--navy-2); }
 .fm-row.locked .fm-meta { color: var(--ink); }
 .fm-actions { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; }
 .fm-actions:empty { display: none; }
-#overlay .register button.linkish { color: var(--ink); padding: 4px 0; min-height: 32px; }
+#overlay .register .linkish { color: var(--ink); padding: 4px 0; min-height: 32px; }
 #overlay .register button.linkish.danger { color: var(--red); }
 .fm-reset, .fm-add { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .fm-reset input, .fm-add input { flex: 1 1 180px; min-width: 0; }
 .fm-reset input, .fm-add input[aria-label] { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; letter-spacing: .5px; }
 .fm-reset .form-hint, .fm-add .form-hint { flex-basis: 100%; margin: 0; }
 .fm-reset[hidden] { display: none; }
+
+/* your account: the register's voice for one person; its sections are the
+   family page's headings, and sign-out closes the page like an endpaper */
+.account .form-hint + .linkish { margin-top: -6px; }
+.account a.linkish { display: inline-flex; align-items: center; }
+.acct-foot {
+  display: flex; align-items: center; gap: 14px;
+  margin-top: 14px; padding-top: 10px; border-top: 1px dotted var(--line);
+}
+.acct-foot .form-hint { margin-left: auto; }

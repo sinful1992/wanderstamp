@@ -52,10 +52,14 @@
 
 <!-- Trips sheet -->
 <div id="sheet" class="collapsed">
-  <button id="sheet-pill" aria-expanded="false" aria-controls="sheet-body">
-    <span id="pill-dots"></span>
-    <span id="pill-label">Trips</span>
-  </button>
+  <div class="sheet-bar">
+    <button id="sheet-pill" aria-expanded="false" aria-controls="sheet-body">
+      <span id="pill-dots"></span>
+      <span id="pill-label">Trips</span>
+    </button>
+    <!-- the holder's own page: password, export, family, sign out -->
+    <button id="btn-account" hidden aria-label="Your account" title="Your account"></button>
+  </div>
   <div id="sheet-body">
     <div id="trip-list"></div>
     <div id="sheet-forms">
@@ -80,20 +84,6 @@
           <button type="button" id="btn-cancel-trip">Cancel</button>
         </div>
       </form>
-      <details id="pass-box">
-        <summary>Change my password</summary>
-        <form id="password-form">
-          <input id="pass-current" type="password" placeholder="Current password" autocomplete="current-password" required>
-          <input id="pass-new" type="password" placeholder="New password (8+ characters)" autocomplete="new-password" minlength="8" required>
-          <button type="submit" class="primary">Change password</button>
-        </form>
-      </details>
-      <div class="endpaper">
-        <button id="btn-family" class="linkish" hidden>Family accounts</button>
-        <a id="btn-export" class="linkish" href="/api/export" download>Export my data</a>
-        <button id="btn-logout" class="linkish">Sign out</button>
-        <p id="app-version" class="form-hint"></p>
-      </div>
     </div>
   </div>
 </div>

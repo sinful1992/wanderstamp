@@ -16,6 +16,7 @@ const state = {
   focused: null,          // holiday id spotlit by tapping its trip row
   placing: false,
   didFit: false,
+  fitKey: "",             // the points the opening view was fitted to
 };
 
 const $ = (id) => document.getElementById(id);
@@ -205,6 +206,22 @@ setPlate();
 darkScheme.addEventListener("change", setPlate);
 map.setView([35, 10], 3);
 
+// The plate's age: a flat warm wash in a pane of its own between the tiles
+// (200) and the routes and pins (400+), so it tints the atlas and never a
+// pin. It used to be a sepia filter on the tile pane, which re-filtered
+// every tile on every frame of a pan; a flat layer costs nothing to move.
+// It is far larger than the screen and re-centred as the map moves (a
+// transform, not a repaint), so even a long fling never shows its edge.
+const washPane = map.createPane("wash");
+washPane.style.zIndex = 250;
+washPane.style.pointerEvents = "none";
+const wash = L.DomUtil.create("div", "plate-wash", washPane);
+function placeWash() {
+  L.DomUtil.setPosition(wash, map.containerPointToLayerPoint([0, 0]));
+}
+map.on("move moveend zoomend resize viewreset", placeWash);
+placeWash();
+
 // Pins wear three outfits by zoom: enamel dots at country/world zoom (so a
 // hundred photo stops never blanket a continent), small prints at region
 // zoom, full photo prints with counts up close. CSS reads data-zoom.
@@ -228,11 +245,14 @@ function holidayById(id) {
   return state.holidays.find((h) => h.id === id);
 }
 
+// One round trip: who's signed in, the trips and the pins together.
 async function loadData(fit) {
   const meta = {};
-  const [holidays, pins] = await Promise.all([api("GET", "/api/holidays"), api("GET", "/api/pins", undefined, meta)]);
-  state.holidays = holidays;
-  state.pins = pins;
+  const d = await api("GET", "/api/map", undefined, meta);
+  state.me = d.me;
+  state.holidays = d.holidays;
+  state.pins = d.pins;
+  renderAccount();
   renderAll(fit);
   saveSnapshot();
   syncQueue(); // reaching the server just now proves any queued pins can go
@@ -265,9 +285,14 @@ function renderAll(fit) {
   refreshStory();
   renderSheet();
   renderBanner();
-  if (fit && !state.didFit) {
+  // The first fit may have been drawn from the saved snapshot; fresh data
+  // that moves the opening view (a trip added on another phone) fits again,
+  // once, before anything else has claimed the map.
+  if (fit && (!state.didFit || (state.fitFromSnapshot && story.hid === null))) {
+    const key = fitAll(state.didFit ? state.fitKey : null);
+    state.fitFromSnapshot = !state.me;
     state.didFit = true;
-    fitAll();
+    state.fitKey = key;
   }
 }
 
@@ -278,13 +303,23 @@ function visiblePins() {
 // Photos taken on the way there get no pin on the map — otherwise every trip
 // would open with a cluster of photo prints around home. They keep their
 // chapters in the story's way leg, and a pin placed by hand on the way stays.
+// Worked out once per load: every render and every row asks, and state.pins
+// and state.holidays are replaced (never edited in place) when data changes.
+const wayMemo = { pins: null, holidays: null, ids: null };
 function wayPhotoIds() {
+  if (wayMemo.pins === state.pins && wayMemo.holidays === state.holidays) return wayMemo.ids;
+  const byTrip = new Map();
+  for (const p of state.pins) {
+    if (!byTrip.has(p.holiday_id)) byTrip.set(p.holiday_id, []);
+    byTrip.get(p.holiday_id).push(p);
+  }
   const ids = new Set();
   for (const h of state.holidays) {
     if (!hasDest(h)) continue;
-    const pins = state.pins.filter((p) => p.holiday_id === h.id).sort(byVisit);
+    const pins = (byTrip.get(h.id) || []).sort(byVisit);
     for (const p of journey(h, pins).way) if (p.kind === "photo") ids.add(p.id);
   }
+  Object.assign(wayMemo, { pins: state.pins, holidays: state.holidays, ids });
   return ids;
 }
 
@@ -297,13 +332,17 @@ function byVisit(a, b) {
   return a.visited_at < b.visited_at ? -1 : a.visited_at > b.visited_at ? 1 : a.id - b.id;
 }
 
-function fitAll() {
+// Fits the map to every visible pin and returns what it fitted to; given
+// the key of an earlier fit, it leaves the map alone when nothing moved.
+function fitAll(sameAs) {
   const pts = visiblePins().map((p) => [p.lat, p.lng]);
   // where a live or planned trip is headed belongs in the opening view too
   for (const h of state.holidays) {
     if (hasDest(h) && !h.end_at && !state.hidden.has(h.id)) pts.push([h.dest_lat, h.dest_lng]);
   }
-  if (pts.length) map.fitBounds(pts, { padding: [50, 50], maxZoom: 12 });
+  const key = JSON.stringify(pts);
+  if (pts.length && key !== sameAs) map.fitBounds(pts, { padding: [50, 50], maxZoom: 12 });
+  return key;
 }
 
 /* ---------- the journey: the way there, then the trip itself ---------- */
@@ -2145,27 +2184,93 @@ $("sheet-pill").onclick = () => setSheet($("sheet").classList.contains("collapse
 
 $("btn-manifest").onclick = () => openMasterLists();
 
-$("btn-family").onclick = () => openFamily();
+/* ---------- your account ---------- */
 
-$("password-form").onsubmit = async (e) => {
-  e.preventDefault();
-  try {
-    await api("POST", "/api/password", {
-      current_password: $("pass-current").value,
-      new_password: $("pass-new").value,
-    });
-    $("pass-current").value = ""; $("pass-new").value = "";
-    $("pass-box").open = false;
-    toast("Password changed — other devices were signed out");
-  } catch (err) {
-    toast(err.message);
+// The account button carries the holder's initial; it appears once the
+// server has said who is signed in (never on a snapshot or a share link).
+function renderAccount() {
+  const b = $("btn-account");
+  b.hidden = !state.me;
+  if (state.me) b.textContent = [...state.me.username][0].toUpperCase();
+}
+
+// The holder's page: everything about the person rather than the trips,
+// kept out of the trips sheet so it doesn't sink below a growing list.
+function openAccount() {
+  const me = state.me;
+  if (!me) return;
+  const box = el("div", "manifest register account");
+
+  const holder = el("div", "fm-row");
+  const head = el("div", "fm-head");
+  head.appendChild(el("span", "fm-name", me.username));
+  if (me.is_admin) head.appendChild(el("span", "fm-role", "Admin"));
+  holder.appendChild(head);
+  box.appendChild(holder);
+
+  box.appendChild(el("h3", "day-head", "Password"));
+  const form = el("form", "fm-add");
+  const cur = el("input");
+  cur.type = "password";
+  cur.placeholder = "Current password";
+  cur.autocomplete = "current-password";
+  cur.required = true;
+  const next = el("input");
+  next.type = "password";
+  next.placeholder = "New password (8+ characters)";
+  next.autocomplete = "new-password";
+  next.minLength = 8;
+  next.required = true;
+  const save = el("button", "primary", "Change password");
+  save.type = "submit";
+  form.append(cur, next, save, el("p", "form-hint", "Changing it signs you out everywhere else."));
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api("POST", "/api/password", { current_password: cur.value, new_password: next.value });
+      cur.value = ""; next.value = "";
+      toast("Password changed — other devices were signed out");
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  box.appendChild(form);
+
+  if (me.is_admin) {
+    box.appendChild(el("h3", "day-head", "Family"));
+    box.appendChild(el("p", "form-hint", "Add people, reset a forgotten password, see who has signed in."));
+    const fam = el("button", "linkish", "Family accounts");
+    fam.type = "button";
+    fam.onclick = () => openFamily();
+    box.appendChild(fam);
   }
-};
 
-$("btn-logout").onclick = async () => {
+  box.appendChild(el("h3", "day-head", "Your data"));
+  box.appendChild(el("p", "form-hint", "Every trip, pin, journal and packing list, as one JSON file."));
+  const exp = el("a", "linkish", "Export my data");
+  exp.href = "/api/export";
+  exp.download = "";
+  box.appendChild(exp);
+
+  const foot = el("div", "acct-foot");
+  const out = el("button", "linkish", "Sign out");
+  out.type = "button";
+  out.onclick = signOut;
+  foot.append(out, el("p", "form-hint", me.version === "dev" ? "dev build" : me.version));
+  box.appendChild(foot);
+
+  openOverlay("Your account", box);
+}
+
+async function signOut() {
   await api("POST", "/api/logout", {});
+  // the map this device saw goes with the session; pins still waiting to
+  // sync stay queued for whoever signs in next
+  try { localStorage.removeItem(SNAP_KEY); } catch {}
   location.reload();
-};
+}
+
+$("btn-account").onclick = openAccount;
 
 /* ---------- lightbox ---------- */
 
@@ -2476,23 +2581,21 @@ async function openFamily() {
     }
     return;
   }
-  try {
-    state.me = await api("GET", "/api/me");
-  } catch (ex) {
-    // A dead network (unlike a 401) means mid-holiday with no signal: open
-    // the last synced map from the snapshot instead of a blank atlas.
-    if (isNetworkError(ex) && restoreSnapshot()) {
-      toast("Offline — showing your last synced map");
-    }
-    return; // on 401 the login overlay is already shown
-  }
-  if (state.me.must_change_password) return showChoosePassword(null);
-  $("btn-family").hidden = !state.me.is_admin;
-  $("app-version").textContent = state.me.version === "dev" ? "dev build" : state.me.version;
+  // Draw the last map this device saw straight away, then bring it up to
+  // date: a returning visit shows its trips before the first request is back.
+  const hadSnapshot = restoreSnapshot();
   try {
     await loadData(true);
   } catch (ex) {
-    toast("Couldn't load the map data: " + ex.message);
+    // A dead network (unlike a 401) means mid-holiday with no signal: the
+    // snapshot already on screen is the map.
+    if (isNetworkError(ex)) {
+      if (hadSnapshot) toast("Offline — showing your last synced map");
+    } else if ($("login").hidden) {
+      // (on 401 or 428 the cover is already up, asking to sign in or for a
+      // new password — that says it better than a toast)
+      toast("Couldn't load the map data: " + ex.message);
+    }
   }
 })();
 
