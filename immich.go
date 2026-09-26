@@ -487,30 +487,66 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 
 // maybeSyncActive refreshes the active holiday's photos if they are stale.
 // It runs in the background — the map serves the pins it already has instead
-// of hanging on Immich — and failures are logged, never surfaced.
-func (a *app) maybeSyncActive() {
+// of hanging on Immich — and failures are logged, never surfaced. It reports
+// whether a sync is running, so the page that asked can wait for it
+// (GET /api/sync/wait) and pick up what it found.
+func (a *app) maybeSyncActive() bool {
 	var id int64
 	err := a.db.QueryRow(`SELECT id FROM holidays WHERE end_at IS NULL AND planned = 0`).Scan(&id)
 	if err != nil {
-		return
+		return false
 	}
 	a.stateMu.Lock()
-	if a.syncing || time.Since(a.lastSync[id]) < syncInterval {
-		a.stateMu.Unlock()
-		return
+	defer a.stateMu.Unlock()
+	if a.syncDone != nil {
+		return true
 	}
-	a.syncing = true
-	a.stateMu.Unlock()
+	if time.Since(a.lastSync[id]) < syncInterval {
+		return false
+	}
+	done := make(chan struct{})
+	a.syncDone = done
 	go func() {
-		defer func() {
-			a.stateMu.Lock()
-			a.syncing = false
-			a.stateMu.Unlock()
-		}()
-		if _, _, err := a.syncHoliday(id); err != nil {
+		_, _, err := a.syncHoliday(id)
+		if err != nil {
 			log.Printf("auto-sync holiday %d: %v", id, err)
 		}
+		a.stateMu.Lock()
+		a.syncOK = err == nil
+		a.syncDone = nil
+		a.stateMu.Unlock()
+		close(done)
 	}()
+	return true
+}
+
+// syncWaitLimit caps how long GET /api/sync/wait holds a request open; it
+// stays well inside the server's WriteTimeout.
+var syncWaitLimit = 90 * time.Second
+
+// handleSyncWait answers once the running background sync has finished.
+// ok=false (it failed, or is still going after syncWaitLimit) tells the page
+// not to reload — the pins it has are still the latest.
+func (a *app) handleSyncWait(w http.ResponseWriter, r *http.Request) {
+	a.stateMu.Lock()
+	done := a.syncDone
+	a.stateMu.Unlock()
+	if done == nil {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": false})
+		return
+	}
+	var ok bool
+	select {
+	case <-done:
+		a.stateMu.Lock()
+		ok = a.syncOK
+		a.stateMu.Unlock()
+	case <-time.After(syncWaitLimit):
+		ok = false
+	case <-r.Context().Done():
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": ok})
 }
 
 // --- photo proxy ---

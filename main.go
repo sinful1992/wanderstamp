@@ -30,8 +30,9 @@ type app struct {
 	limiter      *loginLimiter
 	cookieSecure bool
 	syncMu       sync.Mutex // serializes actual sync work against Immich
-	stateMu      sync.Mutex // guards lastSync + syncing
-	syncing      bool
+	stateMu      sync.Mutex // guards lastSync, syncDone + syncOK
+	syncDone     chan struct{} // non-nil while a background sync runs; closed when it ends
+	syncOK       bool          // how the last background sync ended
 	lastSync     map[int64]time.Time
 }
 
@@ -88,6 +89,7 @@ func main() {
 	mux.HandleFunc("GET /api/geocode/reverse", a.auth(a.handleReverse))
 
 	mux.HandleFunc("GET /api/pins", a.auth(a.handleListPins))
+	mux.HandleFunc("GET /api/sync/wait", a.auth(a.handleSyncWait))
 	mux.HandleFunc("POST /api/pins", a.auth(a.handleCreatePin))
 	mux.HandleFunc("PATCH /api/pins/{id}", a.auth(a.handleUpdatePin))
 	mux.HandleFunc("DELETE /api/pins/{id}", a.auth(a.handleDeletePin))

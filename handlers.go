@@ -627,7 +627,9 @@ func (a *app) queryPins(holidayID int64) ([]pinOut, error) {
 }
 
 func (a *app) handleListPins(w http.ResponseWriter, r *http.Request) {
-	a.maybeSyncActive()
+	if a.maybeSyncActive() {
+		w.Header().Set("X-Photo-Sync", "running")
+	}
 	out, err := a.queryPins(0)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")

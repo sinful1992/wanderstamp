@@ -49,13 +49,15 @@ function toast(msg) {
   toast.timer = setTimeout(() => { t.hidden = true; }, 3500);
 }
 
-async function api(method, path, body) {
+// meta, when given, receives the raw response (meta.resp) for its headers.
+async function api(method, path, body, meta) {
   const opts = { method, credentials: "same-origin" };
   if (body !== undefined) {
     opts.headers = { "Content-Type": "application/json" };
     opts.body = JSON.stringify(body);
   }
   const resp = await fetch(path, opts);
+  if (meta) meta.resp = resp;
   if (resp.status === 401 && path !== "/api/login") {
     showLogin();
     throw new Error("not logged in");
@@ -227,12 +229,33 @@ function holidayById(id) {
 }
 
 async function loadData(fit) {
-  const [holidays, pins] = await Promise.all([api("GET", "/api/holidays"), api("GET", "/api/pins")]);
+  const meta = {};
+  const [holidays, pins] = await Promise.all([api("GET", "/api/holidays"), api("GET", "/api/pins", undefined, meta)]);
   state.holidays = holidays;
   state.pins = pins;
   renderAll(fit);
   saveSnapshot();
   syncQueue(); // reaching the server just now proves any queued pins can go
+  if (meta.resp.headers.get("X-Photo-Sync") === "running") awaitPhotoSync();
+}
+
+// Opening the map starts a background photo sync on the server, which answers
+// with the pins it already had. Wait for that sync and load again, or photos
+// that reached Immich since the last visit only show up on the next one.
+// Reloads once, and only after a successful sync: a failing Immich leaves the
+// map as it is rather than looping.
+let awaitingSync = false;
+async function awaitPhotoSync() {
+  if (awaitingSync) return;
+  awaitingSync = true;
+  try {
+    const r = await api("GET", "/api/sync/wait");
+    if (r.ok) await loadData();
+  } catch {
+    // offline or signed out: the map keeps what it has
+  } finally {
+    awaitingSync = false;
+  }
 }
 
 function renderAll(fit) {
