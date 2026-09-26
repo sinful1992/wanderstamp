@@ -27,17 +27,7 @@ func (a *app) handleGeocode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	geoMu.Lock()
-	if d := time.Second - time.Since(geoLast); d > 0 {
-		time.Sleep(d)
-	}
-	geoLast = time.Now()
-	geoMu.Unlock()
-
-	req, _ := http.NewRequestWithContext(r.Context(), "GET",
-		"https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q="+url.QueryEscape(q), nil)
-	req.Header.Set("User-Agent", "holiday-map/"+version+" (self-hosted travel log)")
-	resp, err := geoClient.Do(req)
+	resp, err := nominatimGet(r.Context(), "/search?format=jsonv2&limit=5&q="+url.QueryEscape(q))
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "place search unavailable")
 		return
@@ -48,10 +38,11 @@ func (a *app) handleGeocode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var raw []struct {
-		DisplayName string   `json:"display_name"`
-		Lat         string   `json:"lat"`
-		Lon         string   `json:"lon"`
-		BoundingBox []string `json:"boundingbox"` // Nominatim's order: south, north, west, east
+		DisplayName string `json:"display_name"`
+		Lat         string `json:"lat"`
+		Lon         string `json:"lon"`
+		OSMType     string `json:"osm_type"`
+		OSMID       int64  `json:"osm_id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		httpError(w, http.StatusBadGateway, "place search unavailable")
@@ -61,7 +52,7 @@ func (a *app) handleGeocode(w http.ResponseWriter, r *http.Request) {
 		Name string  `json:"name"`
 		Lat  float64 `json:"lat"`
 		Lng  float64 `json:"lng"`
-		BBox bbox    `json:"bbox,omitempty"` // [s,w,n,e]
+		OSM  string  `json:"osm,omitempty"` // "R7444": saved with the destination, the server fetches its outline
 	}
 	out := []hit{}
 	for _, h := range raw {
@@ -70,28 +61,15 @@ func (a *app) handleGeocode(w http.ResponseWriter, r *http.Request) {
 		if e1 != nil || e2 != nil {
 			continue
 		}
-		out = append(out, hit{Name: h.DisplayName, Lat: lat, Lng: lng, BBox: nominatimBBox(h.BoundingBox)})
+		out = append(out, hit{Name: h.DisplayName, Lat: lat, Lng: lng, OSM: osmRef(h.OSMType, h.OSMID)})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// nominatimBBox reorders Nominatim's [south, north, west, east] strings into
-// this app's [south, west, north, east]; nil if any part is missing or off.
-func nominatimBBox(raw []string) bbox {
-	if len(raw) != 4 {
-		return nil
+// osmRef is the lookup key: "relation" 7444 -> "R7444".
+func osmRef(kind string, id int64) string {
+	if kind == "" || id <= 0 {
+		return ""
 	}
-	var f [4]float64
-	for i, s := range raw {
-		v, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return nil
-		}
-		f[i] = v
-	}
-	b := bbox{f[0], f[2], f[1], f[3]}
-	if !b.valid() {
-		return nil
-	}
-	return b
+	return strings.ToUpper(kind[:1]) + strconv.FormatInt(id, 10)
 }

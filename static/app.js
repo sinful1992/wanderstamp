@@ -267,24 +267,6 @@ function fitAll() {
 
 /* ---------- the journey: the way there, then the trip itself ---------- */
 
-// A pin has arrived when it's inside the destination's own area (the box
-// place search gave it: a city, a national park, a whole country) or within
-// ARRIVE_KM of its point — the car park, the hotel across town. The radius is
-// tight on purpose: Warwick Services on the M40 is 8.5 km from the castle, and
-// a services stop is still the drive.
-const ARRIVE_KM = 5;
-
-function inBox(p, b) {
-  if (!b) return false;
-  const [s, w, n, e] = b;
-  if (p.lat < s || p.lat > n) return false;
-  return w <= e ? p.lng >= w && p.lng <= e : p.lng >= w || p.lng <= e; // crosses 180°
-}
-
-function arrivedAt(h, p) {
-  return inBox(p, h.dest_bbox) || kmBetween(p, { lat: h.dest_lat, lng: h.dest_lng }) <= ARRIVE_KM;
-}
-
 function hasDest(h) {
   return !!(h && h.dest_name);
 }
@@ -302,14 +284,16 @@ function kmBetween(a, b) {
 }
 
 // Splits a trip's pins (in visit order) at the first one that reached the
-// destination. Everything before it was on the way there. A live trip that
+// destination — decided by the server (arrival_pin), which holds the place's
+// real outline: anywhere inside Paris is Paris, and a pin within 5 km of the
+// point counts too. Everything before that pin was on the way there. A live trip that
 // hasn't arrived is still on the way; a finished trip that never pinned near
 // its destination isn't split at all — its destination was a region, or the
 // plans changed, and calling the whole trip "on the way" would be wrong.
 function journey(h, pins) {
   const none = { way: [], stay: pins, arrived: false, enRoute: false };
   if (!hasDest(h)) return none;
-  const i = pins.findIndex((p) => arrivedAt(h, p));
+  const i = h.arrival_pin ? pins.findIndex((p) => p.id === h.arrival_pin) : -1;
   if (i >= 0) return { way: pins.slice(0, i), stay: pins.slice(i), arrived: true, enRoute: false };
   if (h.active) return { way: pins, stay: [], arrived: false, enRoute: true };
   return none;
@@ -1184,11 +1168,18 @@ function tripEditForm(h) {
   let newDest;
   const destBox = el("div", "dest-edit");
   const destNow = el("p", "form-hint");
+  const destRule = el("p", "form-hint");
   const destRemove = el("button", "linkish", "Remove destination");
   destRemove.type = "button";
   const showDest = () => {
     const d = newDest === undefined ? (h.dest_name ? { name: h.dest_name } : null) : newDest;
     destNow.textContent = d ? `Destination: ${d.name}` : "No destination yet";
+    // what "arrived" will mean, so a city trip isn't a surprise
+    const whole = newDest === undefined ? h.dest_area : !!(newDest && newDest.osm);
+    destRule.textContent = !d ? "" : whole
+      ? "Arrival: your first pin inside its boundary, or within 5 km"
+      : "Arrival: your first pin within 5 km of it";
+    destRule.hidden = !d;
     destRemove.hidden = !d;
   };
   destRemove.onclick = () => { newDest = null; destRes.textContent = ""; showDest(); };
@@ -1204,7 +1195,7 @@ function tripEditForm(h) {
   destFind.onclick = findDest;
   destQ.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); findDest(); } });
   destRow.append(destQ, destFind);
-  destBox.append(destNow, destRow, destRes, destRemove);
+  destBox.append(destNow, destRule, destRow, destRes, destRemove);
   showDest();
   const journal = el("textarea");
   journal.placeholder = "Trip journal — the stories the photos don't tell";
@@ -1882,7 +1873,7 @@ function resetDest() {
 }
 
 // placeSearch runs one lookup into a results box and calls onPick with the
-// chosen place: { name, lat, lng, bbox? }. Typed "lat, lng" is taken as-is.
+// chosen place: { name, lat, lng, osm? }. Typed "lat, lng" is taken as-is.
 // Shared by the new-trip form and trip editing.
 async function placeSearch(q, res, onPick) {
   q = q.trim();
@@ -1912,7 +1903,7 @@ async function placeSearch(q, res, onPick) {
       b.type = "button";
       b.onclick = () => {
         res.querySelectorAll(".dest-opt").forEach((x) => x.classList.toggle("sel", x === b));
-        onPick({ name: hit.name.split(",").slice(0, 2).join(","), lat: hit.lat, lng: hit.lng, bbox: hit.bbox },
+        onPick({ name: hit.name.split(",").slice(0, 2).join(","), lat: hit.lat, lng: hit.lng, osm: hit.osm },
           hit.name.split(",")[0].trim());
       };
       res.appendChild(b);
@@ -1927,7 +1918,7 @@ async function placeSearch(q, res, onPick) {
 function destBody(d) {
   if (!d) return { dest_name: "" };
   const b = { dest_name: d.name, dest_lat: d.lat, dest_lng: d.lng };
-  if (d.bbox) b.dest_bbox = d.bbox;
+  if (d.osm) b.dest_osm = d.osm; // the server fetches the place's outline
   return b;
 }
 

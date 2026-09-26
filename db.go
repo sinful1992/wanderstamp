@@ -114,8 +114,11 @@ var migrations = []string{
 	`ALTER TABLE holidays ADD COLUMN dest_name TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE holidays ADD COLUMN dest_lat REAL NOT NULL DEFAULT 0`,
 	`ALTER TABLE holidays ADD COLUMN dest_lng REAL NOT NULL DEFAULT 0`,
-	// the destination's bounding box from place search, JSON [s,w,n,e]; '' = none
+	// 1.10.0's rectangle; unused since outlines replaced it (a country's
+	// rectangle swallowed half the globe), kept so 1.10.0 can still roll back
 	`ALTER TABLE holidays ADD COLUMN dest_bbox TEXT NOT NULL DEFAULT ''`,
+	// the destination's outline, JSON MultiPolygon coordinates; '' = none
+	`ALTER TABLE holidays ADD COLUMN dest_area TEXT NOT NULL DEFAULT ''`,
 	// planned = 1: a trip with a future first day, counting down. It has no
 	// end_at yet, so the one-live-trip index must not count it. The index is
 	// built here, not in schema, because it needs the planned column.
