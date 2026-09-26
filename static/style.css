@@ -803,6 +803,52 @@ button.linkish, a.linkish {
 }
 .attach-hint { font-size: 13px; color: var(--muted); flex: 1; min-width: 140px; }
 .attach-bar select { width: auto; flex: none; max-width: 55%; }
+/* ---------- photos to file: "same place?" ----------
+   The manifest's slip again. Each entry is a print beside a ledger line from
+   the pin to the distance; answering stamps the print, KEPT or NEW STOP. */
+#overlay .ask { min-height: 0; }
+.ask-hint { margin: 0; font-size: 14.5px; color: var(--muted); max-width: 46ch; }
+.ask-list { display: flex; flex-direction: column; }
+.ask-row { display: flex; gap: 16px; align-items: flex-start; padding: 16px 2px; }
+.ask-row + .ask-row { border-top: 1px dotted var(--line); }
+.ask-print {
+  position: relative; flex: none; width: 104px; padding: 5px 5px 14px;
+  background: #fbf8f0; border: 1px solid var(--line); border-radius: 2px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .18); transform: rotate(-2deg); cursor: zoom-in;
+}
+.ask-row:nth-child(even) .ask-print { transform: rotate(1.5deg); }
+.ask-print img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.ask-print .mf-stamp {
+  /* the print is always cream, so the ink is the paper red in either theme */
+  position: absolute; left: 50%; top: 42%; translate: -50% -50%;
+  color: #b3372a; border-color: #b3372a; border-width: 2.5px; background: rgba(251, 248, 240, .9);
+  font-size: 17px; padding: 2px 8px 1px; white-space: nowrap; --r: -12deg;
+}
+.ask-body { flex: 1; min-width: 0; }
+.ask-line { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 0; }
+.ask-pin {
+  font-family: var(--stamp); font-size: 19px; letter-spacing: 1.2px; text-transform: uppercase;
+  line-height: 1.1; overflow-wrap: anywhere;
+}
+.ask-line .mf-lead { margin-bottom: .3em; }
+.ask-km { flex: none; font-size: 15px; font-variant-numeric: tabular-nums; }
+.ask-when { margin: 3px 0 12px; font-size: 13.5px; color: var(--muted); }
+.ask-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ask-actions button { flex: 1 1 150px; }
+#overlay .ask button.ask-own {
+  background: none; border: 1px solid var(--ink); border-radius: 8px;
+  padding: 10px 14px; min-height: 40px; color: var(--ink);
+}
+#overlay .ask button.ask-own:hover { background: var(--line); }
+.ask-row.answered .ask-actions { opacity: .35; }
+@media (prefers-reduced-motion: no-preference) {
+  .ask-row.answered { animation: ask-fold .3s ease-in .6s forwards; }
+  @keyframes ask-fold { to { opacity: 0; } }
+}
+@media (max-width: 420px) {
+  .ask-row { gap: 12px; }
+  .ask-print { width: 84px; }
+}
 .journal-read { max-width: 640px; }
 .journal-text { font-family: var(--prose); font-size: 17px; line-height: 1.65; white-space: pre-wrap; }
 

@@ -55,7 +55,17 @@ CREATE TABLE IF NOT EXISTS pin_photos (
   taken_at TEXT NOT NULL,
   lat      REAL NOT NULL,
   lng      REAL NOT NULL,
+  ask      INTEGER NOT NULL DEFAULT 0, -- filed on a nearby hand-placed pin, awaiting "same place?"
   PRIMARY KEY (pin_id, asset_id)
+);
+
+-- answers to "same place as this pin, or its own stop?" — kept apart from
+-- pin_photos so a re-sync, or the pin being deleted, can't forget them.
+-- pin_id = 0 means its own stop.
+CREATE TABLE IF NOT EXISTS photo_choices (
+  asset_id   TEXT PRIMARY KEY,
+  holiday_id INTEGER NOT NULL REFERENCES holidays(id) ON DELETE CASCADE,
+  pin_id     INTEGER NOT NULL
 );
 
 -- photos in a holiday's date range that carry no GPS EXIF
@@ -130,6 +140,7 @@ var migrations = []string{
 	// whether it holds a temporary password an admin set
 	`ALTER TABLE users ADD COLUMN last_seen TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE pin_photos ADD COLUMN ask INTEGER NOT NULL DEFAULT 0`,
 }
 
 func openDB(path string) (*sql.DB, error) {

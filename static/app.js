@@ -745,6 +745,14 @@ function openStory(h, pinId) {
     sec.appendChild(file);
     scroll.appendChild(sec);
   }
+  if (h.ask_count > 0 && !SHARE) {
+    const sec = el("section", "story-sec");
+    sec.appendChild(el("h3", "story-place", "Photos near your pins"));
+    const check = el("button", "sub-link", `file ${h.ask_count} ${h.ask_count === 1 ? "photo" : "photos"}`);
+    check.onclick = () => openAsk(h);
+    sec.appendChild(check);
+    scroll.appendChild(sec);
+  }
   if (!secs.length && !h.unplaced_count) {
     scroll.appendChild(el("p", "empty-note", "No pins on this trip yet — the story writes itself as you pin places."));
   }
@@ -1129,6 +1137,11 @@ function renderSheet() {
       const st = el("button", "sub-link", "story");
       st.onclick = (e) => { e.stopPropagation(); openStory(h); };
       sub.append(st);
+    }
+    if (h.ask_count > 0 && !SHARE) {
+      const ask = el("button", "sub-link", `${h.ask_count} to file`);
+      ask.onclick = (e) => { e.stopPropagation(); openAsk(h); };
+      sub.append(ask);
     }
     if (h.unplaced_count > 0) {
       const un = el("button", "sub-link", `${h.unplaced_count} without location`);
@@ -1517,6 +1530,79 @@ async function openUnplaced(h) {
       attachBtn.hidden = true;
     }
     openOverlay(`${h.name} — photos without a location`, wrap);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+// Photos sync filed on a hand-placed pin without being sure: close enough to
+// be the same place with a poor GPS fix, far enough to be the pub next door.
+// One question per photo, on the manifest's paper; the answer is stamped on
+// the print, then kept for good, so it's never asked again.
+async function openAsk(h) {
+  try {
+    const groups = await api("GET", `/api/holidays/${h.id}/ask`);
+    const box = el("div", "manifest ask");
+    const tally = el("p", "mf-tally");
+    const list = el("div", "ask-list");
+    let left = groups.reduce((n, g) => n + g.photos.length, 0);
+    const count = () => {
+      tally.textContent = left ? `${left} ${left === 1 ? "photo" : "photos"} to file` : "All filed";
+      tally.classList.toggle("done", !left);
+    };
+    count();
+    box.append(tally,
+      el("p", "ask-hint", `${left === 1 ? "This was" : "These were"} taken a short way from a pin you placed. Was it there, or somewhere of its own?`),
+      list);
+    const still = !window.matchMedia("(prefers-reduced-motion: no-preference)").matches;
+    for (const g of groups) {
+      const name = g.title || "your pin";
+      g.photos.forEach((ph, i) => {
+        const row = el("div", "ask-row");
+        const print = el("button", "ask-print");
+        print.setAttribute("aria-label", "View photo");
+        const img = el("img");
+        img.loading = "lazy";
+        img.src = photoURL(ph.asset_id, "thumb");
+        img.alt = "";
+        print.appendChild(img);
+        print.onclick = () => openLightbox(g.photos, i);
+        const body = el("div", "ask-body");
+        const line = el("p", "ask-line");
+        line.append(el("span", "ask-pin", name), el("span", "mf-lead"), el("span", "ask-km", `${ph.km} km`));
+        body.append(line, el("p", "ask-when",
+          new Date(ph.taken_at).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })));
+        const keep = el("button", "primary", `Keep on ${name}`);
+        const own = el("button", "ask-own", "Make its own stop");
+        const actions = el("div", "ask-actions");
+        actions.append(keep, own);
+        body.appendChild(actions);
+        row.append(print, body);
+        list.appendChild(row);
+        const answer = async (same) => {
+          keep.disabled = own.disabled = true;
+          try {
+            await api("POST", `/api/holidays/${h.id}/ask`, { asset_ids: [ph.asset_id], same });
+          } catch (err) {
+            keep.disabled = own.disabled = false;
+            toast(err.message);
+            return;
+          }
+          print.appendChild(el("span", "mf-stamp thunk", same ? "Kept" : "New stop"));
+          row.classList.add("answered");
+          left--;
+          count();
+          loadData();
+          setTimeout(() => {
+            row.remove();
+            if (!list.childElementCount) closeOverlay();
+          }, still ? 400 : 900);
+        };
+        keep.onclick = () => answer(true);
+        own.onclick = () => answer(false);
+      });
+    }
+    openOverlay(`${h.name} — photos to file`, box);
   } catch (err) {
     toast(err.message);
   }

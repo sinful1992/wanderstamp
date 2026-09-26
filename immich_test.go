@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -213,5 +215,95 @@ func TestSyncFilesPhotosOnNearbyHandPlacedPin(t *testing.T) {
 	}
 	if _, kind := pinOf("hotel-2"); kind != "photo" {
 		t.Errorf("after deleting the hand pin hotel-2 is on a %q pin", kind)
+	}
+}
+
+// Between "at the pin" and "clearly elsewhere" the trip asks. The photo waits
+// on the pin meanwhile, and whichever answer is given survives every re-sync.
+func TestSyncAsksAboutPhotosNearAHandPin(t *testing.T) {
+	restaurant := `{"id":"restaurant","type":"IMAGE","fileCreatedAt":"2026-09-26T18:30:44Z","exifInfo":{"latitude":52.536877,"longitude":-1.391319}}`
+	items := []string{
+		`{"id":"hotel","type":"IMAGE","fileCreatedAt":"2026-09-26T17:15:00Z","exifInfo":{"latitude":52.5370,"longitude":-1.4003}}`,
+		restaurant,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/search/metadata" {
+			w.Write([]byte(`{}`))
+			return
+		}
+		w.Write([]byte(`{"assets":{"items":[` + strings.Join(items, ",") + `],"nextPage":null}}`))
+	}))
+	defer srv.Close()
+	db, err := openDB(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	a := &app{db: db, immich: newImmichClient(srv.URL, "key"), lastSync: map[int64]time.Time{}}
+	db.Exec(`INSERT INTO holidays (id, name, color, start_at) VALUES (1, 'Warwick', '#123456', '2026-09-25T00:00:00Z')`)
+	db.Exec(`INSERT INTO pins (id, holiday_id, kind, lat, lng, title) VALUES (5, 1, 'manual', 52.5369686, -1.4002928, 'Premier Inn')`)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/holidays/{id}/ask", a.handleAskPhotos)
+	mux.HandleFunc("POST /api/holidays/{id}/ask", a.handleAnswerPhotos)
+	answer := func(same bool) {
+		t.Helper()
+		body := `{"asset_ids":["restaurant"],"same":` + strconv.FormatBool(same) + `}`
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/api/holidays/1/ask", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		mux.ServeHTTP(rec, req)
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"answered":1`) {
+			t.Fatalf("answer: %d %s", rec.Code, rec.Body)
+		}
+	}
+	sync := func() {
+		t.Helper()
+		if _, _, err := a.syncHoliday(1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	where := func(asset string) (pin int64, kind string, ask int) {
+		db.QueryRow(`SELECT p.id, p.kind, pp.ask FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id WHERE pp.asset_id = ?`, asset).Scan(&pin, &kind, &ask)
+		return
+	}
+
+	sync()
+	if pin, _, ask := where("hotel"); pin != 5 || ask != 0 {
+		t.Errorf("hotel photo: pin %d ask %d, want pin 5 without a question", pin, ask)
+	}
+	if pin, _, ask := where("restaurant"); pin != 5 || ask != 1 {
+		t.Fatalf("600 m photo: pin %d ask %d, want it waiting on pin 5 with a question", pin, ask)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/holidays/1/ask", nil))
+	if !strings.Contains(rec.Body.String(), `"asset_id":"restaurant"`) || strings.Contains(rec.Body.String(), `"hotel"`) {
+		t.Errorf("questions: %s", rec.Body)
+	}
+
+	answer(true)
+	sync()
+	if pin, _, ask := where("restaurant"); pin != 5 || ask != 0 {
+		t.Errorf("after 'same place' + re-sync: pin %d ask %d", pin, ask)
+	}
+
+	// changing one's mind is a fresh question: put it back and say "own stop"
+	db.Exec(`UPDATE pin_photos SET ask = 1 WHERE asset_id = 'restaurant'`)
+	answer(false) // re-syncs inline
+	if _, kind, ask := where("restaurant"); kind != "photo" || ask != 0 {
+		t.Errorf("after 'its own stop': on a %q pin, ask %d", kind, ask)
+	}
+	sync()
+	if _, kind, ask := where("restaurant"); kind != "photo" || ask != 0 {
+		t.Errorf("'its own stop' undone by a re-sync: %q pin, ask %d", kind, ask)
+	}
+
+	// deleted in Immich: the photo and its answer both go
+	items = items[:1]
+	sync()
+	var n int
+	db.QueryRow(`SELECT COUNT(*) FROM photo_choices`).Scan(&n)
+	if n != 0 {
+		t.Errorf("%d answers left for a photo that's gone", n)
 	}
 }

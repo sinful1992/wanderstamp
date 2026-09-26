@@ -95,6 +95,8 @@ func main() {
 	mux.HandleFunc("DELETE /api/pins/{id}", a.auth(a.handleDeletePin))
 	mux.HandleFunc("GET /api/pins/{id}/photos", a.auth(a.handlePinPhotos))
 	mux.HandleFunc("POST /api/pins/{id}/attach", a.auth(a.handleAttachPhotos))
+	mux.HandleFunc("GET /api/holidays/{id}/ask", a.auth(a.handleAskPhotos))
+	mux.HandleFunc("POST /api/holidays/{id}/ask", a.auth(a.handleAnswerPhotos))
 
 	mux.HandleFunc("GET /api/photo/{asset}/{kind}", a.auth(a.handlePhoto))
 

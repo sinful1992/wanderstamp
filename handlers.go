@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
+	"math"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -76,6 +77,7 @@ type holidayOut struct {
 	PinCount      int     `json:"pin_count"`
 	PhotoCount    int     `json:"photo_count"`
 	UnplacedCount int     `json:"unplaced_count"`
+	AskCount      int     `json:"ask_count"` // photos near a hand pin, waiting for "same place?"
 	Shared        bool    `json:"shared"`
 	PackTotal     int     `json:"pack_total"`
 	PackDone      int     `json:"pack_done"`
@@ -120,6 +122,8 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 		       (SELECT COUNT(*) FROM pins p WHERE p.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id WHERE p.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM unplaced_photos up WHERE up.holiday_id = h.id),
+		       (SELECT COUNT(*) FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
+		        WHERE p.holiday_id = h.id AND pp.ask = 1),
 		       EXISTS (SELECT 1 FROM shares s WHERE s.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id AND pi.checked = 1),
@@ -134,7 +138,7 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var h holidayOut
 		var box string
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned, &box); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.AskCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned, &box); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -499,6 +503,111 @@ func (a *app) handleAttachPhotos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"moved": moved})
+}
+
+// handleAskPhotos lists the photos sync filed on a hand-placed pin without
+// being sure they belong there, grouped by that pin.
+func (a *app) handleAskPhotos(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	rows, err := a.db.Query(`
+		SELECT p.id, p.title, p.lat, p.lng, pp.asset_id, pp.taken_at, pp.lat, pp.lng
+		FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
+		WHERE p.holiday_id = ? AND pp.ask = 1
+		ORDER BY p.id, pp.taken_at`, id)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer rows.Close()
+	type photo struct {
+		AssetID string  `json:"asset_id"`
+		TakenAt string  `json:"taken_at"`
+		KM      float64 `json:"km"`
+	}
+	type group struct {
+		PinID  int64   `json:"pin_id"`
+		Title  string  `json:"title"`
+		Photos []photo `json:"photos"`
+	}
+	out := []*group{}
+	for rows.Next() {
+		var g group
+		var plat, plng, lat, lng float64
+		var ph photo
+		if err := rows.Scan(&g.PinID, &g.Title, &plat, &plng, &ph.AssetID, &ph.TakenAt, &lat, &lng); err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		ph.KM = math.Round(haversineKM(lat, lng, plat, plng)*10) / 10
+		if n := len(out); n == 0 || out[n-1].PinID != g.PinID {
+			out = append(out, &g)
+		}
+		last := out[len(out)-1]
+		last.Photos = append(last.Photos, ph)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleAnswerPhotos records "same place" (they stay on the pin, for good)
+// or "its own stop" (a re-sync files them as it would with no pin nearby).
+func (a *app) handleAnswerPhotos(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		AssetIDs []string `json:"asset_ids"`
+		Same     bool     `json:"same"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	tx, err := a.db.Begin()
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer tx.Rollback()
+	answered := 0
+	for _, asset := range req.AssetIDs {
+		var pinID int64
+		if err := tx.QueryRow(`
+			SELECT pp.pin_id FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
+			WHERE pp.asset_id = ? AND p.holiday_id = ? AND pp.ask = 1`, asset, id).Scan(&pinID); err != nil {
+			continue // not a question on this trip
+		}
+		choice := pinID
+		if !req.Same {
+			choice = 0
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO photo_choices (asset_id, holiday_id, pin_id) VALUES (?, ?, ?)
+			ON CONFLICT (asset_id) DO UPDATE SET holiday_id = excluded.holiday_id, pin_id = excluded.pin_id`,
+			asset, id, choice); err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		if _, err := tx.Exec(`UPDATE pin_photos SET ask = 0 WHERE asset_id = ?`, asset); err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		answered++
+	}
+	if err := tx.Commit(); err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if !req.Same && answered > 0 {
+		// move them now; if Immich is away, the next sync does it
+		if _, _, err := a.syncHoliday(id); err != nil {
+			log.Printf("re-sync after photo answer, holiday %d: %v", id, err)
+			a.resyncSoon(id)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"answered": answered})
 }
 
 // handleHolidayTimeline returns every photo of a holiday (placed + unplaced)

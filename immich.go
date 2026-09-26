@@ -25,10 +25,13 @@ const (
 	// syncInterval is how stale the active holiday's photos may get before a
 	// map load triggers a re-sync.
 	syncInterval = 10 * time.Minute
-	// manualPinKM is how close a photo must be to a pin placed by hand to be
-	// filed on it: the hotel and its grounds, with room for a poor indoor GPS
-	// fix (a hotel restaurant photo placed 600 m off), but not the whole town.
-	manualPinKM = 1.0
+	// A photo this close to a pin placed by hand is filed on it: the hotel
+	// and its grounds.
+	manualPinKM = 0.4
+	// Out to askKM it may still be the same place — a hotel restaurant photo
+	// came in with a GPS fix 600 m off — or the pub down the road. It goes on
+	// the pin for now and the trip asks which; the answer is kept.
+	askKM = 1.5
 )
 
 type immichClient struct {
@@ -328,15 +331,42 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 		}
 		rows.Close()
 	}
-	nearestManual := func(lat, lng float64) int64 {
+	nearestManual := func(lat, lng float64) (int64, float64) {
 		var id int64
-		best := manualPinKM
+		best := askKM
 		for _, m := range manual {
 			if d := haversineKM(lat, lng, m.lat, m.lng); d <= best {
 				id, best = m.id, d
 			}
 		}
-		return id
+		return id, best
+	}
+	isManual := func(id int64) bool {
+		for _, m := range manual {
+			if m.id == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	// What's already been answered: the chosen hand pin, or 0 for its own stop.
+	choices := make(map[string]int64)
+	{
+		rows, err := tx.Query(`SELECT asset_id, pin_id FROM photo_choices WHERE holiday_id = ?`, holidayID)
+		if err != nil {
+			return 0, 0, err
+		}
+		for rows.Next() {
+			var id string
+			var pin int64
+			if err := rows.Scan(&id, &pin); err != nil {
+				rows.Close()
+				return 0, 0, err
+			}
+			choices[id] = pin
+		}
+		rows.Close()
 	}
 
 	// Photos already attached to this holiday's pins by hand (from the
@@ -390,7 +420,16 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 		if e.Country != nil {
 			country = *e.Country
 		}
-		pinID := nearestManual(lat, lng)
+		var pinID int64
+		ask := false
+		if choice, ok := choices[asset.ID]; ok && (choice == 0 || isManual(choice)) {
+			pinID = choice // 0: its own stop, so straight to clustering
+		} else {
+			// unanswered, or the pin it was answered for has since gone
+			var d float64
+			pinID, d = nearestManual(lat, lng)
+			ask = pinID != 0 && d > manualPinKM
+		}
 		for _, key := range neighborKeys(lat, lng) {
 			if pinID != 0 {
 				break
@@ -425,11 +464,11 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 			}
 		}
 		if _, err := tx.Exec(`
-			INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng)
-			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT (asset_id) DO UPDATE SET pin_id = excluded.pin_id
+			INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng, ask)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (asset_id) DO UPDATE SET pin_id = excluded.pin_id, ask = excluded.ask
 			WHERE pin_photos.pin_id IN (SELECT id FROM pins WHERE holiday_id = ?)`,
-			pinID, asset.ID, takenAt, lat, lng, holidayID); err != nil {
+			pinID, asset.ID, takenAt, lat, lng, ask, holidayID); err != nil {
 			return 0, 0, err
 		}
 		seen[asset.ID] = true
@@ -485,6 +524,14 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 		if _, err := tx.Exec(`DELETE FROM pin_photos WHERE asset_id = ?`, id); err != nil {
 			return 0, 0, err
 		}
+	}
+	// an answer about a photo that's gone is nothing to keep
+	if _, err := tx.Exec(`
+		DELETE FROM photo_choices WHERE holiday_id = ?
+		  AND asset_id NOT IN (SELECT pp.asset_id FROM pin_photos pp
+		                       JOIN pins p ON p.id = pp.pin_id WHERE p.holiday_id = ?)`,
+		holidayID, holidayID); err != nil {
+		return 0, 0, err
 	}
 
 	// Photo pins sit at the mean of their photos; annotated empty pins survive.
