@@ -2382,6 +2382,7 @@ $("choose-form").onsubmit = async (e) => {
 
 $("choose-signout").onclick = async () => {
   await api("POST", "/api/logout", {}).catch(() => {});
+  try { localStorage.removeItem(SNAP_KEY); } catch {}
   location.reload();
 };
 
