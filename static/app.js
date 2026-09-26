@@ -267,10 +267,23 @@ function fitAll() {
 
 /* ---------- the journey: the way there, then the trip itself ---------- */
 
-// A pin this close to the destination counts as having arrived: the car park,
-// the hotel across town. Kept tight on purpose — Warwick Services on the M40
-// is 8.5 km from the castle, and a services stop is still the drive.
+// A pin has arrived when it's inside the destination's own area (the box
+// place search gave it: a city, a national park, a whole country) or within
+// ARRIVE_KM of its point — the car park, the hotel across town. The radius is
+// tight on purpose: Warwick Services on the M40 is 8.5 km from the castle, and
+// a services stop is still the drive.
 const ARRIVE_KM = 5;
+
+function inBox(p, b) {
+  if (!b) return false;
+  const [s, w, n, e] = b;
+  if (p.lat < s || p.lat > n) return false;
+  return w <= e ? p.lng >= w && p.lng <= e : p.lng >= w || p.lng <= e; // crosses 180°
+}
+
+function arrivedAt(h, p) {
+  return inBox(p, h.dest_bbox) || kmBetween(p, { lat: h.dest_lat, lng: h.dest_lng }) <= ARRIVE_KM;
+}
 
 function hasDest(h) {
   return !!(h && h.dest_name);
@@ -296,8 +309,7 @@ function kmBetween(a, b) {
 function journey(h, pins) {
   const none = { way: [], stay: pins, arrived: false, enRoute: false };
   if (!hasDest(h)) return none;
-  const dest = { lat: h.dest_lat, lng: h.dest_lng };
-  const i = pins.findIndex((p) => kmBetween(p, dest) <= ARRIVE_KM);
+  const i = pins.findIndex((p) => arrivedAt(h, p));
   if (i >= 0) return { way: pins.slice(0, i), stay: pins.slice(i), arrived: true, enRoute: false };
   if (h.active) return { way: pins, stay: [], arrived: false, enRoute: true };
   return none;
@@ -1166,6 +1178,34 @@ function tripEditForm(h) {
   end.type = "date"; end.value = h.end_at ? h.end_at.slice(0, 10) : "";
   const endRow = el("label", "date-row", "Last day ");
   endRow.appendChild(end);
+  // Destination: where the stamp goes and what "arrived" means. Set here for
+  // trips started without one, changed when plans change, or removed.
+  // undefined = leave as is; null = remove; an object = the new place.
+  let newDest;
+  const destBox = el("div", "dest-edit");
+  const destNow = el("p", "form-hint");
+  const destRemove = el("button", "linkish", "Remove destination");
+  destRemove.type = "button";
+  const showDest = () => {
+    const d = newDest === undefined ? (h.dest_name ? { name: h.dest_name } : null) : newDest;
+    destNow.textContent = d ? `Destination: ${d.name}` : "No destination yet";
+    destRemove.hidden = !d;
+  };
+  destRemove.onclick = () => { newDest = null; destRes.textContent = ""; showDest(); };
+  const destRow = el("div", "form-row");
+  const destQ = el("input");
+  destQ.type = "text"; destQ.maxLength = 120; destQ.autocomplete = "off";
+  destQ.placeholder = h.dest_name ? "Change to… place or lat, lng" : "Where to? Place or lat, lng";
+  destQ.setAttribute("aria-label", "Destination");
+  const destFind = el("button", null, "Find");
+  destFind.type = "button";
+  const destRes = el("div", "dest-results");
+  const findDest = () => placeSearch(destQ.value, destRes, (d) => { if (d) { newDest = d; showDest(); } });
+  destFind.onclick = findDest;
+  destQ.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); findDest(); } });
+  destRow.append(destQ, destFind);
+  destBox.append(destNow, destRow, destRes, destRemove);
+  showDest();
   const journal = el("textarea");
   journal.placeholder = "Trip journal — the stories the photos don't tell";
   journal.value = h.journal;
@@ -1183,7 +1223,7 @@ function tripEditForm(h) {
   btnRow.append(save, del);
   let cover = h.cover_asset;
   // A live or planned trip gets its last day by being ended.
-  wrap.append(name, sw, startRow, h.active || h.planned ? el("span") : endRow);
+  wrap.append(name, sw, startRow, h.active || h.planned ? el("span") : endRow, destBox);
   if (h.photo_count > 0 || h.unplaced_count > 0) {
     wrap.appendChild(coverPick(api("GET", `/api/holidays/${h.id}/timeline`), h.cover_asset, (a) => { cover = a; }));
   }
@@ -1229,6 +1269,7 @@ function tripEditForm(h) {
     if (startChanged) body.start_at = start.value;
     if (endChanged) body.end_at = end.value;
     if (cover && cover !== h.cover_asset) body.cover_asset = cover;
+    if (newDest !== undefined) Object.assign(body, destBody(newDest));
     try {
       await api("PATCH", `/api/holidays/${h.id}`, body);
       toast("Trip saved");
@@ -1840,17 +1881,20 @@ function resetDest() {
   $("dest-results").textContent = "";
 }
 
-async function searchDest() {
-  const q = $("trip-dest").value.trim();
+// placeSearch runs one lookup into a results box and calls onPick with the
+// chosen place: { name, lat, lng, bbox? }. Typed "lat, lng" is taken as-is.
+// Shared by the new-trip form and trip editing.
+async function placeSearch(q, res, onPick) {
+  q = q.trim();
   if (!q) return;
-  const res = $("dest-results");
   const m = q.match(COORD_RE);
   if (m) {
     const lat = +m[1], lng = +m[2];
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) { toast("Coordinates out of range"); return; }
-    chosenDest = { name: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, lat, lng };
+    const d = { name: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, lat, lng };
     res.textContent = "";
-    res.appendChild(el("p", "form-hint", `Destination set: ${chosenDest.name}`));
+    res.appendChild(el("p", "form-hint", `Destination set: ${d.name}`));
+    onPick(d); // coordinates make a poor trip name
     return;
   }
   res.textContent = "";
@@ -1858,7 +1902,7 @@ async function searchDest() {
   try {
     const hits = await api("GET", `/api/geocode?q=${encodeURIComponent(q)}`);
     res.textContent = "";
-    chosenDest = null;
+    onPick(null);
     if (!hits.length) {
       res.appendChild(el("p", "form-hint", "No places found — try a broader name, or type lat, lng"));
       return;
@@ -1867,13 +1911,9 @@ async function searchDest() {
       const b = el("button", "dest-opt", hit.name);
       b.type = "button";
       b.onclick = () => {
-        chosenDest = { name: hit.name.split(",").slice(0, 2).join(","), lat: hit.lat, lng: hit.lng };
         res.querySelectorAll(".dest-opt").forEach((x) => x.classList.toggle("sel", x === b));
-        const name = $("trip-name");
-        if (!name.value.trim() || name.value === autoName) {
-          autoName = hit.name.split(",")[0].trim();
-          name.value = autoName;
-        }
+        onPick({ name: hit.name.split(",").slice(0, 2).join(","), lat: hit.lat, lng: hit.lng, bbox: hit.bbox },
+          hit.name.split(",")[0].trim());
       };
       res.appendChild(b);
     }
@@ -1881,6 +1921,26 @@ async function searchDest() {
     res.textContent = "";
     toast(err.message);
   }
+}
+
+// the request fields for a picked destination (or for removing it: null)
+function destBody(d) {
+  if (!d) return { dest_name: "" };
+  const b = { dest_name: d.name, dest_lat: d.lat, dest_lng: d.lng };
+  if (d.bbox) b.dest_bbox = d.bbox;
+  return b;
+}
+
+function searchDest() {
+  return placeSearch($("trip-dest").value, $("dest-results"), (d, short) => {
+    chosenDest = d;
+    if (!d || !short) return;
+    const name = $("trip-name");
+    if (!name.value.trim() || name.value === autoName) {
+      autoName = short;
+      name.value = autoName;
+    }
+  });
 }
 $("btn-dest-search").onclick = searchDest;
 $("trip-dest").addEventListener("keydown", (e) => {
@@ -1922,11 +1982,7 @@ $("new-trip-form").onsubmit = async (e) => {
       start_at: $("trip-start").value,
       end_at: $("trip-end").value,
     };
-    if (chosenDest) {
-      body.dest_name = chosenDest.name;
-      body.dest_lat = chosenDest.lat;
-      body.dest_lng = chosenDest.lng;
-    }
+    if (chosenDest) Object.assign(body, destBody(chosenDest));
     const created = await api("POST", "/api/holidays", body);
     $("new-trip-form").hidden = true;
     $("btn-new-trip").hidden = false;

@@ -550,9 +550,14 @@ button.linkish, a.linkish {
 .pop-coords:hover { color: var(--ink); }
 
 /* destination picker (new-trip form) */
-#dest-results { display: flex; flex-direction: column; gap: 3px; }
-#dest-results:empty { display: none; }
-#dest-results .form-hint { padding: 2px 0; }
+#dest-results, .dest-results { display: flex; flex-direction: column; gap: 3px; }
+#dest-results:empty, .dest-results:empty { display: none; }
+#dest-results .form-hint, .dest-results .form-hint { padding: 2px 0; }
+/* the destination block inside trip editing: current place, then search */
+.dest-edit { display: flex; flex-direction: column; gap: 6px; }
+.dest-edit > .form-hint { margin: 0; }
+.dest-edit > .linkish { align-self: flex-start; }
+.dest-edit .form-row input { flex: 1; min-width: 0; }
 .dest-opt {
   text-align: left; background: none; border: 1px solid var(--line); border-radius: 8px;
   padding: 6px 9px; font-size: 12.5px; color: var(--muted);

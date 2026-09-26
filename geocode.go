@@ -48,9 +48,10 @@ func (a *app) handleGeocode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var raw []struct {
-		DisplayName string `json:"display_name"`
-		Lat         string `json:"lat"`
-		Lon         string `json:"lon"`
+		DisplayName string   `json:"display_name"`
+		Lat         string   `json:"lat"`
+		Lon         string   `json:"lon"`
+		BoundingBox []string `json:"boundingbox"` // Nominatim's order: south, north, west, east
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		httpError(w, http.StatusBadGateway, "place search unavailable")
@@ -60,6 +61,7 @@ func (a *app) handleGeocode(w http.ResponseWriter, r *http.Request) {
 		Name string  `json:"name"`
 		Lat  float64 `json:"lat"`
 		Lng  float64 `json:"lng"`
+		BBox bbox    `json:"bbox,omitempty"` // [s,w,n,e]
 	}
 	out := []hit{}
 	for _, h := range raw {
@@ -68,7 +70,28 @@ func (a *app) handleGeocode(w http.ResponseWriter, r *http.Request) {
 		if e1 != nil || e2 != nil {
 			continue
 		}
-		out = append(out, hit{Name: h.DisplayName, Lat: lat, Lng: lng})
+		out = append(out, hit{Name: h.DisplayName, Lat: lat, Lng: lng, BBox: nominatimBBox(h.BoundingBox)})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// nominatimBBox reorders Nominatim's [south, north, west, east] strings into
+// this app's [south, west, north, east]; nil if any part is missing or off.
+func nominatimBBox(raw []string) bbox {
+	if len(raw) != 4 {
+		return nil
+	}
+	var f [4]float64
+	for i, s := range raw {
+		v, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return nil
+		}
+		f[i] = v
+	}
+	b := bbox{f[0], f[2], f[1], f[3]}
+	if !b.valid() {
+		return nil
+	}
+	return b
 }

@@ -82,6 +82,7 @@ type holidayOut struct {
 	DestName      string  `json:"dest_name"`
 	DestLat       float64 `json:"dest_lat"`
 	DestLng       float64 `json:"dest_lng"`
+	DestBBox      bbox    `json:"dest_bbox"` // [s,w,n,e] or null
 }
 
 func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +103,7 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 		       EXISTS (SELECT 1 FROM shares s WHERE s.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id AND pi.checked = 1),
-		       h.dest_name, h.dest_lat, h.dest_lng, h.planned
+		       h.dest_name, h.dest_lat, h.dest_lng, h.planned, h.dest_bbox
 		FROM holidays h ORDER BY h.start_at DESC`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
@@ -112,10 +113,12 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 	out := []holidayOut{}
 	for rows.Next() {
 		var h holidayOut
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned); err != nil {
+		var box string
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned, &box); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
+		h.DestBBox = loadBBox(box)
 		h.Active = h.EndAt == nil && !h.Planned
 		out = append(out, h)
 	}
@@ -131,6 +134,7 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 		DestName string  `json:"dest_name"` // optional destination (from place search or typed coords)
 		DestLat  float64 `json:"dest_lat"`
 		DestLng  float64 `json:"dest_lng"`
+		DestBBox bbox    `json:"dest_bbox"` // optional [s,w,n,e] from place search
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -175,16 +179,13 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 		s := t.Format(time.RFC3339)
 		endAt = &s
 	}
-	req.DestName = truncate(strings.TrimSpace(req.DestName), 120)
-	if req.DestName != "" && (req.DestLat < -90 || req.DestLat > 90 || req.DestLng < -180 || req.DestLng > 180) {
-		httpError(w, http.StatusBadRequest, "invalid destination coordinates")
+	destName, destLat, destLng, destBox, bad := cleanDest(req.DestName, req.DestLat, req.DestLng, req.DestBBox)
+	if bad != "" {
+		httpError(w, http.StatusBadRequest, bad)
 		return
 	}
-	if req.DestName == "" {
-		req.DestLat, req.DestLng = 0, 0
-	}
-	res, err := a.db.Exec(`INSERT INTO holidays (name, color, start_at, end_at, dest_name, dest_lat, dest_lng, planned) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.Name, req.Color, start.Format(time.RFC3339), endAt, req.DestName, req.DestLat, req.DestLng, planned)
+	res, err := a.db.Exec(`INSERT INTO holidays (name, color, start_at, end_at, dest_name, dest_lat, dest_lng, dest_bbox, planned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.Name, req.Color, start.Format(time.RFC3339), endAt, destName, destLat, destLng, destBox, planned)
 	if err != nil {
 		httpError(w, http.StatusConflict, "a holiday is already active — end it first")
 		return
@@ -193,7 +194,7 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, holidayOut{
 		ID: id, Name: req.Name, Color: req.Color,
 		StartAt: start.Format(time.RFC3339), EndAt: endAt, Active: endAt == nil && !planned, Planned: planned,
-		DestName: req.DestName, DestLat: req.DestLat, DestLng: req.DestLng,
+		DestName: destName, DestLat: destLat, DestLng: destLng, DestBBox: loadBBox(destBox),
 	})
 }
 
@@ -246,9 +247,26 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 		EndAt      *string `json:"end_at"`
 		Journal    *string `json:"journal"`
 		CoverAsset *string `json:"cover_asset"`
+		// dest_name present = set the destination ("" removes it); the
+		// point and box travel with it and are ignored without it
+		DestName *string `json:"dest_name"`
+		DestLat  float64 `json:"dest_lat"`
+		DestLng  float64 `json:"dest_lng"`
+		DestBBox bbox    `json:"dest_bbox"`
 	}
 	if !readJSON(w, r, &req) {
 		return
+	}
+	// Checked before anything is written, like the dates below.
+	var destName, destBox string
+	var destLat, destLng float64
+	if req.DestName != nil {
+		var bad string
+		destName, destLat, destLng, destBox, bad = cleanDest(*req.DestName, req.DestLat, req.DestLng, req.DestBBox)
+		if bad != "" {
+			httpError(w, http.StatusBadRequest, bad)
+			return
+		}
 	}
 	if req.StartAt != nil || req.EndAt != nil {
 		// Either end can move, so check the order against whichever side
@@ -305,6 +323,10 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Journal != nil {
 		a.db.Exec(`UPDATE holidays SET journal = ? WHERE id = ?`, *req.Journal, id)
+	}
+	if req.DestName != nil {
+		a.db.Exec(`UPDATE holidays SET dest_name = ?, dest_lat = ?, dest_lng = ?, dest_bbox = ? WHERE id = ?`,
+			destName, destLat, destLng, destBox, id)
 	}
 	if req.CoverAsset != nil {
 		// Empty clears the choice; otherwise the cover must be a photo from
@@ -756,11 +778,12 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		DestName   string       `json:"dest_name"`
 		DestLat    float64      `json:"dest_lat"`
 		DestLng    float64      `json:"dest_lng"`
+		DestBBox   bbox         `json:"dest_bbox"`
 		Pins       []*pinExp    `json:"pins"`
 		Packing    []packingExp `json:"packing"`
 	}
 
-	rows, err := a.db.Query(`SELECT id, name, color, start_at, end_at, journal, cover_asset, dest_name, dest_lat, dest_lng FROM holidays ORDER BY start_at`)
+	rows, err := a.db.Query(`SELECT id, name, color, start_at, end_at, journal, cover_asset, dest_name, dest_lat, dest_lng, dest_bbox FROM holidays ORDER BY start_at`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
@@ -770,10 +793,12 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 	byHoliday := map[int64]*holidayExp{}
 	for rows.Next() {
 		h := &holidayExp{Pins: []*pinExp{}, Packing: []packingExp{}}
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.DestName, &h.DestLat, &h.DestLng); err != nil {
+		var box string
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.DestName, &h.DestLat, &h.DestLng, &box); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
+		h.DestBBox = loadBBox(box)
 		holidays = append(holidays, h)
 		byHoliday[h.ID] = h
 	}
