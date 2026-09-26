@@ -29,11 +29,13 @@ type app struct {
 	immich       *immichClient
 	limiter      *loginLimiter
 	cookieSecure bool
-	syncMu       sync.Mutex // serializes actual sync work against Immich
-	stateMu      sync.Mutex // guards lastSync, syncDone + syncOK
+	syncMu       sync.Mutex    // serializes actual sync work against Immich
+	stateMu      sync.Mutex    // guards lastSync, syncDone + syncOK
 	syncDone     chan struct{} // non-nil while a background sync runs; closed when it ends
 	syncOK       bool          // how the last background sync ended
 	lastSync     map[int64]time.Time
+	areaMu       sync.Mutex
+	areas        map[int64]cachedArea // parsed destination outlines, by holiday id
 }
 
 // version is stamped by release builds via -ldflags "-X main.version=v1.x.x";
@@ -76,6 +78,7 @@ func main() {
 	mux := http.NewServeMux()
 	a.accountRoutes(mux)
 
+	mux.HandleFunc("GET /api/map", a.auth(a.handleMap))
 	mux.HandleFunc("GET /api/holidays", a.auth(a.handleListHolidays))
 	mux.HandleFunc("POST /api/holidays", a.auth(a.handleCreateHoliday))
 	mux.HandleFunc("POST /api/holidays/{id}/end", a.auth(a.handleEndHoliday))

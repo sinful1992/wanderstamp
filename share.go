@@ -154,5 +154,6 @@ func (a *app) handleSharePhoto(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "unknown photo")
 		return
 	}
-	a.streamPhoto(w, r, assetID)
+	// a day, not for good: revoking the link should stop the photos too
+	a.streamPhoto(w, r, assetID, "private, max-age=86400")
 }

@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
@@ -254,5 +256,19 @@ func TestRemoveAccountKeepsTheirTrips(t *testing.T) {
 	want(t, "trips left", trips, 1)
 	if _, ok := f.list("dad")["kid"]; ok {
 		t.Error("kid still listed")
+	}
+}
+
+func TestWrongCurrentPasswordIsNotASignOut(t *testing.T) {
+	a := newTestApp(t)
+	hash, _ := bcrypt.GenerateFromPassword([]byte("right-password"), bcrypt.MinCost)
+	a.db.Exec(`INSERT INTO users (id, username, password_hash) VALUES (1, 'ada', ?)`, string(hash))
+	req := httptest.NewRequest("POST", "/api/password", strings.NewReader(`{"current_password":"wrong-password","new_password":"another-password"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, sessionUser{ID: 1, Username: "ada"}))
+	rec := httptest.NewRecorder()
+	a.handleChangePassword(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("wrong current password: got %d, want 403 (401 means signed out to the page)", rec.Code)
 	}
 }

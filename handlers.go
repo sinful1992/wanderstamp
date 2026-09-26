@@ -100,13 +100,49 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 	// A countdown that reached zero goes live the moment anyone looks,
 	// rather than waiting up to an hour for housekeeping.
 	a.promotePlanned()
-	// pins first: the database has one connection, so a second query can't
-	// run while the holidays rows below are still open
 	pins, err := a.queryPins(0)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
 	}
+	out, err := a.listHolidays(pins)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleMap is everything the map opens with, in one round trip: who is
+// signed in, every trip and every pin. The pins are queried once and serve
+// both the pin list and the trips' counts and arrivals.
+func (a *app) handleMap(w http.ResponseWriter, r *http.Request) {
+	a.promotePlanned()
+	if a.maybeSyncActive() {
+		w.Header().Set("X-Photo-Sync", "running")
+	}
+	pins, err := a.queryPins(0)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	holidays, err := a.listHolidays(pins)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"me":       meOut(r.Context().Value(userKey).(sessionUser)),
+		"holidays": holidays,
+		"pins":     pins,
+	})
+}
+
+// listHolidays builds the trip list from pins the caller already loaded
+// (the database has one connection, so they can't be read while the
+// holidays rows below are open). Pin and photo counts come from those pins
+// rather than two more subqueries per trip.
+func (a *app) listHolidays(pins []pinOut) ([]holidayOut, error) {
 	byTrip := map[int64][]pinOut{}
 	for _, p := range pins {
 		byTrip[p.HolidayID] = append(byTrip[p.HolidayID], p)
@@ -119,34 +155,47 @@ func (a *app) handleListHolidays(w http.ResponseWriter, r *http.Request) {
 		                 WHERE up.holiday_id = h.id AND up.asset_id = h.cover_asset),
 		                (SELECT pp.asset_id FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
 		                 WHERE p.holiday_id = h.id ORDER BY pp.taken_at LIMIT 1), ''),
-		       (SELECT COUNT(*) FROM pins p WHERE p.holiday_id = h.id),
-		       (SELECT COUNT(*) FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id WHERE p.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM unplaced_photos up WHERE up.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
 		        WHERE p.holiday_id = h.id AND pp.ask = 1),
 		       EXISTS (SELECT 1 FROM shares s WHERE s.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id AND pi.checked = 1),
-		       h.dest_name, h.dest_lat, h.dest_lng, h.planned, h.dest_area
+		       h.dest_name, h.dest_lat, h.dest_lng, h.planned, length(h.dest_area)
 		FROM holidays h ORDER BY h.start_at DESC`)
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "database error")
-		return
+		return nil, err
 	}
-	defer rows.Close()
 	out := []holidayOut{}
+	areaLen := map[int64]int{}
 	for rows.Next() {
 		var h holidayOut
-		var box string
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.UnplacedCount, &h.AskCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned, &box); err != nil {
-			httpError(w, http.StatusInternalServerError, "database error")
-			return
+		var n int
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.UnplacedCount, &h.AskCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned, &n); err != nil {
+			rows.Close()
+			return nil, err
 		}
-		h.arrive(box, byTrip[h.ID])
+		for _, p := range byTrip[h.ID] {
+			h.PinCount++
+			h.PhotoCount += p.PhotoCount
+		}
 		h.Active = h.EndAt == nil && !h.Planned
+		areaLen[h.ID] = n
 		out = append(out, h)
 	}
-	writeJSON(w, http.StatusOK, out)
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// outlines only after the rows are closed: a cache miss reads one
+	for i := range out {
+		h := &out[i]
+		h.DestArea = areaLen[h.ID] > 0
+		if h.DestName != "" {
+			h.ArrivalPin = arrivalPin(h.DestLat, h.DestLng, a.cachedArea(h.ID, areaLen[h.ID]), byTrip[h.ID])
+		}
+	}
+	return out, nil
 }
 
 func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
@@ -354,6 +403,7 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 		// the old outline along with the old point
 		a.db.Exec(`UPDATE holidays SET dest_name = ?, dest_lat = ?, dest_lng = ?, dest_area = ?, dest_bbox = '' WHERE id = ?`,
 			destName, destLat, destLng, resolveArea(r.Context(), destName, req.DestOSM), id)
+		a.forgetArea(id)
 	}
 	if req.CoverAsset != nil {
 		// Empty clears the choice; otherwise the cover must be a photo from
@@ -402,6 +452,7 @@ func (a *app) handleDeleteHoliday(w http.ResponseWriter, r *http.Request) {
 	a.stateMu.Lock()
 	delete(a.lastSync, id)
 	a.stateMu.Unlock()
+	a.forgetArea(id)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

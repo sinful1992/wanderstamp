@@ -192,13 +192,16 @@ func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) handleMe(w http.ResponseWriter, r *http.Request) {
-	u := r.Context().Value(userKey).(sessionUser)
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusOK, meOut(r.Context().Value(userKey).(sessionUser)))
+}
+
+func meOut(u sessionUser) map[string]any {
+	return map[string]any{
 		"username":             u.Username,
 		"is_admin":             u.IsAdmin,
 		"must_change_password": u.MustChange,
 		"version":              version,
-	})
+	}
 }
 
 func (a *app) handleCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -258,7 +261,9 @@ func (a *app) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.CurrentPassword)) != nil {
-		httpError(w, http.StatusUnauthorized, "current password is wrong")
+		// 403, not 401: the session is fine, and a 401 sends the page to the
+		// sign-in cover instead of saying the password was mistyped
+		httpError(w, http.StatusForbidden, "current password is wrong")
 		return
 	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcryptCost)

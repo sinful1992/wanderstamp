@@ -664,12 +664,13 @@ func (a *app) handlePhoto(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "unknown photo")
 		return
 	}
-	a.streamPhoto(w, r, assetID)
+	// an asset id never changes what it shows, so the browser keeps it
+	a.streamPhoto(w, r, assetID, "private, max-age=31536000, immutable")
 }
 
 // streamPhoto proxies one Immich asset. Callers must have authorized the
 // asset already — this only translates kind → Immich URL and streams.
-func (a *app) streamPhoto(w http.ResponseWriter, r *http.Request, assetID string) {
+func (a *app) streamPhoto(w http.ResponseWriter, r *http.Request, assetID, cacheControl string) {
 	suffix, ok := photoSizes[r.PathValue("kind")]
 	if !ok {
 		httpError(w, http.StatusBadRequest, "bad request")
@@ -694,6 +695,6 @@ func (a *app) streamPhoto(w http.ResponseWriter, r *http.Request, assetID string
 	if cl := resp.Header.Get("Content-Length"); cl != "" {
 		w.Header().Set("Content-Length", cl)
 	}
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("Cache-Control", cacheControl)
 	io.Copy(w, resp.Body)
 }

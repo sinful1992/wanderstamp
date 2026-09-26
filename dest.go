@@ -188,6 +188,45 @@ func loadArea(s string) area {
 	return a
 }
 
+// cachedArea is a parsed outline and the length of the JSON it came from.
+// A country outline is up to ~80 KB, so the trip list reads and parses one
+// only when it changed: forgetArea on every write, and the stored length as
+// a second check should a write ever miss it.
+type cachedArea struct {
+	n    int
+	area area
+}
+
+func (a *app) cachedArea(id int64, n int) area {
+	if n == 0 {
+		return nil
+	}
+	a.areaMu.Lock()
+	c, ok := a.areas[id]
+	a.areaMu.Unlock()
+	if ok && c.n == n {
+		return c.area
+	}
+	var s string
+	if a.db.QueryRow(`SELECT dest_area FROM holidays WHERE id = ?`, id).Scan(&s) != nil {
+		return nil
+	}
+	c = cachedArea{n: len(s), area: loadArea(s)}
+	a.areaMu.Lock()
+	if a.areas == nil {
+		a.areas = map[int64]cachedArea{}
+	}
+	a.areas[id] = c
+	a.areaMu.Unlock()
+	return c.area
+}
+
+func (a *app) forgetArea(id int64) {
+	a.areaMu.Lock()
+	delete(a.areas, id)
+	a.areaMu.Unlock()
+}
+
 // nominatimBase is swapped for a local server in tests.
 var nominatimBase = "https://nominatim.openstreetmap.org"
 
