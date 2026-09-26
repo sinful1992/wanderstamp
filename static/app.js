@@ -272,7 +272,25 @@ function renderAll(fit) {
 }
 
 function visiblePins() {
-  return state.pins.filter((p) => !state.hidden.has(p.holiday_id));
+  return mapPins(state.pins.filter((p) => !state.hidden.has(p.holiday_id)));
+}
+
+// Photos taken on the way there get no pin on the map — otherwise every trip
+// would open with a cluster of photo prints around home. They keep their
+// chapters in the story's way leg, and a pin placed by hand on the way stays.
+function wayPhotoIds() {
+  const ids = new Set();
+  for (const h of state.holidays) {
+    if (!hasDest(h)) continue;
+    const pins = state.pins.filter((p) => p.holiday_id === h.id).sort(byVisit);
+    for (const p of journey(h, pins).way) if (p.kind === "photo") ids.add(p.id);
+  }
+  return ids;
+}
+
+function mapPins(pins) {
+  const way = wayPhotoIds();
+  return pins.filter((p) => !way.has(p.id));
 }
 
 function byVisit(a, b) {
@@ -638,9 +656,13 @@ function openStory(h, pinId) {
   for (const pin of pins) {
     if (j.arrived && pin === j.stay[0]) leg(`Arrived at ${destShort(h)}`, "leg-arrived");
     const sec = el("section", "story-sec");
-    if (j.way.includes(pin)) sec.classList.add("on-the-way");
-    sec.dataset.lat = pin.lat;
-    sec.dataset.lng = pin.lng;
+    const way = j.way.includes(pin);
+    if (way) sec.classList.add("on-the-way");
+    // a way-there photo has no pin to fly to, so the scroll sync steps over it
+    if (!(way && pin.kind === "photo")) {
+      sec.dataset.lat = pin.lat;
+      sec.dataset.lng = pin.lng;
+    }
     sec.dataset.pinId = pin.id;
     const dayN = Math.max(1, Math.floor((new Date(pin.visited_at) - new Date(h.start_at)) / 86400000) + 1);
     sec.appendChild(el("p", "story-day", `Day ${dayN} · ${fmtDate(pin.visited_at)}`));
@@ -1158,7 +1180,7 @@ function renderSheet() {
         setFocus(null);
         return;
       }
-      const pts = state.pins.filter((p) => p.holiday_id === h.id).map((p) => [p.lat, p.lng]);
+      const pts = mapPins(state.pins.filter((p) => p.holiday_id === h.id)).map((p) => [p.lat, p.lng]);
       if (pts.length && h.dest_name) pts.push([h.dest_lat, h.dest_lng]); // the whole journey, there and about
       if (pts.length) {
         setFocus(h.id);

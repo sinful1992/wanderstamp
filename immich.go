@@ -26,8 +26,9 @@ const (
 	// map load triggers a re-sync.
 	syncInterval = 10 * time.Minute
 	// manualPinKM is how close a photo must be to a pin placed by hand to be
-	// filed on it: a hotel or a castle's grounds, not the whole town.
-	manualPinKM = 0.4
+	// filed on it: the hotel and its grounds, with room for a poor indoor GPS
+	// fix (a hotel restaurant photo placed 600 m off), but not the whole town.
+	manualPinKM = 1.0
 )
 
 type immichClient struct {
