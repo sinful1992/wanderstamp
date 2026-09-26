@@ -80,9 +80,10 @@ func (a *app) handleShareData(w http.ResponseWriter, r *http.Request) {
 		                 WHERE p.holiday_id = h.id ORDER BY pp.taken_at LIMIT 1), ''),
 		       (SELECT COUNT(*) FROM pins p WHERE p.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id WHERE p.holiday_id = h.id),
-		       h.planned
+		       h.planned, h.dest_name, h.dest_lat, h.dest_lng
 		FROM holidays h WHERE h.id = ?`, hid).
-		Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.Planned)
+		Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.PinCount, &h.PhotoCount, &h.Planned,
+			&h.DestName, &h.DestLat, &h.DestLng)
 	if err != nil {
 		httpError(w, http.StatusNotFound, "this share link is no longer active")
 		return

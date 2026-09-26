@@ -12,6 +12,7 @@ const state = {
   hidden: new Set(),      // holiday ids toggled off
   markers: new Map(),  // pin key -> Leaflet marker, reconciled in renderMarkers
   routes: [],             // one dotted itinerary line per visible trip
+  dests: new Map(),       // holiday id -> destination stamp marker
   focused: null,          // holiday id spotlit by tapping its trip row
   placing: false,
   didFit: false,
@@ -257,7 +258,49 @@ function byVisit(a, b) {
 
 function fitAll() {
   const pts = visiblePins().map((p) => [p.lat, p.lng]);
+  // where a live or planned trip is headed belongs in the opening view too
+  for (const h of state.holidays) {
+    if (hasDest(h) && !h.end_at && !state.hidden.has(h.id)) pts.push([h.dest_lat, h.dest_lng]);
+  }
   if (pts.length) map.fitBounds(pts, { padding: [50, 50], maxZoom: 12 });
+}
+
+/* ---------- the journey: the way there, then the trip itself ---------- */
+
+// A pin this close to the destination counts as having arrived: the car park,
+// the hotel across town. Kept tight on purpose — Warwick Services on the M40
+// is 8.5 km from the castle, and a services stop is still the drive.
+const ARRIVE_KM = 5;
+
+function hasDest(h) {
+  return !!(h && h.dest_name);
+}
+
+// The destination's own name: "Warwick Castle, Castle Hill, …" -> "Warwick Castle".
+function destShort(h) {
+  return h.dest_name.split(",")[0].trim();
+}
+
+function kmBetween(a, b) {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(x));
+}
+
+// Splits a trip's pins (in visit order) at the first one that reached the
+// destination. Everything before it was on the way there. A live trip that
+// hasn't arrived is still on the way; a finished trip that never pinned near
+// its destination isn't split at all — its destination was a region, or the
+// plans changed, and calling the whole trip "on the way" would be wrong.
+function journey(h, pins) {
+  const none = { way: [], stay: pins, arrived: false, enRoute: false };
+  if (!hasDest(h)) return none;
+  const dest = { lat: h.dest_lat, lng: h.dest_lng };
+  const i = pins.findIndex((p) => kmBetween(p, dest) <= ARRIVE_KM);
+  if (i >= 0) return { way: pins.slice(0, i), stay: pins.slice(i), arrived: true, enRoute: false };
+  if (h.active) return { way: pins, stay: [], arrived: false, enRoute: true };
+  return none;
 }
 
 /* ---------- markers ---------- */
@@ -361,22 +404,88 @@ function renderMarkers() {
   // added after the fact still land in the right leg of the journey). Lines
   // render in Leaflet's overlay pane, under the marker pane — photo prints
   // always sit on top of the ink. Cheap to rebuild, so they still are.
+  //
+  // A trip with a destination draws the way there differently: long road
+  // dashes up to the pin that arrived, the usual dots from there on, and
+  // while a live trip is still travelling, a faint dash from the last stop
+  // to the destination stamp — the part of the drive still to go.
   for (const r of state.routes) r.remove();
   state.routes = [];
-  for (const [hid, pins] of byTrip) {
-    if (pins.length < 2) continue;
+  const draw = (hid, latlngs, cls, dash) => {
+    if (latlngs.length < 2) return;
     const h = holidayById(hid);
-    pins.sort(byVisit);
-    const line = L.polyline(pins.map((p) => [p.lat, p.lng]), {
+    const line = L.polyline(latlngs, {
       color: h ? h.color : "#666",
-      weight: 2.5, dashArray: "1 9", lineCap: "round", opacity: 0.8,
+      weight: 2.5, dashArray: dash, lineCap: "round", opacity: 0.8,
       interactive: false, // never steal taps from pins or the map
-      className: "route-line",
+      className: "route-line " + cls,
     }).addTo(map);
     line.tripId = hid;
     state.routes.push(line);
+  };
+  const at = (p) => [p.lat, p.lng];
+  for (const [hid, pins] of byTrip) {
+    pins.sort(byVisit);
+    const h = holidayById(hid);
+    const j = journey(h, pins);
+    // the way-there line runs into the arrival pin, so the two legs join
+    draw(hid, [...j.way, ...j.stay.slice(0, 1)].map(at), "route-way", "7 8");
+    draw(hid, j.stay.map(at), "route-stay", "1 9");
+    if (j.enRoute && pins.length) draw(hid, [at(pins[pins.length - 1]), [h.dest_lat, h.dest_lng]], "route-ahead", "7 8");
   }
+  renderDests();
   applyFocus();
+}
+
+/* ---------- destination stamps ---------- */
+
+// Where a trip is headed, from the place picked when it was started. It's
+// drawn from the trip itself rather than stored as a pin: a pin would become
+// chapter one of the story and the first stop of the route. The stamp is
+// dashed until a pin lands near it, then it's inked: arrived.
+function destIcon(h, arrived) {
+  const div = el("div", "dest-stamp" + (arrived ? " arrived" : ""));
+  div.style.setProperty("--c", h.color);
+  div.appendChild(el("span", "ring"));
+  div.appendChild(el("span", "dest-name", destShort(h)));
+  return L.divIcon({ html: div.outerHTML, iconSize: [30, 30], iconAnchor: [15, 15] });
+}
+
+function renderDests() {
+  const want = new Map();
+  for (const h of state.holidays) {
+    if (!hasDest(h) || state.hidden.has(h.id)) continue;
+    const pins = state.pins.filter((p) => p.holiday_id === h.id).sort(byVisit);
+    want.set(h.id, { h, arrived: journey(h, pins).arrived });
+  }
+  for (const [hid, m] of state.dests) {
+    if (!want.has(hid)) { m.remove(); state.dests.delete(hid); }
+  }
+  for (const [hid, { h, arrived }] of want) {
+    const sig = [h.color, h.dest_name, h.dest_lat, h.dest_lng, arrived].join("|");
+    let m = state.dests.get(hid);
+    if (!m) {
+      m = L.marker([h.dest_lat, h.dest_lng], {
+        icon: destIcon(h, arrived),
+        zIndexOffset: -500, // the trip's own pins sit on top of its stamp
+        keyboard: false,
+        title: h.dest_name,
+      }).addTo(map);
+      m.tripId = hid;
+      m.isDest = true;
+      m.on("click", (e) => {
+        // pin mode: the stamp mustn't swallow the tap that pins "we're here"
+        if (state.placing) { placePin(e.latlng); return; }
+        const owner = holidayById(m.tripId);
+        if (owner) openStory(owner, "dest");
+      });
+      state.dests.set(hid, m);
+    } else if (m.sig !== sig) {
+      m.setLatLng([h.dest_lat, h.dest_lng]);
+      m.setIcon(destIcon(h, arrived));
+    }
+    m.sig = sig;
+  }
 }
 
 function pendingIcon(color) {
@@ -407,11 +516,15 @@ function openPendingPopup(qp) {
 // pins keep their position and don't replay the pop-in animation.
 function applyFocus() {
   const activePin = story.activeEl ? story.activeEl.dataset.pinId : null;
-  for (const layer of [...state.markers.values(), ...state.routes]) {
+  const activeDest = story.activeEl ? story.activeEl.dataset.dest : null;
+  for (const layer of [...state.markers.values(), ...state.routes, ...state.dests.values()]) {
     const elm = layer.getElement && layer.getElement();
     if (!elm) continue;
     elm.classList.toggle("dimmed", state.focused !== null && layer.tripId !== state.focused);
-    elm.classList.toggle("story-active", activePin !== null && String(layer.pinId) === activePin);
+    const lit = layer.isDest
+      ? activeDest != null && String(layer.tripId) === activeDest
+      : activePin != null && String(layer.pinId) === activePin;
+    elm.classList.toggle("story-active", lit);
   }
 }
 
@@ -485,14 +598,22 @@ function openStory(h, pinId) {
   document.body.classList.add("storying");
   setSheet(false);
   $("story-title").textContent = h.name;
+  $("story").style.setProperty("--c", h.color); // the cover bar's edge and the leg marks
   const scroll = $("story-scroll");
   scroll.textContent = "";
   scroll.scrollTop = 0;
 
   const pins = state.pins.filter((p) => p.holiday_id === h.id).sort(byVisit);
+  const j = journey(h, pins);
   const secs = [];
+  // Leg headings mark where the drive ends and the trip begins. They carry no
+  // coordinates, so the scroll sync steps over them.
+  const leg = (text, cls) => scroll.appendChild(el("h4", "story-leg " + cls, text));
+  if (j.way.length) leg(j.arrived ? `The way to ${destShort(h)}` : `On the way to ${destShort(h)}`, "leg-way");
   for (const pin of pins) {
+    if (j.arrived && pin === j.stay[0]) leg(`Arrived at ${destShort(h)}`, "leg-arrived");
     const sec = el("section", "story-sec");
+    if (j.way.includes(pin)) sec.classList.add("on-the-way");
     sec.dataset.lat = pin.lat;
     sec.dataset.lng = pin.lng;
     sec.dataset.pinId = pin.id;
@@ -544,6 +665,24 @@ function openStory(h, pinId) {
     scroll.appendChild(sec);
     secs.push(sec);
   }
+  // Not there yet: the destination closes the story as the chapter still to
+  // come, so a live or planned trip always shows where it's going.
+  if (hasDest(h) && !j.arrived && !h.end_at) {
+    const sec = el("section", "story-sec story-ahead");
+    sec.dataset.lat = h.dest_lat;
+    sec.dataset.lng = h.dest_lng;
+    sec.dataset.dest = h.id;
+    const last = pins[pins.length - 1];
+    const label = h.planned ? countdown(h)
+      : last ? `Still to go · ${Math.round(kmBetween(last, { lat: h.dest_lat, lng: h.dest_lng }))} km as the crow flies`
+      : "Heading here";
+    sec.appendChild(el("p", "story-day", label));
+    sec.appendChild(el("h3", "story-place", destShort(h)));
+    if (h.dest_name !== destShort(h)) sec.appendChild(el("p", "story-dest-full", h.dest_name));
+    sec.onclick = () => activateSection(sec);
+    scroll.appendChild(sec);
+    secs.push(sec);
+  }
   if (h.journal) {
     const sec = el("section", "story-sec");
     sec.appendChild(el("h3", "story-place", "Journal"));
@@ -570,13 +709,19 @@ function openStory(h, pinId) {
     for (const e of entries) if (e.isIntersecting) { loadStoryPhotos(e.target); story.loadObserver.unobserve(e.target); }
   }, { root: scroll, rootMargin: "600px 0px" });
   for (const s of secs) story.loadObserver.observe(s);
-  const target = pinId != null && secs.find((s) => s.dataset.pinId === String(pinId));
+  // "dest" = opened from the destination stamp: its chapter if the trip is
+  // still heading there, otherwise the arrival
+  const target = pinId === "dest"
+    ? secs.find((s) => s.dataset.dest) || secs.find((s) => j.stay[0] && s.dataset.pinId === String(j.stay[0].id))
+    : pinId != null && secs.find((s) => s.dataset.pinId === String(pinId));
   if (target) {
     // Jump straight to the tapped pin's chapter. The scroll this causes must
     // not re-derive the active chapter (a bottom-clamped scroll would pick a
     // later one), so the sync handler holds off briefly.
     story.holdUntil = performance.now() + 600;
-    scroll.scrollTop = Math.max(0, target.offsetTop - scroll.offsetTop - 8);
+    // a leg heading just above the chapter comes into view with it
+    const top = target.previousElementSibling?.classList.contains("story-leg") ? target.previousElementSibling : target;
+    scroll.scrollTop = Math.max(0, top.offsetTop - scroll.offsetTop - 8);
     activateSection(target);
   } else if (secs.length) {
     onStoryScroll();
@@ -592,7 +737,8 @@ function refreshStory() {
   if (!h) { closeStory(); return; }
   const sc = $("story-scroll");
   const keep = sc.scrollTop;
-  const activePin = story.activeEl ? story.activeEl.dataset.pinId : null;
+  const act = story.activeEl;
+  const activePin = act ? (act.dataset.dest ? "dest" : act.dataset.pinId) : null;
   story.holdUntil = performance.now() + 600; // gates openStory's own sync call
   openStory(h, activePin);
   story.holdUntil = performance.now() + 600;
@@ -987,6 +1133,7 @@ function renderSheet() {
         return;
       }
       const pts = state.pins.filter((p) => p.holiday_id === h.id).map((p) => [p.lat, p.lng]);
+      if (pts.length && h.dest_name) pts.push([h.dest_lat, h.dest_lng]); // the whole journey, there and about
       if (pts.length) {
         setFocus(h.id);
         map.fitBounds(pts, { padding: [50, 50], maxZoom: 13 });

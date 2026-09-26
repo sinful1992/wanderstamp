@@ -138,6 +138,8 @@ button { font: inherit; cursor: pointer; }
 .route-line { transition: opacity .18s ease; }
 #map[data-zoom="mid"] .route-line { opacity: .75; }
 #map[data-zoom="near"] .route-line { opacity: .55; }
+/* the stretch of a live trip's drive still to go, last stop to destination */
+#map[data-zoom] .route-ahead { opacity: .4; }
 
 /* focus: tapping a trip row spotlights it — everyone else's ink and pins
    fade back into the paper until the map (or the row) is tapped again */
@@ -167,6 +169,44 @@ button { font: inherit; cursor: pointer; }
   box-shadow: none;
 }
 .leaflet-div-icon { background: none; border: none; }
+
+/* destination stamp: where a trip is headed. An un-inked passport stamp,
+   dashed, until a pin lands near it — then it's struck, solid and askew.
+   The place name rides beside it at region zoom and closer. */
+.dest-stamp { position: relative; width: 30px; height: 30px; }
+.dest-stamp .ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 2px dashed var(--c, #1d6fb8);
+  background: color-mix(in srgb, var(--paper) 70%, transparent);
+  transition: scale .15s ease-out;
+}
+.dest-stamp .ring::after {
+  content: ""; position: absolute; inset: 4px; border-radius: 50%;
+  border: 1px solid var(--c, #1d6fb8);
+}
+.dest-stamp .ring::before {
+  content: ""; position: absolute; inset: 11px; border-radius: 50%;
+  background: var(--c, #1d6fb8);
+}
+.dest-stamp.arrived .ring {
+  border-style: solid; rotate: -10deg;
+  background: color-mix(in srgb, var(--c, #1d6fb8) 16%, var(--paper));
+}
+.dest-name {
+  position: absolute; left: 36px; top: 50%; translate: 0 -50%;
+  white-space: nowrap; pointer-events: none;
+  padding: 2px 7px 1px; border-radius: 2px;
+  background: var(--paper); color: var(--ink-paper);
+  border-left: 3px solid var(--c, #1d6fb8);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .3);
+  font-family: var(--stamp); font-size: 14px; letter-spacing: 1.2px; text-transform: uppercase;
+}
+#map[data-zoom="far"] .dest-name { display: none; }
+#map[data-zoom="far"] .dest-stamp .ring { inset: 7px; }
+#map[data-zoom="far"] .dest-stamp .ring::after,
+#map[data-zoom="far"] .dest-stamp .ring::before { display: none; }
+.leaflet-marker-icon:hover .dest-stamp .ring { scale: 1.12; }
+.leaflet-marker-icon.story-active .dest-stamp .ring { scale: 1.3; }
 
 /* Leaflet chrome on paper */
 .leaflet-bar a {
@@ -917,6 +957,35 @@ button.linkish, a.linkish {
 }
 .story-more:hover:not(:disabled) { border-color: var(--muted); color: var(--ink); }
 .story-more:disabled { opacity: .5; cursor: default; }
+
+/* Leg headings: where the drive ends and the trip begins. Each carries the
+   map's own mark for that leg — road dashes for the way there, the stamp's
+   ring for the arrival — so the story reads as a key to the lines. */
+.story-leg {
+  display: flex; align-items: center; gap: 9px;
+  margin: 0; padding: 16px 2px 2px;
+  font-family: var(--stamp); font-size: 14px; font-weight: 400;
+  letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted);
+}
+.story-leg::before { content: ""; flex: none; }
+.leg-way::before { width: 22px; border-top: 2.5px dashed var(--c, #1d6fb8); }
+.leg-arrived::before {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--c, #1d6fb8); rotate: -10deg;
+  background: color-mix(in srgb, var(--c, #1d6fb8) 16%, var(--paper));
+}
+.leg-arrived { color: var(--ink); }
+/* the way-there chapters keep the road dashes down their edge; the active
+   one turns them gold like any other chapter */
+.story-sec.on-the-way { border-left: 3px dashed color-mix(in srgb, var(--c, #1d6fb8) 45%, transparent); padding-left: 10px; }
+.story-sec.on-the-way.active { border-left-color: var(--gold); }
+/* the destination, still to come */
+.story-ahead .story-place { display: flex; align-items: center; gap: 8px; }
+.story-ahead .story-place::before {
+  content: ""; flex: none; width: 12px; height: 12px; border-radius: 50%;
+  border: 2px dashed var(--c, #1d6fb8);
+}
+.story-dest-full { margin: 0; font-size: 13px; color: var(--muted); }
 
 /* the sheet and fabs would collide with (or hide behind) the panel */
 body.storying #sheet, body.storying #fabs { display: none; }
