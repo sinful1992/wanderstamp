@@ -118,6 +118,21 @@ button { font: inherit; cursor: pointer; }
   font-family: var(--stamp); font-size: 12px; line-height: 19px; text-align: center;
   box-shadow: 0 0 0 2px #fffdf7;
 }
+/* a hand pin carrying photos: the manual pushpin's head, shrunk, stuck
+   through the print's top-left corner (tip pointing into the photo) */
+.hand-mark {
+  position: absolute; left: -6px; top: -7px; z-index: 1;
+  width: 14px; height: 14px; border-radius: 50% 50% 0 50%;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255,255,255,.35), transparent 55%),
+    var(--c, #1d6fb8);
+  border: 1.5px solid #fffdf7;
+  box-shadow: 0 1px 3px rgba(0,0,0,.4);
+}
+.hand-mark::after {
+  content: ""; position: absolute; inset: 3.5px;
+  border-radius: 50%; background: #fffdf7;
+}
 .leaflet-marker-icon:hover .print { scale: 1.15; }
 
 /* zoom tiers (data-zoom set by app.js): region zoom shrinks the prints,
@@ -125,6 +140,10 @@ button { font: inherit; cursor: pointer; }
 #map[data-zoom="mid"] .print { width: 30px; height: 25px; border-radius: 6px; }
 #map[data-zoom="mid"] .badge-count,
 #map[data-zoom="far"] .badge-count { display: none; }
+/* the 30×25 print sits centred in the 48×40 box, so its corner is at 9,7.5 */
+#map[data-zoom="mid"] .hand-mark { left: 3px; top: 1px; width: 11px; height: 11px; }
+#map[data-zoom="mid"] .hand-mark::after { inset: 2.5px; }
+#map[data-zoom="far"] .hand-mark { display: none; }
 #map[data-zoom="far"] .print {
   width: 13px; height: 13px; border-radius: 50%;
   box-shadow: 0 0 0 2px #fffdf7, 0 1px 3px rgba(0,0,0,.4);

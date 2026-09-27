@@ -388,11 +388,13 @@ function journey(h, pins) {
 /* ---------- markers ---------- */
 
 function pinIcon(pin, color) {
-  if (pin.kind === "photo") {
+  // A hand pin that photos were filed onto wears the print too, with a
+  // pushpin head in its corner so it still reads as a place you chose.
+  if (pin.kind === "photo" || pin.photo_count > 0) {
     // A small landscape photo print laid on the atlas: cream print border,
     // enamel edge in the trip's colour, count on the corner. The print is
     // centred in a fixed icon box so zoom-tier resizing stays anchored.
-    const div = el("div", "photo-pin");
+    const div = el("div", pin.kind === "photo" ? "photo-pin" : "photo-pin hand");
     div.style.setProperty("--c", color);
     const print = el("span", "print");
     // offline the thumb request can't succeed — the empty cream print reads
@@ -405,6 +407,7 @@ function pinIcon(pin, color) {
     }
     div.appendChild(print);
     div.appendChild(el("span", "badge-count", String(pin.photo_count)));
+    if (pin.kind !== "photo") div.appendChild(el("span", "hand-mark"));
     return L.divIcon({ html: div.outerHTML, iconSize: [48, 40], iconAnchor: [24, 20], popupAnchor: [0, -20] });
   }
   const div = el("div", "manual-pin");
