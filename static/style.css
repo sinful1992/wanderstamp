@@ -1053,7 +1053,10 @@ body.shared #sheet, body.shared #fabs, body.shared #banner { display: none !impo
   display: flex; align-items: center; justify-content: center;
 }
 #lightbox[hidden] { display: none; }
-#lb-img { max-width: 100vw; max-height: 100vh; object-fit: contain; }
+/* sized to the screen, not the file, so the small thumb stands in at full
+   size while the preview is still on its way */
+#lb-img { width: 100vw; height: 100vh; object-fit: contain; transition: filter .25s; }
+#lb-img.soft { filter: blur(8px); }
 #lb-close, #lb-prev, #lb-next {
   position: absolute; z-index: 1;
   background: rgba(255,255,255,.12); color: #fff; border: none;

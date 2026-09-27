@@ -2274,18 +2274,59 @@ $("btn-account").onclick = openAccount;
 
 /* ---------- lightbox ---------- */
 
-const lb = { photos: [], idx: 0 };
+const lb = { photos: [], idx: 0, dir: 1, seq: 0 };
+
+// Previews are ~400 KB each, and a phone away from home pulls them through
+// the house's upload — a few seconds apiece. So the viewer never waits blank:
+// the small thumb (usually already on screen in the strip) shows at once,
+// softened, and the full image swaps in when it lands. The next one is then
+// fetched behind the reader's back, so a steady "next" is usually instant.
+// Photo responses are cached immutable, so a preview that has landed once
+// comes straight from the browser cache — only its URL is remembered here.
+const previews = new Set(); // urls fully loaded
+const previewLoads = new Map(); // url → { p, im }, while in flight
+
+function loadPreview(url) {
+  if (previews.has(url)) return Promise.resolve();
+  if (!previewLoads.has(url)) {
+    const im = new Image(); // kept in the map so nothing collects it mid-load
+    const p = new Promise((res, rej) => { im.onload = res; im.onerror = rej; })
+      .then(() => { previews.add(url); })
+      .finally(() => previewLoads.delete(url));
+    im.src = url;
+    previewLoads.set(url, { p, im });
+  }
+  return previewLoads.get(url).p;
+}
 
 function openLightbox(photos, idx) {
   lb.photos = photos;
   lb.idx = idx;
+  lb.dir = 1;
   modalOpen("lightbox", $("lb-close"));
   showLightbox();
 }
 
 function showLightbox() {
   const ph = lb.photos[lb.idx];
-  $("lb-img").src = photoURL(ph.asset_id, "preview");
+  const img = $("lb-img");
+  const url = photoURL(ph.asset_id, "preview");
+  const seq = ++lb.seq; // a late preview for a photo already left is dropped
+  // the blur lifts only once the full image is decoded, so the thumb never
+  // flashes sharp and pixelated on its way out
+  const sharpen = () => {
+    img.src = url;
+    img.decode().catch(() => {}).then(() => { if (seq === lb.seq) img.classList.remove("soft"); });
+    preloadAhead(seq);
+  };
+  if (previews.has(url)) {
+    sharpen();
+  } else {
+    img.src = photoURL(ph.asset_id, "thumb");
+    img.classList.add("soft");
+    loadPreview(url).then(() => { if (seq === lb.seq) sharpen(); },
+      () => { if (seq === lb.seq) img.classList.remove("soft"); });
+  }
   $("lb-count").textContent = `${lb.idx + 1} / ${lb.photos.length}`;
   $("lb-date").textContent = fmtDate(ph.taken_at);
   $("lb-orig").href = photoURL(ph.asset_id, "original");
@@ -2293,12 +2334,22 @@ function showLightbox() {
   $("lb-next").style.visibility = lb.idx < lb.photos.length - 1 ? "visible" : "hidden";
 }
 
-function lbStep(d) {
-  const next = lb.idx + d;
-  if (next >= 0 && next < lb.photos.length) { lb.idx = next; showLightbox(); }
+// Only once the photo on screen has landed, and one at a time: on a thin
+// uplink a parallel fetch would slow the very photo being looked at.
+function preloadAhead(seq) {
+  const at = (i) => lb.photos[i] && photoURL(lb.photos[i].asset_id, "preview");
+  const ahead = at(lb.idx + lb.dir), behind = at(lb.idx - lb.dir);
+  (ahead ? loadPreview(ahead) : Promise.resolve())
+    .catch(() => {})
+    .then(() => { if (seq === lb.seq && behind) loadPreview(behind).catch(() => {}); });
 }
 
-$("lb-close").onclick = () => { modalClose("lightbox"); $("lb-img").src = ""; };
+function lbStep(d) {
+  const next = lb.idx + d;
+  if (next >= 0 && next < lb.photos.length) { lb.idx = next; lb.dir = d; showLightbox(); }
+}
+
+$("lb-close").onclick = () => { lb.seq++; modalClose("lightbox"); $("lb-img").src = ""; };
 $("lb-prev").onclick = () => lbStep(-1);
 $("lb-next").onclick = () => lbStep(1);
 document.addEventListener("keydown", (e) => {
