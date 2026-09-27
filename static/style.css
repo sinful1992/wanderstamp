@@ -1019,6 +1019,21 @@ button.linkish, a.linkish {
 .story-more:hover:not(:disabled) { border-color: var(--muted); color: var(--ink); }
 .story-more:disabled { opacity: .5; cursor: default; }
 
+/* Where each day begins: an entry stamp, the way a passport dates each
+   arrival — inked in visa red, pressed on a little crooked. The one loud
+   mark in the story; the chapters under it carry no date of their own. */
+.story-date {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  margin: 22px 0 4px 2px; padding: 4px 9px 3px;
+  border: 2px solid var(--red); border-radius: 3px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 35%, transparent);
+  color: var(--red); font-weight: 400;
+  rotate: -1.5deg; transform-origin: left center;
+}
+.story-date:first-child { margin-top: 14px; }
+.sd-n { font-family: var(--stamp); font-size: 19px; line-height: 1; letter-spacing: 1.5px; text-transform: uppercase; }
+.sd-date { font-family: var(--stamp); font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase; }
+
 /* Leg headings: where the drive ends and the trip begins. Each carries the
    map's own mark for that leg — road dashes for the way there, the stamp's
    ring for the arrival — so the story reads as a key to the lines. */

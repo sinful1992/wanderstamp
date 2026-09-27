@@ -330,6 +330,21 @@ function mapPins(pins) {
   return pins.filter((p) => !way.has(p.id));
 }
 
+// Which day of the trip a moment falls on. The day turns over at 4 am, as
+// the server's visits do, so a photo after midnight stays with its evening.
+// Counted from the trip's first date as a calendar date, not an instant:
+// bare dates are stored as UTC midnight.
+function tripDay(h, at) {
+  const t = new Date(new Date(at).getTime() - 4 * 3600000);
+  const key = `${t.getFullYear()}-${t.getMonth()}-${t.getDate()}`;
+  const [y, m, dd] = h.start_at.slice(0, 10).split("-").map(Number);
+  const first = new Date(y, m - 1, dd);
+  const today = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+  const n = Math.max(1, Math.round((today - first) / 86400000) + 1);
+  const label = t.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
+  return { key, n, label };
+}
+
 // A trip's stops in the order they happened. A pin is a place; a stop is one
 // stay there (the server's visits, see visits.go), so the hotel you slept at
 // twice, or the castle you went back to, is a stop each time: its own story
@@ -729,9 +744,19 @@ function openStory(h, pinId) {
   // Leg headings mark where the drive ends and the trip begins. They carry no
   // coordinates, so the scroll sync steps over them.
   const leg = (text, cls) => scroll.appendChild(el("h4", "story-leg " + cls, text));
-  if (j.way.length) leg(j.arrived ? `The way to ${destShort(h)}` : `On the way to ${destShort(h)}`, "leg-way");
+  let day = null;
   for (const stop of stops) {
     const pin = stop.pin;
+    // The story reads day by day: one entry stamp where each day begins, and
+    // that day's stops beneath it — the date isn't repeated on every chapter.
+    const d = tripDay(h, stop.at);
+    if (d.key !== day) {
+      day = d.key;
+      const stamp = el("h4", "story-date");
+      stamp.append(el("span", "sd-n", `Day ${d.n}`), el("span", "sd-date", d.label));
+      scroll.appendChild(stamp);
+    }
+    if (stop === j.way[0]) leg(j.arrived ? `The way to ${destShort(h)}` : `On the way to ${destShort(h)}`, "leg-way");
     if (j.arrived && stop === j.stay[0]) leg(`Arrived at ${destShort(h)}`, "leg-arrived");
     const sec = el("section", "story-sec");
     if (j.way.includes(stop)) sec.classList.add("on-the-way");
@@ -742,8 +767,7 @@ function openStory(h, pinId) {
     }
     sec.dataset.pinId = pin.id;
     sec.dataset.stop = stop.key;
-    const dayN = Math.max(1, Math.floor((new Date(stop.at) - new Date(h.start_at)) / 86400000) + 1);
-    sec.appendChild(el("p", "story-day", `Day ${dayN} · ${fmtDate(stop.at)}${stop.again ? " · back again" : ""}`));
+    if (stop.again) sec.appendChild(el("p", "story-day", "Back again"));
     sec.appendChild(el("h3", "story-place", pin.title || (pin.kind === "photo" ? "Photo stop" : "Pin")));
     // the note is about the place: said once, at its first stop
     if (pin.note && stops.find((s) => s.pin === pin) === stop) sec.appendChild(el("p", "story-note", pin.note));
