@@ -1089,6 +1089,11 @@ body.shared #sheet, body.shared #fabs, body.shared #banner { display: none !impo
   text-align: center; color: rgba(255,255,255,.75); font-size: 13px;
 }
 #lb-meta a { color: #fff; }
+#lb-aside {
+  background: none; border: none; padding: 6px 2px; margin: -6px 0;
+  color: #fff; font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+#lb-aside:disabled { opacity: .5; }
 
 /* ---------- sign-in: the passport cover ---------- */
 

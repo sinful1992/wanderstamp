@@ -390,6 +390,25 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 		rows.Close()
 	}
 
+	// Photos set aside by hand stay off the trip. Skipped before anything
+	// else, so the prunes below also clear any copy still filed.
+	aside := make(map[string]bool)
+	{
+		rows, err := tx.Query(`SELECT asset_id FROM set_aside WHERE holiday_id = ?`, holidayID)
+		if err != nil {
+			return 0, 0, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return 0, 0, err
+			}
+			aside[id] = true
+		}
+		rows.Close()
+	}
+
 	// Oldest first so cluster growth is deterministic across re-syncs.
 	sort.Slice(assets, func(i, j int) bool { return assets[i].FileCreatedAt.Before(assets[j].FileCreatedAt) })
 
@@ -397,6 +416,9 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 	seenUnplaced := make(map[string]bool)
 	matched := 0
 	for _, asset := range assets {
+		if aside[asset.ID] {
+			continue
+		}
 		e := asset.ExifInfo
 		takenAt := asset.FileCreatedAt.UTC().Format(time.RFC3339)
 		if e == nil || e.Latitude == nil || e.Longitude == nil || (*e.Latitude == 0 && *e.Longitude == 0) {
@@ -659,8 +681,9 @@ func (a *app) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	var exists int
 	if err := a.db.QueryRow(`
 		SELECT 1 FROM pin_photos WHERE asset_id = ?
-		UNION ALL SELECT 1 FROM unplaced_photos WHERE asset_id = ? LIMIT 1`,
-		assetID, assetID).Scan(&exists); err != nil {
+		UNION ALL SELECT 1 FROM unplaced_photos WHERE asset_id = ?
+		UNION ALL SELECT 1 FROM set_aside WHERE asset_id = ? LIMIT 1`,
+		assetID, assetID, assetID).Scan(&exists); err != nil {
 		httpError(w, http.StatusNotFound, "unknown photo")
 		return
 	}

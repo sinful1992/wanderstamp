@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS photo_choices (
   pin_id     INTEGER NOT NULL
 );
 
+-- photos taken off a trip by hand: not for the map. Sync skips them, so they
+-- stay off; the photo itself is untouched in Immich. Deleting the row puts
+-- it back at the next sync.
+CREATE TABLE IF NOT EXISTS set_aside (
+  asset_id   TEXT PRIMARY KEY,
+  holiday_id INTEGER NOT NULL REFERENCES holidays(id) ON DELETE CASCADE,
+  taken_at   TEXT NOT NULL,
+  set_at     TEXT NOT NULL
+);
+
 -- photos in a holiday's date range that carry no GPS EXIF
 CREATE TABLE IF NOT EXISTS unplaced_photos (
   holiday_id INTEGER NOT NULL REFERENCES holidays(id) ON DELETE CASCADE,

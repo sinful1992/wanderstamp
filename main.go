@@ -102,6 +102,9 @@ func main() {
 	mux.HandleFunc("POST /api/holidays/{id}/ask", a.auth(a.handleAnswerPhotos))
 
 	mux.HandleFunc("GET /api/photo/{asset}/{kind}", a.auth(a.handlePhoto))
+	mux.HandleFunc("POST /api/photos/{asset}/aside", a.auth(a.handleSetAside))
+	mux.HandleFunc("DELETE /api/photos/{asset}/aside", a.auth(a.handlePutBack))
+	mux.HandleFunc("GET /api/holidays/{id}/aside", a.auth(a.handleListSetAside))
 
 	// Manifest: master packing lists + each holiday's tick-off copy
 	mux.HandleFunc("GET /api/packing/templates", a.auth(a.handleListTemplates))

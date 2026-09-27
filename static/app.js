@@ -316,8 +316,10 @@ function wayPhotoIds() {
   const ids = new Set();
   for (const h of state.holidays) {
     if (!hasDest(h)) continue;
-    const pins = (byTrip.get(h.id) || []).sort(byVisit);
-    for (const p of journey(h, pins).way) if (p.kind === "photo") ids.add(p.id);
+    const j = journey(h, tripStops(byTrip.get(h.id) || []));
+    // a photo stop you went back to after arriving is on the map
+    const stayed = new Set(j.stay.map((s) => s.pin.id));
+    for (const s of j.way) if (s.pin.kind === "photo" && !stayed.has(s.pin.id)) ids.add(s.pin.id);
   }
   Object.assign(wayMemo, { pins: state.pins, holidays: state.holidays, ids });
   return ids;
@@ -328,8 +330,26 @@ function mapPins(pins) {
   return pins.filter((p) => !way.has(p.id));
 }
 
-function byVisit(a, b) {
-  return a.visited_at < b.visited_at ? -1 : a.visited_at > b.visited_at ? 1 : a.id - b.id;
+// A trip's stops in the order they happened. A pin is a place; a stop is one
+// stay there (the server's visits, see visits.go), so the hotel you slept at
+// twice, or the castle you went back to, is a stop each time: its own story
+// chapter with only that day's photos, and the route goes back to it. A pin
+// from an old snapshot has no visits and is one stop, as it used to be.
+function tripStops(pins) {
+  const stops = [];
+  for (const pin of pins) {
+    const vs = pin.visits && pin.visits.length ? pin.visits
+      : [{ at: pin.visited_at, until: pin.visited_at, n: pin.photo_count, whole: true }];
+    for (const v of vs) stops.push({ pin, at: v.at, until: v.until, n: v.n, whole: !!v.whole, key: `${pin.id}@${v.at}` });
+  }
+  stops.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.pin.id - b.pin.id));
+  // "again": back after being somewhere else, not the next morning at the hotel
+  const been = new Set();
+  stops.forEach((s, i) => {
+    s.again = been.has(s.pin.id) && stops[i - 1].pin !== s.pin;
+    been.add(s.pin.id);
+  });
+  return stops;
 }
 
 // Fits the map to every visible pin and returns what it fitted to; given
@@ -376,12 +396,12 @@ function kmBetween(a, b) {
 // hasn't arrived is still on the way; a finished trip that never pinned near
 // its destination isn't split at all — its destination was a region, or the
 // plans changed, and calling the whole trip "on the way" would be wrong.
-function journey(h, pins) {
-  const none = { way: [], stay: pins, arrived: false, enRoute: false };
+function journey(h, stops) {
+  const none = { way: [], stay: stops, arrived: false, enRoute: false };
   if (!hasDest(h)) return none;
-  const i = h.arrival_pin ? pins.findIndex((p) => p.id === h.arrival_pin) : -1;
-  if (i >= 0) return { way: pins.slice(0, i), stay: pins.slice(i), arrived: true, enRoute: false };
-  if (h.active) return { way: pins, stay: [], arrived: false, enRoute: true };
+  const i = h.arrival_pin ? stops.findIndex((s) => s.pin.id === h.arrival_pin) : -1;
+  if (i >= 0) return { way: stops.slice(0, i), stay: stops.slice(i), arrived: true, enRoute: false };
+  if (h.active) return { way: stops, stay: [], arrived: false, enRoute: true };
   return none;
 }
 
@@ -485,8 +505,8 @@ function renderMarkers() {
   }
 
   // The itinerary line: a dotted ink route joining each trip's stops in the
-  // order they were visited (visited_at = first photo's taken time, so pins
-  // added after the fact still land in the right leg of the journey). Lines
+  // order they happened (tripStops: a place visited twice is passed through
+  // twice, so pins added after the fact still land in the right leg). Lines
   // render in Leaflet's overlay pane, under the marker pane — photo prints
   // always sit on top of the ink. Cheap to rebuild, so they still are.
   //
@@ -508,15 +528,15 @@ function renderMarkers() {
     line.tripId = hid;
     state.routes.push(line);
   };
-  const at = (p) => [p.lat, p.lng];
+  const at = (s) => [s.pin.lat, s.pin.lng];
   for (const [hid, pins] of byTrip) {
-    pins.sort(byVisit);
     const h = holidayById(hid);
-    const j = journey(h, pins);
+    const stops = tripStops(pins);
+    const j = journey(h, stops);
     // the way-there line runs into the arrival pin, so the two legs join
     draw(hid, [...j.way, ...j.stay.slice(0, 1)].map(at), "route-way", "7 8");
     draw(hid, j.stay.map(at), "route-stay", "1 9");
-    if (j.enRoute && pins.length) draw(hid, [at(pins[pins.length - 1]), [h.dest_lat, h.dest_lng]], "route-ahead", "7 8");
+    if (j.enRoute && stops.length) draw(hid, [at(stops[stops.length - 1]), [h.dest_lat, h.dest_lng]], "route-ahead", "7 8");
   }
   renderDests();
   applyFocus();
@@ -540,8 +560,8 @@ function renderDests() {
   const want = new Map();
   for (const h of state.holidays) {
     if (!hasDest(h) || state.hidden.has(h.id)) continue;
-    const pins = state.pins.filter((p) => p.holiday_id === h.id).sort(byVisit);
-    want.set(h.id, { h, arrived: journey(h, pins).arrived });
+    const pins = state.pins.filter((p) => p.holiday_id === h.id);
+    want.set(h.id, { h, arrived: journey(h, tripStops(pins)).arrived });
   }
   for (const [hid, m] of state.dests) {
     if (!want.has(hid)) { m.remove(); state.dests.delete(hid); }
@@ -626,7 +646,18 @@ function setFocus(id) {
 // next chapter is always within a screen.
 const STORY_THUMBS = 6;
 
-const story = { hid: null, loadObserver: null, activeEl: null, holdUntil: 0 };
+const story = { hid: null, loadObserver: null, activeEl: null, holdUntil: 0, photos: new Map() };
+
+// A pin's photos, fetched once per story however many stops it has.
+function pinPhotos(pinId) {
+  if (!story.photos.has(pinId)) {
+    const path = SHARE ? `/api/share/${SHARE}/pins/${pinId}/photos` : `/api/pins/${pinId}/photos`;
+    const p = api("GET", path);
+    p.catch(() => story.photos.delete(pinId)); // a failed fetch is tried again
+    story.photos.set(pinId, p);
+  }
+  return story.photos.get(pinId);
+}
 
 // Centre the pin in the half of the screen the panel leaves visible: the
 // map's true centre sits behind the panel, so the target is offset by half
@@ -655,23 +686,24 @@ function loadStoryPhotos(sec) {
   const grid = sec.querySelector(".story-grid");
   if (!grid || grid.dataset.loaded) return;
   grid.dataset.loaded = "1";
-  const path = SHARE ? `/api/share/${SHARE}/pins/${grid.dataset.pin}/photos`
-                     : `/api/pins/${grid.dataset.pin}/photos`;
-  api("GET", path).then((photos) => {
+  const { at, until } = grid.dataset;
+  pinPhotos(grid.dataset.pin).then((all) => {
+    // only this stop's photos: the same pin on another day is another chapter
+    const photos = at ? all.filter((ph) => ph.taken_at >= at && ph.taken_at <= until) : all;
     grid.textContent = "";
     photos.slice(0, STORY_THUMBS).forEach((ph, i) => {
       const img = el("img");
       img.loading = "lazy";
       img.src = photoURL(ph.asset_id, "thumb");
       img.alt = "";
-      img.onclick = (e) => { e.stopPropagation(); openLightbox(photos, i); };
+      img.onclick = (e) => { e.stopPropagation(); openLightbox(photos, i, { aside: !SHARE }); };
       grid.appendChild(img);
     });
     const more = sec.querySelector(".story-more");
     if (more) {
       more.disabled = false;
       more.textContent = `All ${photos.length} photos`;
-      more.onclick = (e) => { e.stopPropagation(); openLightbox(photos, 0); };
+      more.onclick = (e) => { e.stopPropagation(); openLightbox(photos, 0, { aside: !SHARE }); };
     }
   }).catch(() => { grid.textContent = ""; grid.appendChild(el("span", "pop-sub", "Couldn't load photos")); });
 }
@@ -688,43 +720,49 @@ function openStory(h, pinId) {
   scroll.textContent = "";
   scroll.scrollTop = 0;
 
-  const pins = state.pins.filter((p) => p.holiday_id === h.id).sort(byVisit);
-  const j = journey(h, pins);
+  story.photos = new Map();
+  const pins = state.pins.filter((p) => p.holiday_id === h.id);
+  const stops = tripStops(pins);
+  const j = journey(h, stops);
+  const way = wayPhotoIds();
   const secs = [];
   // Leg headings mark where the drive ends and the trip begins. They carry no
   // coordinates, so the scroll sync steps over them.
   const leg = (text, cls) => scroll.appendChild(el("h4", "story-leg " + cls, text));
   if (j.way.length) leg(j.arrived ? `The way to ${destShort(h)}` : `On the way to ${destShort(h)}`, "leg-way");
-  for (const pin of pins) {
-    if (j.arrived && pin === j.stay[0]) leg(`Arrived at ${destShort(h)}`, "leg-arrived");
+  for (const stop of stops) {
+    const pin = stop.pin;
+    if (j.arrived && stop === j.stay[0]) leg(`Arrived at ${destShort(h)}`, "leg-arrived");
     const sec = el("section", "story-sec");
-    const way = j.way.includes(pin);
-    if (way) sec.classList.add("on-the-way");
+    if (j.way.includes(stop)) sec.classList.add("on-the-way");
     // a way-there photo has no pin to fly to, so the scroll sync steps over it
-    if (!(way && pin.kind === "photo")) {
+    if (!way.has(pin.id)) {
       sec.dataset.lat = pin.lat;
       sec.dataset.lng = pin.lng;
     }
     sec.dataset.pinId = pin.id;
-    const dayN = Math.max(1, Math.floor((new Date(pin.visited_at) - new Date(h.start_at)) / 86400000) + 1);
-    sec.appendChild(el("p", "story-day", `Day ${dayN} · ${fmtDate(pin.visited_at)}`));
+    sec.dataset.stop = stop.key;
+    const dayN = Math.max(1, Math.floor((new Date(stop.at) - new Date(h.start_at)) / 86400000) + 1);
+    sec.appendChild(el("p", "story-day", `Day ${dayN} · ${fmtDate(stop.at)}${stop.again ? " · back again" : ""}`));
     sec.appendChild(el("h3", "story-place", pin.title || (pin.kind === "photo" ? "Photo stop" : "Pin")));
-    if (pin.note) sec.appendChild(el("p", "story-note", pin.note));
-    if (pin.photo_count > 0) {
+    // the note is about the place: said once, at its first stop
+    if (pin.note && stops.find((s) => s.pin === pin) === stop) sec.appendChild(el("p", "story-note", pin.note));
+    if (stop.n > 0) {
       // A chapter shows a contact strip, not the whole roll. Day 1 of a trip
       // can carry 20+ photos, and an uncapped grid made every chapter several
       // screens tall — you scrolled photographs instead of chapters, so the
       // map never got to fly between the stops. The rest are one tap away.
-      const shown = Math.min(pin.photo_count, STORY_THUMBS);
+      const shown = Math.min(stop.n, STORY_THUMBS);
       const grid = el("div", "story-grid");
       grid.dataset.pin = pin.id;
+      if (!stop.whole) { grid.dataset.at = stop.at; grid.dataset.until = stop.until; }
       // Placeholder cells reserve the grid's final height before the photos
       // arrive — chapters must not grow later, or the open-at-pin scroll (and
       // the reader's place) slides as content above them expands.
       for (let i = 0; i < shown; i++) grid.appendChild(el("span", "ph"));
       sec.appendChild(grid);
-      if (pin.photo_count > shown) {
-        const more = el("button", "story-more", `All ${pin.photo_count} photos`);
+      if (stop.n > shown) {
+        const more = el("button", "story-more", `All ${stop.n} photos`);
         more.type = "button";
         more.disabled = true; // enabled once the photos are in hand
         sec.appendChild(more);
@@ -744,7 +782,9 @@ function openStory(h, pinId) {
     const del = el("button", null, "Delete");
     del.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm(pin.photo_count > 0 ? "Delete this pin? Its photos stay in Immich." : "Delete this pin?")) return;
+      const visits = stops.filter((s) => s.pin === pin).length;
+      const what = visits > 1 ? `Delete this pin, and all ${visits} visits to it?` : "Delete this pin?";
+      if (!confirm(pin.photo_count > 0 ? `${what} Its photos stay in Immich.` : what)) return;
       await api("DELETE", `/api/pins/${pin.id}`);
       loadData();
     };
@@ -761,7 +801,7 @@ function openStory(h, pinId) {
     sec.dataset.lat = h.dest_lat;
     sec.dataset.lng = h.dest_lng;
     sec.dataset.dest = h.id;
-    const last = pins[pins.length - 1];
+    const last = stops.length ? stops[stops.length - 1].pin : null;
     const label = h.planned ? countdown(h)
       : last ? `Still to go · ${Math.round(kmBetween(last, { lat: h.dest_lat, lng: h.dest_lng }))} km as the crow flies`
       : "Heading here";
@@ -795,6 +835,15 @@ function openStory(h, pinId) {
     sec.appendChild(check);
     scroll.appendChild(sec);
   }
+  if (h.set_aside_count > 0 && !SHARE) {
+    const sec = el("section", "story-sec");
+    sec.appendChild(el("h3", "story-place", "Set aside"));
+    const n = h.set_aside_count;
+    const open = el("button", "sub-link", `${n} ${n === 1 ? "photo" : "photos"} not on the map`);
+    open.onclick = () => openSetAside(h);
+    sec.appendChild(open);
+    scroll.appendChild(sec);
+  }
   if (!secs.length && !h.unplaced_count) {
     scroll.appendChild(el("p", "empty-note", "No pins on this trip yet — the story writes itself as you pin places."));
   }
@@ -810,8 +859,10 @@ function openStory(h, pinId) {
   // "dest" = opened from the destination stamp: its chapter if the trip is
   // still heading there, otherwise the arrival
   const target = pinId === "dest"
-    ? secs.find((s) => s.dataset.dest) || secs.find((s) => j.stay[0] && s.dataset.pinId === String(j.stay[0].id))
-    : pinId != null && secs.find((s) => s.dataset.pinId === String(pinId));
+    ? secs.find((s) => s.dataset.dest) || secs.find((s) => j.stay[0] && s.dataset.stop === j.stay[0].key)
+    // a stop's own key (a refresh), or a pin id (a marker tap: its first visit)
+    : pinId != null && (secs.find((s) => s.dataset.stop === String(pinId))
+      || secs.find((s) => s.dataset.pinId === String(pinId)));
   if (target) {
     // Jump straight to the tapped pin's chapter. The scroll this causes must
     // not re-derive the active chapter (a bottom-clamped scroll would pick a
@@ -836,7 +887,7 @@ function refreshStory() {
   const sc = $("story-scroll");
   const keep = sc.scrollTop;
   const act = story.activeEl;
-  const activePin = act ? (act.dataset.dest ? "dest" : act.dataset.pinId) : null;
+  const activePin = act ? (act.dataset.dest ? "dest" : act.dataset.stop) : null;
   story.holdUntil = performance.now() + 600; // gates openStory's own sync call
   openStory(h, activePin);
   story.holdUntil = performance.now() + 600;
@@ -1577,6 +1628,45 @@ async function openUnplaced(h) {
   }
 }
 
+// The photos taken off a trip with "Not for the map". Tap the ones to bring
+// back; a fresh sync files them as if they'd never left.
+async function openSetAside(h) {
+  try {
+    const photos = await api("GET", `/api/holidays/${h.id}/aside`);
+    const selected = new Set();
+    const wrap = el("div");
+    const bar = el("div", "attach-bar");
+    const idle = "Kept off the map; still in Immich. Tap any to put back.";
+    const hint = el("span", "attach-hint", idle);
+    const back = el("button", "primary", "Put back");
+    back.disabled = true;
+    bar.append(hint, back);
+    const gallery = dayGroupedGallery(photos, (_photos, _i, img) => {
+      const id = img.dataset.asset;
+      if (selected.has(id)) { selected.delete(id); img.classList.remove("sel"); }
+      else { selected.add(id); img.classList.add("sel"); }
+      hint.textContent = selected.size ? `${selected.size} selected` : idle;
+      back.disabled = selected.size === 0;
+    });
+    back.onclick = async () => {
+      back.disabled = true;
+      try {
+        for (const id of selected) await api("DELETE", `/api/photos/${id}/aside`);
+        toast(`Put back ${selected.size} ${selected.size === 1 ? "photo" : "photos"}`);
+        closeOverlay();
+        loadData();
+      } catch (err) {
+        toast(err.message);
+        back.disabled = false;
+      }
+    };
+    wrap.append(bar, gallery);
+    openOverlay(`${h.name} — set aside`, wrap);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 // Photos sync filed on a hand-placed pin without being sure: close enough to
 // be the same place with a poor GPS fix, far enough to be the pub next door.
 // One question per photo, on the manifest's paper; the answer is stamped on
@@ -2277,7 +2367,7 @@ $("btn-account").onclick = openAccount;
 
 /* ---------- lightbox ---------- */
 
-const lb = { photos: [], idx: 0, dir: 1, seq: 0 };
+const lb = { photos: [], idx: 0, dir: 1, seq: 0, aside: false };
 
 // Previews are ~400 KB each, and a phone away from home pulls them through
 // the house's upload — a few seconds apiece. So the viewer never waits blank:
@@ -2302,10 +2392,13 @@ function loadPreview(url) {
   return previewLoads.get(url).p;
 }
 
-function openLightbox(photos, idx) {
-  lb.photos = photos;
+// aside: offer "Not for the map" — only on a trip's own photos, signed in
+function openLightbox(photos, idx, { aside = false } = {}) {
+  lb.photos = photos.slice(); // setting one aside takes it out of this list
   lb.idx = idx;
   lb.dir = 1;
+  lb.aside = aside;
+  $("lb-aside-wrap").hidden = !aside;
   modalOpen("lightbox", $("lb-close"));
   showLightbox();
 }
@@ -2354,6 +2447,25 @@ function lbStep(d) {
 
 $("lb-close").onclick = () => { lb.seq++; modalClose("lightbox"); $("lb-img").src = ""; };
 $("lb-prev").onclick = () => lbStep(-1);
+// Takes the photo off the trip here, never out of Immich; it waits in the
+// trip's "Set aside" list to be put back.
+$("lb-aside").onclick = async () => {
+  const ph = lb.photos[lb.idx];
+  const btn = $("lb-aside");
+  btn.disabled = true;
+  try {
+    await api("POST", `/api/photos/${ph.asset_id}/aside`);
+    lb.photos.splice(lb.idx, 1);
+    toast("Set aside — it's still in Immich. Put it back from the trip's story.");
+    if (!lb.photos.length) $("lb-close").click();
+    else { lb.idx = Math.min(lb.idx, lb.photos.length - 1); showLightbox(); }
+    loadData();
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+};
 $("lb-next").onclick = () => lbStep(1);
 document.addEventListener("keydown", (e) => {
   if (!$("lightbox").hidden) {

@@ -77,7 +77,8 @@ type holidayOut struct {
 	PinCount      int     `json:"pin_count"`
 	PhotoCount    int     `json:"photo_count"`
 	UnplacedCount int     `json:"unplaced_count"`
-	AskCount      int     `json:"ask_count"` // photos near a hand pin, waiting for "same place?"
+	AskCount      int     `json:"ask_count"`       // photos near a hand pin, waiting for "same place?"
+	SetAsideCount int     `json:"set_aside_count"` // photos taken off the trip by hand
 	Shared        bool    `json:"shared"`
 	PackTotal     int     `json:"pack_total"`
 	PackDone      int     `json:"pack_done"`
@@ -158,6 +159,7 @@ func (a *app) listHolidays(pins []pinOut) ([]holidayOut, error) {
 		       (SELECT COUNT(*) FROM unplaced_photos up WHERE up.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
 		        WHERE p.holiday_id = h.id AND pp.ask = 1),
+		       (SELECT COUNT(*) FROM set_aside sa WHERE sa.holiday_id = h.id),
 		       EXISTS (SELECT 1 FROM shares s WHERE s.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id AND pi.checked = 1),
@@ -171,7 +173,7 @@ func (a *app) listHolidays(pins []pinOut) ([]holidayOut, error) {
 	for rows.Next() {
 		var h holidayOut
 		var n int
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.UnplacedCount, &h.AskCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned, &n); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.UnplacedCount, &h.AskCount, &h.SetAsideCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned, &n); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -757,6 +759,7 @@ type pinOut struct {
 	VisitedAt  string  `json:"visited_at"`
 	PhotoCount int     `json:"photo_count"`
 	CoverAsset string  `json:"cover_asset"`
+	Visits     []visit `json:"visits"`
 }
 
 // queryPins returns pins for one holiday, or every pin when holidayID is 0.
@@ -774,16 +777,40 @@ func (a *app) queryPins(holidayID int64) ([]pinOut, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []pinOut{}
 	for rows.Next() {
 		var p pinOut
 		if err := rows.Scan(&p.ID, &p.HolidayID, &p.Kind, &p.Lat, &p.Lng, &p.Title, &p.Note, &p.CreatedAt, &p.VisitedAt, &p.PhotoCount, &p.CoverAsset); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// the photos' times, once the pin rows are closed (one connection)
+	rows, err = a.db.Query(`
+		SELECT pp.pin_id, pp.taken_at FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
+		WHERE ? = 0 OR p.holiday_id = ?`, holidayID, holidayID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var shots []shot
+	for rows.Next() {
+		var s shot
+		if err := rows.Scan(&s.pin, &s.at); err != nil {
+			return nil, err
+		}
+		shots = append(shots, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	fillVisits(out, shots)
+	return out, nil
 }
 
 func (a *app) handleListPins(w http.ResponseWriter, r *http.Request) {
