@@ -434,7 +434,7 @@ body.placing #fab-pin { background: var(--red); box-shadow: var(--shadow); }
 .trip-eye {
   grid-row: 2; /* ride the actions line, after the pills */
   flex: none; background: none; border: none; font-size: 15px;
-  width: 32px; height: 32px; padding: 0; border-radius: 50%;
+  width: 44px; height: 44px; padding: 0; border-radius: 50%;
   opacity: .75;
 }
 .trip-eye:hover { background: rgba(231, 221, 198, .14); opacity: 1; }
@@ -452,8 +452,10 @@ body.placing #fab-pin { background: var(--red); box-shadow: var(--shadow); }
   margin: 0 14px 10px; padding: 10px;
   background: rgba(0, 0, 0, .16); border: 1px solid var(--line); border-radius: 10px;
 }
-.trip-edit .swatch-row { display: flex; gap: 7px; flex-wrap: wrap; }
-.trip-edit .swatch-row button { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; padding: 0; }
+.trip-edit .swatch-row { display: flex; gap: 14px; flex-wrap: wrap; padding: 9px; }
+.trip-edit .swatch-row button { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; padding: 0; position: relative; }
+/* 44 px to a finger, the same dot to the eye */
+.trip-edit .swatch-row button::before { content: ""; position: absolute; inset: -11px; border-radius: 50%; }
 .trip-edit .swatch-row button.sel { border-color: var(--ink); }
 .trip-edit textarea { resize: vertical; min-height: 64px; font: inherit; }
 button.danger {
@@ -485,12 +487,14 @@ button.primary {
 }
 /* Every control, one voice -- declared once so the login's button and the
    menu's cannot drift apart. */
+/* Sentence case: capitals belong to the stamps (titles, day stamps, the
+   passport), so the controls speak in a quieter voice and the stamps stand out. */
 button.primary, .docs-row button, .story-more, .sub-link {
-  font: var(--control); letter-spacing: var(--control-track); text-transform: uppercase;
+  font: var(--control); letter-spacing: var(--control-track);
 }
 /* the row's pills are the same voice at pill scale; this is the smallest type
    in the app, so it trades tracking for size rather than the other way round */
-.sub-link { font-size: 11.5px; letter-spacing: .8px; }
+.sub-link { font-size: 12.5px; letter-spacing: .2px; }
 button.primary:hover { filter: brightness(1.12); }
 button.primary:active { opacity: .85; }
 input[type=text]:focus, input[type=password]:focus, input[type=date]:focus, textarea:focus, select:focus {
@@ -506,11 +510,12 @@ input[type=text]:focus, input[type=password]:focus, input[type=date]:focus, text
 .date-row { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 .form-hint { margin: 0; font-size: 12px; color: var(--muted); }
 .date-row input { width: auto; flex: 1; }
-#swatches { display: flex; gap: 7px; flex-wrap: wrap; }
+#swatches { display: flex; gap: 14px; flex-wrap: wrap; padding: 7px; }
 #swatches button {
   width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent;
-  padding: 0;
+  padding: 0; position: relative;
 }
+#swatches button::before { content: ""; position: absolute; inset: -9px; border-radius: 50%; }
 #swatches button.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--paper) inset; }
 
 button.linkish, a.linkish {
@@ -1282,3 +1287,8 @@ button.primary.gold { background: var(--gold); color: var(--navy-2); }
   margin-top: 14px; padding-top: 10px; border-top: 1px dotted var(--line);
 }
 .acct-foot .form-hint { margin-left: auto; }
+
+/* Leaflet's zoom buttons are 30 px; a finger needs 44 (D3) */
+@media (pointer: coarse) {
+  .leaflet-touch .leaflet-bar a { width: 44px; height: 44px; line-height: 44px; font-size: 22px; }
+}
