@@ -296,12 +296,25 @@ async function awaitPhotoSync() {
   }
 }
 
+// A form someone has typed into. A background reload (photo sync, coming
+// back online) must not rebuild the panel under it and throw the text away;
+// that panel catches up on the next load after the form is saved or closed.
+document.addEventListener("input", (e) => {
+  const f = e.target.closest && e.target.closest("form");
+  if (f) f.dataset.dirty = "1";
+}, true);
+document.addEventListener("submit", (e) => { delete e.target.dataset.dirty; }, true);
+
+function editing(id) {
+  return [...$(id).querySelectorAll("form[data-dirty]")].some((f) => !f.closest("[hidden]") && f.isConnected);
+}
+
 function renderAll(fit) {
   if (story.hid !== null && !holidayById(story.hid)) closeStory();
   if (state.focused !== null && !holidayById(state.focused)) state.focused = null;
   renderMarkers();
-  refreshStory();
-  renderSheet();
+  if (!editing("story")) refreshStory();
+  if (!editing("trip-list")) renderSheet();
   renderBanner();
   // The first fit may have been drawn from the saved snapshot; fresh data
   // that moves the opening view (a trip added on another phone) fits again,
