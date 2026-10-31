@@ -413,6 +413,19 @@ func TestMapReadsWhileWriterBusy(t *testing.T) {
 	}
 	conn.ExecContext(context.Background(), `ROLLBACK`)
 
+	// a due planned trip waiting behind a live one must not make every load a
+	// write (it would wait out the busy writer: 5 s)
+	db.Exec(`INSERT INTO holidays (id, name, color, start_at, end_at) VALUES (2, 'Live', '#123456', '2026-06-01T00:00:00Z', NULL)`)
+	db.Exec(`UPDATE holidays SET planned = 1, end_at = NULL, start_at = '2026-01-01T00:00:00Z' WHERE id = 1`)
+	conn.ExecContext(context.Background(), `BEGIN IMMEDIATE`)
+	start = time.Now()
+	getMap(t, a)
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("planned trip waiting behind a live one, writer busy: map took %v", d)
+	}
+	conn.ExecContext(context.Background(), `ROLLBACK`)
+	db.Exec(`DELETE FROM holidays WHERE id = 2`)
+
 	// and a planned trip whose day has come still goes live on the next look
 	db.Exec(`UPDATE holidays SET end_at = NULL, planned = 1, start_at = '2026-01-01T00:00:00Z'`)
 	if _, hs, _ := getMap(t, a); !hs[0].Active {

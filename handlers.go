@@ -288,7 +288,11 @@ func (a *app) promotePlanned() {
 	// below only runs on the rare load when a countdown has reached zero
 	now := time.Now().UTC().Format(time.RFC3339)
 	var due bool
-	if err := a.reader().QueryRow(`SELECT EXISTS (SELECT 1 FROM holidays WHERE planned = 1 AND start_at <= ?)`, now).Scan(&due); err == nil && !due {
+	// "due" means the UPDATE below would change a row: a planned trip whose day
+	// has come AND no other live trip, else it would run on every load while
+	// the live trip lasts
+	if err := a.reader().QueryRow(`SELECT EXISTS (SELECT 1 FROM holidays WHERE planned = 1 AND start_at <= ?)
+		AND NOT EXISTS (SELECT 1 FROM holidays WHERE end_at IS NULL AND planned = 0)`, now).Scan(&due); err == nil && !due {
 		return
 	}
 	if _, err := a.db.Exec(`

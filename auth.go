@@ -453,7 +453,7 @@ func clientIP(r *http.Request) string {
 			if host, _, err := net.SplitHostPort(ip); err == nil {
 				return host
 			}
-			return ip
+			return strings.Trim(ip, "[]")
 		}
 	}
 	return ""
