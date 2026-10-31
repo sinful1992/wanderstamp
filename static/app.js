@@ -286,6 +286,9 @@ async function loadData(fit) {
   state.pins = d.pins;
   renderAccount();
   renderAll(fit);
+  for (const fn of dataListeners) {
+    try { fn(state); } catch (ex) { console.error(ex); } // one broken module can't stop the map
+  }
   saveSnapshot();
   syncQueue(); // reaching the server just now proves any queued pins can go
   if (meta.resp.headers.get("X-Photo-Sync") === "running") awaitPhotoSync();
@@ -2891,6 +2894,23 @@ async function openFamily() {
 }
 
 /* ---------- boot ---------- */
+
+/* ---------- modules ---------- */
+
+// The feature modules (stats, tracks, import) live in their own files and
+// reach the app only through this: they never edit app.js, and app.js calls
+// them only where they exist, so a missing file just hides its feature.
+const dataListeners = [];
+window.WS = {
+  map, state, api, el, toast,
+  onData(fn) { dataListeners.push(fn); },
+  // an empty sheet in the app's overlay; returns the element to fill
+  openPanel(title) {
+    const body = el("div", "ws-panel");
+    openOverlay(title, body);
+    return body;
+  },
+};
 
 (async function boot() {
   if (SHARE) {
