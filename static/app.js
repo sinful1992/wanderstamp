@@ -822,8 +822,11 @@ function openStory(h, pinId) {
       const visits = stops.filter((s) => s.pin === pin).length;
       const what = visits > 1 ? `Delete this pin, and all ${visits} visits to it?` : "Delete this pin?";
       if (!confirm(pin.photo_count > 0 ? `${what} Its photos stay in Immich.` : what)) return;
-      await api("DELETE", `/api/pins/${pin.id}`);
-      loadData();
+      await busy(del, async () => {
+        await api("DELETE", `/api/pins/${pin.id}`);
+        toast("Pin deleted");
+        loadData();
+      });
     };
     actions.append(ed, del);
     sec.appendChild(actions);
@@ -1030,13 +1033,11 @@ function editForm(pin) {
     e.preventDefault();
     const body = { title: title.value, note: note.value };
     if (cover && cover !== pin.cover_asset) body.cover_asset = cover;
-    try {
+    await busy(submitter(e), async () => {
       await api("PATCH", `/api/pins/${pin.id}`, body);
       loadData(); // refreshStory rebuilds the chapter with the new values
       toast("Pin saved");
-    } catch (err) {
-      toast(err.message);
-    }
+    });
   };
   return form;
 }
@@ -1101,15 +1102,18 @@ function placePin(latlng) {
       toast("No signal — pin saved, will sync when you're back online");
     };
     if (!navigator.onLine) { offline(); return; } // known-dead link: skip the doomed request
-    try {
-      await api("POST", "/api/pins", pin);
+    await busy(submitter(e), async () => {
+      try {
+        await api("POST", "/api/pins", pin);
+      } catch (err) {
+        if (!isNetworkError(err)) throw err;
+        offline();
+        return;
+      }
       map.closePopup(popup);
       loadData();
       toast("Pin added");
-    } catch (err) {
-      if (isNetworkError(err)) offline();
-      else toast(err.message);
-    }
+    });
   };
 }
 
@@ -1137,6 +1141,34 @@ $("fab-gps").onclick = () => {
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
   );
 };
+
+/* ---------- busy buttons ---------- */
+
+// One tap, one request: the button is off while its request runs, so a
+// double tap can't make two pins or two trips, and a failure is said out
+// loud instead of being swallowed. label, if given, shows while it runs.
+async function busy(btn, fn, label) {
+  if (btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.setAttribute("aria-busy", "true");
+  }
+  const old = btn && label ? btn.textContent : null;
+  if (old !== null) btn.textContent = label;
+  try {
+    return await fn();
+  } catch (err) {
+    toast(err && err.message ? err.message : "Something went wrong");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.removeAttribute("aria-busy");
+      if (old !== null) btn.textContent = old;
+    }
+  }
+}
+
+const submitter = (e) => e.submitter || e.target.querySelector("[type=submit]");
 
 /* ---------- trips sheet ---------- */
 
@@ -1428,9 +1460,11 @@ function tripEditForm(h) {
   del.type = "button";
   del.onclick = async () => {
     if (!confirm(`Delete "${h.name}" and all its pins? Photos stay in Immich.`)) return;
-    await api("DELETE", `/api/holidays/${h.id}`);
-    toast("Trip deleted");
-    loadData();
+    await busy(del, async () => {
+      await api("DELETE", `/api/holidays/${h.id}`);
+      toast("Trip deleted");
+      loadData();
+    });
   };
   const btnRow = el("div", "form-row");
   btnRow.append(save, del);
@@ -1443,30 +1477,26 @@ function tripEditForm(h) {
   const shareRow = el("div", "share-row");
   const mkShare = el("button", "linkish", h.shared ? "New share link (replaces the old one)" : "Share this trip — view-only link");
   mkShare.type = "button";
-  mkShare.onclick = async () => {
+  mkShare.onclick = () => busy(mkShare, async () => {
+    const res = await api("POST", `/api/holidays/${h.id}/share`);
+    const url = location.origin + res.url;
     try {
-      const res = await api("POST", `/api/holidays/${h.id}/share`);
-      const url = location.origin + res.url;
-      try {
-        await navigator.clipboard.writeText(url);
-        toast("View-only link copied — anyone with it can see this trip");
-      } catch {
-        window.prompt("Copy the view-only link:", url);
-      }
-      loadData();
-    } catch (err) {
-      toast(err.message);
+      await navigator.clipboard.writeText(url);
+      toast("View-only link copied — anyone with it can see this trip");
+    } catch {
+      window.prompt("Copy the view-only link:", url);
     }
-  };
+    loadData();
+  });
   shareRow.appendChild(mkShare);
   if (h.shared) {
     const revoke = el("button", "linkish", "Revoke share link");
     revoke.type = "button";
-    revoke.onclick = async () => {
+    revoke.onclick = () => busy(revoke, async () => {
       await api("DELETE", `/api/holidays/${h.id}/share`);
       toast("Share link revoked");
       loadData();
-    };
+    });
     shareRow.appendChild(revoke);
   }
   // nothing to show anyone until the trip has begun
@@ -1483,15 +1513,13 @@ function tripEditForm(h) {
     if (endChanged) body.end_at = end.value;
     if (cover && cover !== h.cover_asset) body.cover_asset = cover;
     if (newDest !== undefined) Object.assign(body, destBody(newDest));
-    try {
+    await busy(submitter(e), async () => {
       await api("PATCH", `/api/holidays/${h.id}`, body);
       toast("Trip saved");
       const dates = startChanged || endChanged;
       loadData();
       if (dates) api("POST", `/api/holidays/${h.id}/sync`).then(() => loadData()).catch(() => {});
-    } catch (err) {
-      toast(err.message);
-    }
+    });
   };
   return wrap;
 }
@@ -2029,8 +2057,10 @@ async function openMasterLists() {
       const delList = el("button", "linkish", "delete list");
       delList.onclick = async () => {
         if (!confirm(`Delete the "${t.name}" packing list? Trips keep their own copies.`)) return;
-        await api("DELETE", `/api/packing/templates/${t.id}`);
-        openMasterLists();
+        await busy(delList, async () => {
+          await api("DELETE", `/api/packing/templates/${t.id}`);
+          openMasterLists();
+        });
       };
       head.appendChild(delList);
       box.appendChild(head);
@@ -2141,20 +2171,22 @@ function renderBanner() {
   $("banner-stub").setAttribute("aria-label", `Day ${day} of ${active.name}`);
   $("btn-end").onclick = async () => {
     if (!confirm(`End "${active.name}"? Photos taken from now on won't join it.`)) return;
-    const r = await api("POST", `/api/holidays/${active.id}/end`);
-    toast(r.sync_error ? "Holiday ended (photo sync failed — use Sync later)" : "Holiday ended — happy memories!");
-    loadData();
+    // ending pulls the trip's last photos from Immich first, which can take a while
+    toast("Ending the holiday and pulling its last photos…");
+    await busy($("btn-end"), async () => {
+      const r = await api("POST", `/api/holidays/${active.id}/end`);
+      toast(r.sync_error ? "Holiday ended (photo sync failed — use Sync later)" : "Holiday ended — happy memories!");
+      loadData();
+    }, "Ending…");
   };
   $("btn-sync").onclick = async () => {
     toast("Syncing photos…");
-    try {
+    await busy($("btn-sync"), async () => {
       const r = await api("POST", `/api/holidays/${active.id}/sync`);
       const extra = r.unplaced ? ` (+${r.unplaced} without location)` : "";
       toast(`Synced: ${r.photos} photos across ${r.photo_pins} places${extra}`);
       loadData();
-    } catch (err) {
-      toast(err.message);
-    }
+    });
   };
 }
 
@@ -2304,7 +2336,7 @@ $("btn-cancel-trip").onclick = () => {
 };
 $("new-trip-form").onsubmit = async (e) => {
   e.preventDefault();
-  try {
+  await busy(submitter(e), async () => {
     const body = {
       name: $("trip-name").value.trim(),
       color: chosenColor,
@@ -2327,9 +2359,7 @@ $("new-trip-form").onsubmit = async (e) => {
     api("POST", `/api/holidays/${created.id}/sync`)
       .then((r) => { toast(`Found ${r.photos} photos across ${r.photo_pins} places`); loadData(); })
       .catch(() => {});
-  } catch (err) {
-    toast(err.message);
-  }
+  });
 };
 
 /* ---------- sheet + admin + logout ---------- */
@@ -2650,13 +2680,7 @@ async function openFamily() {
   const act = (label, fn, cls = "") => {
     const b = el("button", "linkish" + (cls ? " " + cls : ""), label);
     b.type = "button";
-    b.onclick = async () => {
-      try {
-        await fn();
-      } catch (err) {
-        toast(err.message);
-      }
-    };
+    b.onclick = () => busy(b, fn);
     return b;
   };
 
