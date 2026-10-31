@@ -87,6 +87,16 @@ func TestLoginLimitPerDevice(t *testing.T) {
 	if rec := loginFrom(a, "mum", "mum-password", "100.64.0.10"); rec.Code != http.StatusOK {
 		t.Errorf("another family device: %d, want 200", rec.Code)
 	}
+	// no X-Forwarded-For: every caller looks like the proxy, so no shared budget
+	b := newTestApp(t)
+	b.limiter, b.ipLimiter = newLoginLimiter(), newIPLimiter()
+	addUser(t, b, "dad")
+	for i := 0; i < ipMaxFails+5; i++ {
+		loginFrom(b, "guess"+string(rune('a'+i)), "x", "")
+	}
+	if rec := loginFrom(b, "dad", "dad-password", ""); rec.Code != http.StatusOK {
+		t.Errorf("without X-Forwarded-For the family must not share one budget: %d", rec.Code)
+	}
 }
 
 // S4: a cross-site form or fetch can't drive a POST with the family's cookie.
@@ -109,6 +119,7 @@ func TestCrossSiteWritesRefused(t *testing.T) {
 		{"POST", "same-origin", "", 200},
 		{"POST", "none", "", 200},
 		{"POST", "", "http://holiday.test", 200},
+		{"POST", "", "https://home.example:8448", 200}, // via X-Forwarded-Host below
 		{"POST", "", "", 200},           // curl, old WebViews
 		{"GET", "cross-site", "", 200}, // reads are fine, CORS keeps the body
 	}
@@ -121,14 +132,15 @@ func TestCrossSiteWritesRefused(t *testing.T) {
 		if c.origin != "" {
 			req.Header.Set("Origin", c.origin)
 		}
+		req.Header.Set("X-Forwarded-Host", "home.example:8448")
 		rec := httptest.NewRecorder()
 		h(rec, req)
 		if rec.Code != c.want {
 			t.Errorf("%s site=%q origin=%q: %d, want %d", c.method, c.site, c.origin, rec.Code, c.want)
 		}
 	}
-	if reached != 5 {
-		t.Errorf("handler reached %d times, want 5", reached)
+	if reached != 6 {
+		t.Errorf("handler reached %d times, want 6", reached)
 	}
 }
 
@@ -363,25 +375,46 @@ func TestFixIndexesExist(t *testing.T) {
 	}
 }
 
-// P4: opening the map is a read, not a write, unless a countdown has run out.
-func TestMapLoadDoesNotWrite(t *testing.T) {
-	a := newTestApp(t)
-	a.immich = newImmichClient("http://127.0.0.1:1", "")
-	a.lastSync = map[int64]time.Time{}
-	a.db.Exec(`INSERT INTO holidays (id, name, color, start_at, end_at) VALUES (1, 'Trip', '#123456', '2026-07-01T00:00:00Z', '2026-07-08T23:59:59Z')`)
-	changes := func() int {
-		var n int
-		a.db.QueryRow(`SELECT total_changes()`).Scan(&n)
-		return n
+// P4: the map answers from the read pool while the writer is busy (a photo
+// sync holds it for seconds), and opening it writes nothing.
+func TestMapReadsWhileWriterBusy(t *testing.T) {
+	path := t.TempDir() + "/test.db"
+	db, err := openDB(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	before := changes()
-	getMap(t, a)
-	getMap(t, a)
-	if d := changes() - before; d != 0 {
-		t.Errorf("two map loads made %d row changes, want 0", d)
+	t.Cleanup(func() { db.Close() })
+	rdb, err := openReadDB(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// a planned trip whose day has come still goes live on the next look
-	a.db.Exec(`UPDATE holidays SET end_at = NULL, planned = 1, start_at = '2026-01-01T00:00:00Z'`)
+	t.Cleanup(func() { rdb.Close() })
+	a := &app{db: db, rdb: rdb, immich: newImmichClient("http://127.0.0.1:1", ""), lastSync: map[int64]time.Time{}}
+	db.Exec(`INSERT INTO holidays (id, name, color, start_at, end_at) VALUES (1, 'Trip', '#123456', '2026-07-01T00:00:00Z', '2026-07-08T23:59:59Z')`)
+
+	// hold the write lock on another connection, as a long sync would
+	w, err := openReadDB(path) // a plain connection; query_only is lifted below
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	conn, _ := w.Conn(context.Background())
+	defer conn.Close()
+	conn.ExecContext(context.Background(), `PRAGMA query_only = 0`)
+	if _, err := conn.ExecContext(context.Background(), `BEGIN IMMEDIATE`); err != nil {
+		t.Fatal(err)
+	}
+	conn.ExecContext(context.Background(), `UPDATE holidays SET name = 'Trip' WHERE id = 1`)
+
+	start := time.Now()
+	_, hs, _ := getMap(t, a)
+	if d := time.Since(start); d > time.Second || len(hs) != 1 {
+		t.Errorf("map with the writer busy: %v, %d trips; want under 1 s", d, len(hs))
+	}
+	conn.ExecContext(context.Background(), `ROLLBACK`)
+
+	// and a planned trip whose day has come still goes live on the next look
+	db.Exec(`UPDATE holidays SET end_at = NULL, planned = 1, start_at = '2026-01-01T00:00:00Z'`)
 	if _, hs, _ := getMap(t, a); !hs[0].Active {
 		t.Errorf("a due planned trip didn't go live: %+v", hs[0])
 	}

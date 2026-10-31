@@ -398,7 +398,10 @@ func sameOrigin(r *http.Request) bool {
 	if err != nil || u.Host == "" {
 		return false
 	}
-	return strings.EqualFold(u.Host, r.Host)
+	// tailscale serve may hand the request on with Host = 127.0.0.1:8095; the
+	// name the browser used then arrives as X-Forwarded-Host
+	return strings.EqualFold(u.Host, r.Host) ||
+		(r.Header.Get("X-Forwarded-Host") != "" && strings.EqualFold(u.Host, r.Header.Get("X-Forwarded-Host")))
 }
 
 // --- per-device login limit ---
@@ -406,19 +409,21 @@ func sameOrigin(r *http.Request) bool {
 // clientIP is the device a login came from. Behind tailscale serve every
 // request arrives from the proxy, which appends the real address to
 // X-Forwarded-For, so the last entry is the one the proxy vouches for
-// (anything before it the client could have typed itself).
+// (anything before it the client could have typed itself). With no
+// X-Forwarded-For there is no device to tell apart, only the proxy or the
+// Docker gateway, and "" turns the per-device limit off: one shared budget
+// would let a stranger's typos lock the whole family out again.
 func clientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
 		if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
+			if host, _, err := net.SplitHostPort(ip); err == nil {
+				return host
+			}
 			return ip
 		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return ""
 }
 
 const (
@@ -453,7 +458,7 @@ func (l *ipLimiter) recent(ip string, now time.Time) []time.Time {
 
 // blockedFor is how long this device must wait; zero when it may try.
 func (l *ipLimiter) blockedFor(ip string) time.Duration {
-	if l == nil {
+	if l == nil || ip == "" {
 		return 0
 	}
 	l.mu.Lock()
@@ -467,7 +472,7 @@ func (l *ipLimiter) blockedFor(ip string) time.Duration {
 }
 
 func (l *ipLimiter) fail(ip string) {
-	if l == nil {
+	if l == nil || ip == "" {
 		return
 	}
 	l.mu.Lock()
