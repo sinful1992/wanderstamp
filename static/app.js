@@ -1127,8 +1127,35 @@ $("fab-gps").onclick = () => {
 
 /* ---------- trips sheet ---------- */
 
+const DATE_OPTS = { day: "numeric", month: "short", year: "numeric" };
+
 function fmtDate(s) {
-  return new Date(s).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return new Date(s).toLocaleDateString(undefined, DATE_OPTS);
+}
+
+// A trip's start and end are calendar days when they were picked as dates:
+// the server stores those as 00:00:00Z / 23:59:59Z of that date. Read in the
+// viewer's timezone they'd move a day (BST turns 24 May 23:59Z into 25 May),
+// so those are taken from their date part. A real moment (a trip started or
+// ended with the button) stays a moment, shown in local time.
+function calDay(s) {
+  if (/^\d{4}-\d{2}-\d{2}(T(00:00:00|23:59:59)(\.\d+)?(Z|[+-]00:00))?$/.test(s)) {
+    const [y, m, d] = s.slice(0, 10).split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+  return new Date(s);
+}
+
+function fmtTripDay(s) {
+  return calDay(s).toLocaleDateString(undefined, DATE_OPTS);
+}
+
+// Days away, counted on the calendar: a trip from the 23rd to the 24th is 2.
+function tripDays(h) {
+  const a = calDay(h.start_at);
+  const b = h.end_at ? calDay(h.end_at) : new Date();
+  const day = (d) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  return Math.max(1, Math.round((day(b) - day(a)) / 86400000) + 1);
 }
 
 // A date range says the shared parts once. Intl does this per-locale — an
@@ -1142,10 +1169,10 @@ const rangeFmt = (() => {
 })();
 
 function fmtRange(a, b) {
-  const s = new Date(a), e = new Date(b);
-  if (isNaN(s) || isNaN(e)) return fmtDate(a);
+  const s = calDay(a), e = calDay(b);
+  if (isNaN(s) || isNaN(e)) return fmtTripDay(a);
   if (rangeFmt) return rangeFmt.formatRange(s, e);
-  return `${fmtDate(a)} – ${fmtDate(b)}`;
+  return `${fmtTripDay(a)} – ${fmtTripDay(b)}`;
 }
 
 // Whole days until a planned trip's first day, counted on the calendar in
@@ -1182,7 +1209,7 @@ function plannedMeta(h) {
 
 function tripRange(h) {
   if (h.planned) return plannedMeta(h);
-  if (h.active) return `since ${fmtDate(h.start_at)}`;
+  if (h.active) return `since ${fmtTripDay(h.start_at)}`;
   return fmtRange(h.start_at, h.end_at);
 }
 
@@ -1509,10 +1536,7 @@ $("btn-passport").onclick = async () => {
 
     // a planned trip hasn't been anywhere yet
     const taken = state.holidays.filter((h) => !h.planned);
-    const days = taken.reduce((sum, h) => {
-      const end = h.end_at ? new Date(h.end_at) : new Date();
-      return sum + Math.max(1, Math.round((end - new Date(h.start_at)) / 86400000) + 1);
-    }, 0);
+    const days = taken.reduce((sum, h) => sum + tripDays(h), 0);
     const countries = new Set(stamps.map((s) => s.country));
     const places = state.holidays.reduce((n, h) => n + h.pin_count, 0);
 
@@ -1551,7 +1575,7 @@ $("btn-passport").onclick = async () => {
       card.style.setProperty("--i", i % 12);
       card.appendChild(el("div", "stamp-country", s.country));
       card.appendChild(el("div", "stamp-trip", s.name));
-      card.appendChild(el("div", "stamp-admit", "Admitted \u00b7 " + fmtDate(s.start_at)));
+      card.appendChild(el("div", "stamp-admit", "Admitted \u00b7 " + fmtTripDay(s.start_at)));
       card.title = "Open this trip's story";
       card.onclick = () => {
         const h = holidayById(s.holiday_id);
@@ -2096,7 +2120,7 @@ function renderBanner() {
   $("banner-name").textContent = active.name;
   // Live, the same stub counts up instead: which day of the trip this is.
   // Never below 1 — a start later today is still the first day.
-  const day = Math.max(1, Math.floor((Date.now() - new Date(active.start_at)) / 86400000) + 1);
+  const day = tripDays({ start_at: active.start_at, end_at: null });
   $("banner-stub").hidden = false;
   $("stub-n").textContent = day > 1 ? String(day) : "day";
   $("stub-unit").textContent = day > 1 ? "day" : "first";
