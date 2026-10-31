@@ -26,8 +26,10 @@ var staticFiles embed.FS
 
 type app struct {
 	db           *sql.DB
+	rdb          *sql.DB // read-only pool; nil in tests, see reader()
 	immich       *immichClient
 	limiter      *loginLimiter
+	ipLimiter    *ipLimiter
 	cookieSecure bool
 	syncMu       sync.Mutex    // serializes actual sync work against Immich
 	stateMu      sync.Mutex    // guards lastSync, syncDone + syncOK
@@ -50,6 +52,9 @@ func env(key, fallback string) string {
 }
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "-healthcheck" || os.Args[1] == "--healthcheck") {
+		os.Exit(runHealthcheck())
+	}
 	db, err := openDB(env("DB_PATH", "./holidaymap.db"))
 	if err != nil {
 		log.Fatalf("open database: %v", err)
@@ -59,8 +64,15 @@ func main() {
 		db:           db,
 		immich:       newImmichClient(env("IMMICH_URL", "http://immich-server:2283"), os.Getenv("IMMICH_API_KEY")),
 		limiter:      newLoginLimiter(),
+		ipLimiter:    newIPLimiter(),
 		cookieSecure: env("COOKIE_SECURE", "true") == "true",
 		lastSync:     make(map[int64]time.Time),
+	}
+
+	if rdb, err := openReadDB(env("DB_PATH", "./holidaymap.db")); err != nil {
+		log.Printf("read pool unavailable, reads share the writer: %v", err)
+	} else {
+		a.rdb = rdb
 	}
 
 	a.bootstrapAdmin()
@@ -148,7 +160,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              env("LISTEN_ADDR", ":8095"),
-		Handler:           securityHeaders(mux),
+		Handler:           requestLog(securityHeaders(gzipJSON(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      2 * time.Minute, // generous: original-size photos stream through here
@@ -158,12 +170,22 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
+// reader is where pure reads go: the read-only pool when there is one (WAL
+// lets it read while the writer is busy with a photo sync), else the writer.
+func (a *app) reader() *sql.DB {
+	if a.rdb != nil {
+		return a.rdb
+	}
+	return a.db
+}
+
 // housekeeping purges expired sessions and stale login-limiter entries so
 // neither grows without bound, and folds the WAL back into the database.
 func (a *app) housekeeping() {
 	for {
 		a.db.Exec(`DELETE FROM sessions WHERE expires_at < ?`, time.Now().UTC().Format(time.RFC3339))
 		a.limiter.gc()
+		a.ipLimiter.gc()
 		a.promotePlanned()
 		if err := checkpoint(a.db); err != nil {
 			log.Printf("wal checkpoint: %v", err)

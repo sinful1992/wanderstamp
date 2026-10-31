@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"regexp"
 	"sort"
@@ -44,8 +45,42 @@ func newImmichClient(baseURL, apiKey string) *immichClient {
 	return &immichClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
-		http:    &http.Client{Timeout: 60 * time.Second},
+		http:    &http.Client{Timeout: 60 * time.Second, Transport: immichTransport{http.DefaultTransport}},
 	}
+}
+
+// immichTransport logs every failed Immich call (R5) and retries once when
+// the name doesn't resolve yet: after a reboot holiday-map can be up before
+// Docker's DNS knows immich-server (seen 10-19). A DNS failure means nothing
+// was sent, so even a POST is safe to send again.
+type immichTransport struct{ next http.RoundTripper }
+
+func (t immichTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	start := time.Now()
+	resp, err := t.next.RoundTrip(req)
+	var dnsErr *net.DNSError
+	if err != nil && errors.As(err, &dnsErr) {
+		select {
+		case <-time.After(2 * time.Second):
+		case <-req.Context().Done():
+			return nil, err
+		}
+		retry := req.Clone(req.Context())
+		if req.GetBody != nil {
+			if retry.Body, err = req.GetBody(); err != nil {
+				return nil, err
+			}
+		}
+		resp, err = t.next.RoundTrip(retry)
+	}
+	ms := time.Since(start).Milliseconds()
+	switch {
+	case err != nil:
+		log.Printf("immich %s %s failed after %d ms: %v", req.Method, req.URL.Path, ms, err)
+	case resp.StatusCode >= 400:
+		log.Printf("immich %s %s: %d in %d ms", req.Method, req.URL.Path, resp.StatusCode, ms)
+	}
+	return resp, err
 }
 
 func (c *immichClient) validate() error {
@@ -679,7 +714,7 @@ func (a *app) handlePhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var exists int
-	if err := a.db.QueryRow(`
+	if err := a.reader().QueryRow(`
 		SELECT 1 FROM pin_photos WHERE asset_id = ?
 		UNION ALL SELECT 1 FROM unplaced_photos WHERE asset_id = ?
 		UNION ALL SELECT 1 FROM set_aside WHERE asset_id = ? LIMIT 1`,

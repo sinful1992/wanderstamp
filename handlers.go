@@ -79,7 +79,8 @@ type holidayOut struct {
 	UnplacedCount int     `json:"unplaced_count"`
 	AskCount      int     `json:"ask_count"`       // photos near a hand pin, waiting for "same place?"
 	SetAsideCount int     `json:"set_aside_count"` // photos taken off the trip by hand
-	Shared        bool    `json:"shared"`
+	Shared        bool    `json:"shared"`           // a link that still works; false once it has expired
+	ShareExpires  *string `json:"share_expires_at"` // nil = never, or no link
 	PackTotal     int     `json:"pack_total"`
 	PackDone      int     `json:"pack_done"`
 	DestName      string  `json:"dest_name"`
@@ -148,7 +149,7 @@ func (a *app) listHolidays(pins []pinOut) ([]holidayOut, error) {
 	for _, p := range pins {
 		byTrip[p.HolidayID] = append(byTrip[p.HolidayID], p)
 	}
-	rows, err := a.db.Query(`
+	rows, err := a.reader().Query(`
 		SELECT h.id, h.name, h.color, h.start_at, h.end_at, h.journal,
 		       COALESCE((SELECT pp.asset_id FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
 		                 WHERE p.holiday_id = h.id AND pp.asset_id = h.cover_asset),
@@ -161,6 +162,7 @@ func (a *app) listHolidays(pins []pinOut) ([]holidayOut, error) {
 		        WHERE p.holiday_id = h.id AND pp.ask = 1),
 		       (SELECT COUNT(*) FROM set_aside sa WHERE sa.holiday_id = h.id),
 		       EXISTS (SELECT 1 FROM shares s WHERE s.holiday_id = h.id),
+		       (SELECT s.expires_at FROM shares s WHERE s.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id AND pi.checked = 1),
 		       h.dest_name, h.dest_lat, h.dest_lng, h.planned, length(h.dest_area)
@@ -173,9 +175,14 @@ func (a *app) listHolidays(pins []pinOut) ([]holidayOut, error) {
 	for rows.Next() {
 		var h holidayOut
 		var n int
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.UnplacedCount, &h.AskCount, &h.SetAsideCount, &h.Shared, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned, &n); err != nil {
+		var expires sql.NullString
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.UnplacedCount, &h.AskCount, &h.SetAsideCount, &h.Shared, &expires, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned, &n); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if h.Shared && expires.Valid {
+			h.ShareExpires = &expires.String
+			h.Shared = !shareExpired(expires)
 		}
 		for _, p := range byTrip[h.ID] {
 			h.PinCount++
@@ -277,6 +284,13 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 // promotePlanned puts the earliest planned trip whose first day has come live.
 // While another trip is still live it waits; it goes the moment that one ends.
 func (a *app) promotePlanned() {
+	// a read first, so the map's every load isn't a write (P4); the write
+	// below only runs on the rare load when a countdown has reached zero
+	now := time.Now().UTC().Format(time.RFC3339)
+	var due bool
+	if err := a.reader().QueryRow(`SELECT EXISTS (SELECT 1 FROM holidays WHERE planned = 1 AND start_at <= ?)`, now).Scan(&due); err == nil && !due {
+		return
+	}
 	if _, err := a.db.Exec(`
 		UPDATE holidays SET planned = 0
 		WHERE id = (SELECT id FROM holidays WHERE planned = 1 AND start_at <= ?
@@ -764,7 +778,7 @@ type pinOut struct {
 
 // queryPins returns pins for one holiday, or every pin when holidayID is 0.
 func (a *app) queryPins(holidayID int64) ([]pinOut, error) {
-	rows, err := a.db.Query(`
+	rows, err := a.reader().Query(`
 		SELECT p.id, p.holiday_id, p.kind, p.lat, p.lng, p.title, p.note, p.created_at,
 		       COALESCE((SELECT MIN(pp.taken_at) FROM pin_photos pp WHERE pp.pin_id = p.id),
 		                p.created_at),
@@ -791,7 +805,7 @@ func (a *app) queryPins(holidayID int64) ([]pinOut, error) {
 		return nil, err
 	}
 	// the photos' times, once the pin rows are closed (one connection)
-	rows, err = a.db.Query(`
+	rows, err = a.reader().Query(`
 		SELECT pp.pin_id, pp.taken_at FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
 		WHERE ? = 0 OR p.holiday_id = ?`, holidayID, holidayID)
 	if err != nil {

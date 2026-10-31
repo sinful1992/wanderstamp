@@ -151,6 +151,12 @@ var migrations = []string{
 	`ALTER TABLE users ADD COLUMN last_seen TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE pin_photos ADD COLUMN ask INTEGER NOT NULL DEFAULT 0`,
+	// share links can expire; NULL = never (every link made before 1.13.1)
+	`ALTER TABLE shares ADD COLUMN expires_at TEXT`,
+	// lookups by owner/trip that used to scan the whole table
+	`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_set_aside_holiday ON set_aside(holiday_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_photo_choices_holiday ON photo_choices(holiday_id)`,
 }
 
 func openDB(path string) (*sql.DB, error) {
@@ -175,5 +181,18 @@ func openDB(path string) (*sql.DB, error) {
 		time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return nil, fmt.Errorf("re-plan future trips: %w", err)
 	}
+	return db, nil
+}
+
+// openReadDB is a read-only pool beside the single writer connection: under
+// WAL readers never wait for a writer, so the map and photos keep answering
+// while a photo sync holds the write connection.
+func openReadDB(path string) (*sql.DB, error) {
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=query_only(1)", path)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(4)
 	return db, nil
 }

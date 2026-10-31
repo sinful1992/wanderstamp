@@ -6,7 +6,10 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -129,6 +132,14 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	// iOS types "Kayleigh" for "kayleigh" and pads autocompleted names with a space
+	req.Username = strings.TrimSpace(req.Username)
+	ip := clientIP(r)
+	if d := a.ipLimiter.blockedFor(ip); d > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(d.Seconds())+1))
+		httpError(w, http.StatusTooManyRequests, "too many failed logins from this device, try again later")
+		return
+	}
 	// case-folded so "Giedrius" and "giedrius" can't get ten tries between them
 	key := limiterKey(req.Username)
 	if len(key) > 64 { // no such account can exist; don't let junk names grow the limiter
@@ -142,15 +153,19 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	var (
 		id         int64
+		name       string
 		hash       string
 		isAdmin    bool
 		mustChange bool
 	)
-	err := a.db.QueryRow(`SELECT id, password_hash, is_admin, must_change_password FROM users WHERE username = ?`, req.Username).
-		Scan(&id, &hash, &isAdmin, &mustChange)
+	// case-insensitive, as sign-up already is: "Kid" and "kid" are one account
+	err := a.db.QueryRow(`SELECT id, username, password_hash, is_admin, must_change_password FROM users
+		WHERE lower(username) = lower(?) ORDER BY id LIMIT 1`, req.Username).
+		Scan(&id, &name, &hash, &isAdmin, &mustChange)
 	if err == sql.ErrNoRows {
 		bcrypt.CompareHashAndPassword(dummyHash, []byte(req.Password))
 		a.limiter.fail(key)
+		a.ipLimiter.fail(ip)
 		httpError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -160,6 +175,7 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
 		a.limiter.fail(key)
+		a.ipLimiter.fail(ip)
 		httpError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -179,7 +195,7 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, a.sessionCookie(token, int(sessionTTL.Seconds())))
 	a.db.Exec(`UPDATE users SET last_seen = ? WHERE id = ?`, time.Now().UTC().Format(time.RFC3339), id)
-	writeJSON(w, http.StatusOK, sessionUser{Username: req.Username, IsAdmin: isAdmin, MustChange: mustChange})
+	writeJSON(w, http.StatusOK, sessionUser{Username: name, IsAdmin: isAdmin, MustChange: mustChange})
 }
 
 func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -302,6 +318,10 @@ func (a *app) sessionCookie(value string, maxAge int) *http.Cookie {
 // auth wraps a handler, requiring a valid session; the user lands in the context.
 func (a *app) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			httpError(w, http.StatusForbidden, "cross-site request")
+			return
+		}
 		c, err := r.Cookie(sessionCookie)
 		if err != nil {
 			httpError(w, http.StatusUnauthorized, "not logged in")
@@ -354,6 +374,116 @@ func (a *app) auth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+	}
+}
+
+// sameOrigin backs up SameSite=Lax for requests that change something: POSTs
+// with no body (end trip, sync, sign out a user) need no preflight, so the
+// browser's own word on where the request came from is checked. A client
+// that sends neither header (curl, an old WebView) isn't a browser being
+// tricked, and passes.
+func sameOrigin(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+		return site == "same-origin" || site == "none"
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
+}
+
+// --- per-device login limit ---
+
+// clientIP is the device a login came from. Behind tailscale serve every
+// request arrives from the proxy, which appends the real address to
+// X-Forwarded-For, so the last entry is the one the proxy vouches for
+// (anything before it the client could have typed itself).
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
+			return ip
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+const (
+	ipMaxFails = 20
+	ipWindow   = 15 * time.Minute
+)
+
+// ipLimiter caps failed logins per device across all usernames, so nobody
+// can walk through the family's names or lock them all out in turn. It sits
+// beside the per-account lockout, which still guards each account.
+type ipLimiter struct {
+	mu    sync.Mutex
+	fails map[string][]time.Time
+}
+
+func newIPLimiter() *ipLimiter { return &ipLimiter{fails: map[string][]time.Time{}} }
+
+func (l *ipLimiter) recent(ip string, now time.Time) []time.Time {
+	kept := l.fails[ip][:0]
+	for _, t := range l.fails[ip] {
+		if now.Sub(t) < ipWindow {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == 0 {
+		delete(l.fails, ip)
+		return nil
+	}
+	l.fails[ip] = kept
+	return kept
+}
+
+// blockedFor is how long this device must wait; zero when it may try.
+func (l *ipLimiter) blockedFor(ip string) time.Duration {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	f := l.recent(ip, now)
+	if len(f) < ipMaxFails {
+		return 0
+	}
+	return ipWindow - now.Sub(f[len(f)-ipMaxFails])
+}
+
+func (l *ipLimiter) fail(ip string) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.fails) > 10000 { // a flood of addresses can't grow this forever
+		l.fails = map[string][]time.Time{}
+	}
+	l.fails[ip] = append(l.recent(ip, time.Now()), time.Now())
+}
+
+func (l *ipLimiter) gc() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	for ip := range l.fails {
+		l.recent(ip, now)
 	}
 }
 
