@@ -6,7 +6,7 @@
 //     (always fresh, no version skew between index.html and app.js); offline
 //     the app still opens.
 //   - immutable assets (vendored leaflet/, the woff2 font, icons/) — cache-first;
-//     they only ever change together with a bumped CACHE name.
+//     they only ever change together with the CACHE name (a build hash).
 //   - /api/* is never touched: live data stays live, and failures surface to
 //     the app's own error handling instead of a stale cache lying about state.
 //   - Esri basemap tiles — cache-first with a FIFO cap. Only tiles actually
@@ -14,7 +14,10 @@
 //     policy); browse an area online once and it renders offline later.
 //   - other cross-origin is never touched.
 
-const CACHE = "shell-v2";
+// __BUILD__ is replaced at image build time by a hash of everything in static/
+// (Dockerfile), so any changed file — Leaflet, a font, an icon — gets a fresh
+// cache and the old one is deleted on activate. A dev build keeps the placeholder.
+const CACHE = "shell-__BUILD__";
 // v2: tiles-v1 holds CARTO tiles stamped "API KEY REQUIRED", so the rename is
 // what actually clears the defaced basemap off devices that already visited.
 const TILE_CACHE = "tiles-v2";
