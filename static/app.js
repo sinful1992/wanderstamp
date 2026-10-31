@@ -4,6 +4,8 @@
 "use strict";
 
 const SWATCHES = ["#1d6fb8", "#c2452d", "#2e8b57", "#b8860b", "#7b4b94", "#d81b60", "#00838f", "#5d4037"];
+// what a screen reader says for each swatch, in the same order
+const SWATCH_NAMES = ["Blue", "Red", "Green", "Gold", "Purple", "Pink", "Teal", "Brown"];
 
 const state = {
   me: null,
@@ -532,6 +534,13 @@ function renderMarkers() {
     marker.tripId = src.holiday_id;
     marker.pinId = pending ? null : w.pin.id;
     marker.qp = pending ? w.qp : null;
+    // a pin is a button to a screen reader too, so it says which place it is
+    const elm = marker.getElement();
+    if (elm) {
+      const trip = holidayById(src.holiday_id);
+      const what = pending ? `${src.title || "Pin"}, waiting to sync` : src.title || "Pin";
+      elm.setAttribute("aria-label", trip ? `${what} · ${trip.name}` : what);
+    }
     // Bound once, on creation: the handler reads the marker's current fields
     // rather than closing over the descriptor from the render that made it.
     // Tapping a pin opens its trip's story at that chapter — the chapter
@@ -2240,12 +2249,16 @@ function makeSwatches(wrap, initial, onPick) {
     const b = el("button");
     b.type = "button";
     b.style.background = c;
-    b.title = c;
+    const name = SWATCH_NAMES[SWATCHES.indexOf(c)] || c;
+    b.title = name;
+    b.setAttribute("aria-label", `${name} trip colour`);
+    b.setAttribute("aria-pressed", String(c === initial));
     if (c === initial) b.classList.add("sel");
     b.onclick = () => {
       onPick(c);
-      wrap.querySelectorAll("button").forEach((x) => x.classList.remove("sel"));
+      wrap.querySelectorAll("button").forEach((x) => { x.classList.remove("sel"); x.setAttribute("aria-pressed", "false"); });
       b.classList.add("sel");
+      b.setAttribute("aria-pressed", "true");
     };
     wrap.appendChild(b);
   }
