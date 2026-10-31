@@ -69,7 +69,11 @@ async function api(method, path, body, meta) {
     throw new Error("choose your own password first");
   }
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.error || resp.statusText);
+  if (!resp.ok) {
+    const err = new Error(data.error || resp.statusText);
+    err.status = resp.status;
+    throw err;
+  }
   return data;
 }
 
@@ -123,6 +127,15 @@ function isNetworkError(ex) {
   return ex instanceof TypeError;
 }
 
+// Worth sending again later: no network, a server that's restarting or behind
+// a proxy that answers 502/503, a rate limit, or a sign-in that has to happen
+// first. Only a real "no" from the server (a 4xx: the trip was deleted) drops it.
+function isRetryable(ex) {
+  if (isNetworkError(ex)) return true;
+  const st = ex && ex.status;
+  return st === undefined || st === 401 || st === 408 || st === 428 || st === 429 || st >= 500;
+}
+
 let syncingQueue = false;
 async function syncQueue() {
   if (syncingQueue || SHARE) return;
@@ -138,7 +151,7 @@ async function syncQueue() {
         sent++;
       } catch (ex) {
         // still offline, or logged out mid-queue: stop and keep everything
-        if (isNetworkError(ex) || ex.message === "not logged in") break;
+        if (isRetryable(ex)) break;
         dropped++; // the server said no (trip deleted?) — retrying forever won't fix it
       }
       q = q.slice(1);
