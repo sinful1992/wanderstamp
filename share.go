@@ -28,7 +28,8 @@ func (a *app) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Days *int `json:"days"`
 	}
-	if r.ContentLength != 0 {
+	// an empty body, even a chunked one with no Content-Type, means "never"
+	if r.ContentLength != 0 && (r.ContentLength > 0 || r.Header.Get("Content-Type") != "") {
 		if !readJSON(w, r, &req) {
 			return
 		}

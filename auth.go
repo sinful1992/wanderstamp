@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -158,10 +159,18 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 		isAdmin    bool
 		mustChange bool
 	)
-	// case-insensitive, as sign-up already is: "Kid" and "kid" are one account
+	// the name exactly as typed first, so two old accounts that differ only
+	// by case ("kid", "Kid") both still sign in; then any case, folded in Go
+	// because SQLite's lower() only knows ASCII ("Ünal" / "ünal")
 	err := a.db.QueryRow(`SELECT id, username, password_hash, is_admin, must_change_password FROM users
-		WHERE lower(username) = lower(?) ORDER BY id LIMIT 1`, req.Username).
+		WHERE username = ?`, req.Username).
 		Scan(&id, &name, &hash, &isAdmin, &mustChange)
+	if err == sql.ErrNoRows {
+		if match, ok := a.usernameFold(req.Username); ok {
+			err = a.db.QueryRow(`SELECT id, username, password_hash, is_admin, must_change_password FROM users
+				WHERE username = ?`, match).Scan(&id, &name, &hash, &isAdmin, &mustChange)
+		}
+	}
 	if err == sql.ErrNoRows {
 		bcrypt.CompareHashAndPassword(dummyHash, []byte(req.Password))
 		a.limiter.fail(key)
@@ -238,9 +247,7 @@ func (a *app) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// the limiter already treats "Kid" and "kid" as one account; so does this
-	var taken int
-	a.db.QueryRow(`SELECT COUNT(*) FROM users WHERE lower(username) = lower(?)`, req.Username).Scan(&taken)
-	if taken > 0 {
+	if _, taken := a.usernameFold(req.Username); taken {
 		httpError(w, http.StatusConflict, "username already exists")
 		return
 	}
@@ -377,6 +384,23 @@ func (a *app) auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// usernameFold finds the account a name means in any case, Unicode-aware.
+// The family has a handful of accounts, so reading them all is nothing.
+func (a *app) usernameFold(name string) (string, bool) {
+	rows, err := a.db.Query(`SELECT username FROM users ORDER BY id`)
+	if err != nil {
+		return "", false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u string
+		if rows.Scan(&u) == nil && strings.EqualFold(u, name) {
+			return u, true
+		}
+	}
+	return "", false
+}
+
 // sameOrigin backs up SameSite=Lax for requests that change something: POSTs
 // with no body (end trip, sync, sign out a user) need no preflight, so the
 // browser's own word on where the request came from is checked. A client
@@ -414,6 +438,15 @@ func sameOrigin(r *http.Request) bool {
 // Docker gateway, and "" turns the per-device limit off: one shared budget
 // would let a stranger's typos lock the whole family out again.
 func clientIP(r *http.Request) string {
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		peer = r.RemoteAddr
+	}
+	if !trustedProxy(peer) {
+		// straight from a device (the LAN port): its own address is the key,
+		// and whatever X-Forwarded-For it typed is ignored
+		return peer
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
 		if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
@@ -424,6 +457,56 @@ func clientIP(r *http.Request) string {
 		}
 	}
 	return ""
+}
+
+// trustedProxy is a peer whose X-Forwarded-For is believed: loopback, or the
+// container's network gateway, which is where tailscale serve's requests
+// come from once docker-proxy has passed them in (LAN connections keep their
+// real source address, so they never look like the gateway).
+func trustedProxy(peer string) bool {
+	ip := net.ParseIP(peer)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	gw := containerGateway()
+	return gw != nil && gw.Equal(ip)
+}
+
+var (
+	gatewayOnce sync.Once
+	gatewayIP   net.IP
+)
+
+// containerGateway reads the default route's gateway from /proc/net/route
+// once; nil when there is none (tests, a host without /proc).
+func containerGateway() net.IP {
+	gatewayOnce.Do(func() {
+		data, err := os.ReadFile("/proc/net/route")
+		if err == nil {
+			gatewayIP = parseDefaultGateway(string(data))
+		}
+	})
+	return gatewayIP
+}
+
+// parseDefaultGateway picks the 0.0.0.0 destination's gateway out of
+// /proc/net/route, where addresses are little-endian hex.
+func parseDefaultGateway(table string) net.IP {
+	for _, line := range strings.Split(table, "\n")[1:] {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[1] != "00000000" {
+			continue
+		}
+		v, err := strconv.ParseUint(f[2], 16, 32)
+		if err != nil || v == 0 {
+			continue
+		}
+		return net.IPv4(byte(v), byte(v>>8), byte(v>>16), byte(v>>24))
+	}
+	return nil
 }
 
 const (
@@ -477,8 +560,19 @@ func (l *ipLimiter) fail(ip string) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.fails) > 10000 { // a flood of addresses can't grow this forever
-		l.fails = map[string][]time.Time{}
+	if _, known := l.fails[ip]; !known && len(l.fails) >= 10000 {
+		// a flood of addresses can't grow this forever: make room by dropping
+		// the address whose last failure is oldest, never a blocked one first
+		oldest, at := "", time.Now()
+		for k, f := range l.fails {
+			if last := f[len(f)-1]; len(f) < ipMaxFails && last.Before(at) {
+				oldest, at = k, last
+			}
+		}
+		if oldest == "" {
+			return // everyone tracked is blocked; the newcomer waits its turn
+		}
+		delete(l.fails, oldest)
 	}
 	l.fails[ip] = append(l.recent(ip, time.Now()), time.Now())
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -58,7 +59,12 @@ func acceptsGzip(r *http.Request) bool {
 	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
 		enc, q, _ := strings.Cut(strings.TrimSpace(part), ";")
 		if strings.EqualFold(strings.TrimSpace(enc), "gzip") {
-			return strings.ReplaceAll(strings.TrimSpace(q), " ", "") != "q=0"
+			q = strings.ReplaceAll(strings.TrimSpace(q), " ", "")
+			if v, ok := strings.CutPrefix(strings.ToLower(q), "q="); ok {
+				f, err := strconv.ParseFloat(v, 64)
+				return err == nil && f > 0
+			}
+			return true
 		}
 	}
 	return false

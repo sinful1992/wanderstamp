@@ -505,3 +505,24 @@ func TestImmichRetriesOnceOnDNS(t *testing.T) {
 		t.Errorf("non-DNS error: err %v, %d calls, want 1 and the error", err, refused.calls.Load())
 	}
 }
+
+// S3: inside Docker, tailscale serve's requests arrive from the network
+// gateway; that address is read from /proc/net/route.
+func TestParseDefaultGateway(t *testing.T) {
+	table := "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n" +
+		"eth0\t00000000\t010012AC\t0003\t0\t0\t0\t00000000\t0\t0\t0\n" +
+		"eth0\t000012AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
+	if gw := parseDefaultGateway(table); gw == nil || gw.String() != "172.18.0.1" {
+		t.Errorf("gateway %v, want 172.18.0.1", gw)
+	}
+	if gw := parseDefaultGateway("Iface\tDestination\tGateway\n"); gw != nil {
+		t.Errorf("no default route: %v", gw)
+	}
+	// a LAN device's own X-Forwarded-For is ignored
+	r := httptest.NewRequest("POST", "/api/login", nil)
+	r.RemoteAddr = "192.168.1.50:4444"
+	r.Header.Set("X-Forwarded-For", "10.0.0.1")
+	if ip := clientIP(r); ip != "192.168.1.50" {
+		t.Errorf("LAN peer with forged XFF keyed as %q", ip)
+	}
+}
