@@ -1068,7 +1068,10 @@ body.storying #sheet, body.storying #fabs { display: none; }
 
 /* share mode: an anonymous reader gets the story and the map, nothing else */
 body.shared #sheet, body.shared #fabs, body.shared #banner { display: none !important; }
-.share-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.share-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.share-state { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--muted); }
+.share-make { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.share-row select.share-life { width: auto; flex: none; padding: 4px 6px; font-size: 13px; }
 
 /* the active chapter's pin lifts off the paper; !important because Leaflet
    manages each marker's z-index inline */

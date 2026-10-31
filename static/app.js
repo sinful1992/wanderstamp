@@ -1494,20 +1494,39 @@ function tripEditForm(h) {
     wrap.appendChild(coverPick(api("GET", `/api/holidays/${h.id}/timeline`), h.cover_asset, (a) => { cover = a; }));
   }
   const shareRow = el("div", "share-row");
-  const mkShare = el("button", "linkish", h.shared ? "New share link (replaces the old one)" : "Share this trip — view-only link");
+  if (h.shared) {
+    shareRow.appendChild(el("p", "share-state", h.share_expires_at
+      ? `Shared · the link works until ${fmtDate(h.share_expires_at)}`
+      : "Shared · the link never expires"));
+  }
+  const mkShare = el("button", "linkish", h.shared ? "New share link" : "Share this trip — view-only link");
   mkShare.type = "button";
-  mkShare.onclick = () => busy(mkShare, async () => {
-    const res = await api("POST", `/api/holidays/${h.id}/share`);
-    const url = location.origin + res.url;
-    try {
-      await navigator.clipboard.writeText(url);
-      toast("View-only link copied — anyone with it can see this trip");
-    } catch {
-      window.prompt("Copy the view-only link:", url);
-    }
-    loadData();
-  });
-  shareRow.appendChild(mkShare);
+  // how long a new link works; the server takes 7, 30, 90, 365 or 0 (never)
+  const life = el("select", "share-life");
+  life.setAttribute("aria-label", "How long the link works");
+  for (const [days, label] of [[30, "for 30 days"], [7, "for a week"], [90, "for 3 months"], [365, "for a year"], [0, "with no end date"]]) {
+    const o = el("option", null, label);
+    o.value = String(days);
+    life.appendChild(o);
+  }
+  mkShare.onclick = () => {
+    if (h.shared && !confirm("Make a new link? The old link stops working for everyone who has it.")) return;
+    return busy(mkShare, async () => {
+      const res = await api("POST", `/api/holidays/${h.id}/share`, { days: Number(life.value) });
+      const url = location.origin + res.url;
+      const until = res.expires_at ? ` It works until ${fmtDate(res.expires_at)}.` : "";
+      try {
+        await navigator.clipboard.writeText(url);
+        toast(`View-only link copied — anyone with it can see this trip.${until}`);
+      } catch {
+        window.prompt("Copy the view-only link:", url);
+      }
+      loadData();
+    });
+  };
+  const mkWrap = el("span", "share-make");
+  mkWrap.append(mkShare, life);
+  shareRow.appendChild(mkWrap);
   if (h.shared) {
     const revoke = el("button", "linkish", "Revoke share link");
     revoke.type = "button";
@@ -2535,7 +2554,9 @@ function showLightbox() {
   }
   $("lb-count").textContent = `${lb.idx + 1} / ${lb.photos.length}`;
   $("lb-date").textContent = fmtDate(ph.taken_at);
-  $("lb-orig").href = photoURL(ph.asset_id, "original");
+  // a share link gets the preview, never the original file with its GPS data
+  $("lb-orig").href = photoURL(ph.asset_id, SHARE ? "preview" : "original");
+  $("lb-orig").textContent = SHARE ? "Open photo" : "Open original";
   $("lb-prev").style.visibility = lb.idx > 0 ? "visible" : "hidden";
   $("lb-next").style.visibility = lb.idx < lb.photos.length - 1 ? "visible" : "hidden";
 }
@@ -2845,9 +2866,11 @@ async function openFamily() {
       state.pins = d.pins;
       renderMarkers();
       openStory(d.holiday);
-    } catch {
-      openOverlay("Link expired", el("p", "empty-note",
-        "This share link is no longer active — ask the sender for a fresh one."));
+    } catch (ex) {
+      const expired = ex && ex.status === 410;
+      openOverlay(expired ? "Link expired" : "Link not found", el("p", "empty-note", expired
+        ? "This share link has expired — ask the sender for a fresh one."
+        : "This share link is no longer active — ask the sender for a fresh one."));
       $("overlay-close").hidden = true;
     }
     return;
