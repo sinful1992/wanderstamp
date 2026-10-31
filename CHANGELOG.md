@@ -17,3 +17,18 @@
 - After a server restart, the first Immich call retries once if Immich's name doesn't resolve yet.
 
 ### Frontend
+- Trip dates show the days you picked in every timezone: in summer time a trip that ended 24 May no longer reads
+  "23–25 May", and the passport's days away is no longer one too many.
+- A pin dropped offline waits through server restarts and proxy errors (5xx, 429) instead of being thrown away.
+- The username box no longer capitalises on an iPhone.
+- A background photo sync no longer wipes a trip or pin form you're typing in.
+- One tap, one request: Start, Add pin, Save, Share, Delete and Sync are off while they run, so a double tap
+  can't make two trips. End holiday shows "Ending…" while it pulls the last photos.
+- A failed delete, revoke, End holiday or family action says what went wrong instead of nothing.
+- "1 pin", not "1 pins"; zero counts are left out; the trips pill reads "3 trips".
+- Share links: pick how long a link works (30 days by default), see when it ends, and confirm before a new link
+  replaces the old one. A shared page opens photo previews, never originals.
+- Buttons in sentence case, so the stamps stand out. 44 px touch targets for the trip icons, colour swatches and
+  zoom buttons; pins and swatches are labelled for screen readers.
+- The photo viewer fits under the iPhone's address bar.
+- The offline cache is named after the build, so an updated Leaflet, font or icon is never served stale.
