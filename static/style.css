@@ -1089,7 +1089,7 @@ body.shared #sheet, body.shared #fabs, body.shared #banner { display: none !impo
 #lightbox[hidden] { display: none; }
 /* sized to the screen, not the file, so the small thumb stands in at full
    size while the preview is still on its way */
-#lb-img { width: 100vw; height: 100vh; object-fit: contain; transition: filter .25s; }
+#lb-img { width: 100vw; height: 100vh; height: 100dvh; object-fit: contain; transition: filter .25s; }
 #lb-img.soft { filter: blur(8px); }
 #lb-close, #lb-prev, #lb-next {
   position: absolute; z-index: 1;
