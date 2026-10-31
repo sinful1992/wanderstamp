@@ -42,6 +42,11 @@ function setSheet(open) {
   $("sheet-pill").setAttribute("aria-expanded", String(open));
 }
 
+// "1 pin", "2 pins", "0 photos". English only, like the rest of the UI.
+function plural(n, one, many = one + "s") {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
 function toast(msg) {
   const t = $("toast");
   t.textContent = msg;
@@ -730,7 +735,7 @@ function loadStoryPhotos(sec) {
     const more = sec.querySelector(".story-more");
     if (more) {
       more.disabled = false;
-      more.textContent = `All ${photos.length} photos`;
+      more.textContent = photos.length === 1 ? "The photo" : `All ${photos.length} photos`;
       more.onclick = (e) => { e.stopPropagation(); openLightbox(photos, 0, { aside: !SHARE }); };
     }
   }).catch(() => { grid.textContent = ""; grid.appendChild(el("span", "pop-sub", "Couldn't load photos")); });
@@ -799,7 +804,7 @@ function openStory(h, pinId) {
       for (let i = 0; i < shown; i++) grid.appendChild(el("span", "ph"));
       sec.appendChild(grid);
       if (stop.n > shown) {
-        const more = el("button", "story-more", `All ${stop.n} photos`);
+        const more = el("button", "story-more", stop.n === 1 ? "The photo" : `All ${stop.n} photos`);
         more.type = "button";
         more.disabled = true; // enabled once the photos are in hand
         sec.appendChild(more);
@@ -862,7 +867,7 @@ function openStory(h, pinId) {
   if (h.unplaced_count > 0) {
     const sec = el("section", "story-sec");
     sec.appendChild(el("h3", "story-place", "Photos without a location"));
-    const file = el("button", "sub-link", `file ${h.unplaced_count} photos onto pins`);
+    const file = el("button", "sub-link", `file ${plural(h.unplaced_count, "photo")} onto pins`);
     file.onclick = () => openUnplaced(h);
     sec.appendChild(file);
     scroll.appendChild(sec);
@@ -1266,7 +1271,7 @@ function renderSheet() {
     i.style.background = h.color;
     dots.appendChild(i);
   });
-  $("pill-label").textContent = state.holidays.length ? `Trips · ${state.holidays.length}` : "Trips";
+  $("pill-label").textContent = state.holidays.length ? plural(state.holidays.length, "trip") : "Trips";
 
   const list = $("trip-list");
   list.textContent = "";
@@ -1311,7 +1316,8 @@ function renderSheet() {
     }
     info.append(name, el("div", "trip-meta", h.planned
       ? tripRange(h)
-      : `${tripRange(h)} · ${h.pin_count} pins · ${h.photo_count} photos`));
+      : [tripRange(h), h.pin_count && plural(h.pin_count, "pin"), h.photo_count && plural(h.photo_count, "photo")]
+        .filter(Boolean).join(" · ")));
 
     // The cover + name is the trip's own control. It used to be a click
     // handler on the row div, which no keyboard could ever reach.
@@ -1697,7 +1703,7 @@ async function openUnplaced(h) {
     attachBtn.onclick = async () => {
       try {
         const r = await api("POST", `/api/pins/${pinPick.value}/attach`, { asset_ids: [...selected] });
-        toast(`Moved ${r.moved} photos onto the pin`);
+        toast(`Moved ${plural(r.moved, "photo")} onto the pin`);
         closeOverlay();
         loadData();
       } catch (err) {
@@ -2184,7 +2190,7 @@ function renderBanner() {
     await busy($("btn-sync"), async () => {
       const r = await api("POST", `/api/holidays/${active.id}/sync`);
       const extra = r.unplaced ? ` (+${r.unplaced} without location)` : "";
-      toast(`Synced: ${r.photos} photos across ${r.photo_pins} places${extra}`);
+      toast(`Synced: ${plural(r.photos, "photo")} across ${plural(r.photo_pins, "place")}${extra}`);
       loadData();
     });
   };
@@ -2357,7 +2363,7 @@ $("new-trip-form").onsubmit = async (e) => {
     if (dest) map.flyTo([dest.lat, dest.lng], 10);
     if (created.planned) return; // nothing to pull until it starts
     api("POST", `/api/holidays/${created.id}/sync`)
-      .then((r) => { toast(`Found ${r.photos} photos across ${r.photo_pins} places`); loadData(); })
+      .then((r) => { toast(r.photos ? `Found ${plural(r.photos, "photo")} across ${plural(r.photo_pins, "place")}` : "No photos found for those dates yet"); loadData(); })
       .catch(() => {});
   });
 };
