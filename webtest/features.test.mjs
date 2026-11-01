@@ -147,14 +147,22 @@ export const tests = [
     const { ctx, page } = await signedIn(browser, base);
     const t = await trips(page, [{ name: "F2 Reopen", start_at: "2022-09-01", end_at: "2022-09-04" }]);
     const id = t["F2 Reopen"].id;
+    // earlier tests may have left a trip live: end it, so only one is live at a time
+    for (const h of (await api(page, "GET", "/api/holidays")).body.filter((x) => x.active)) {
+      await api(page, "POST", `/api/holidays/${h.id}/end`);
+    }
     let posted = 0;
     await page.route(`**/api/holidays/${id}/reopen`, (r) => { posted++; r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...t["F2 Reopen"], end_at: null, active: true }) }); });
     page.on("dialog", (d) => d.accept());
     await page.reload({ waitUntil: "networkidle" });
+    // opens the trip's edit form, or leaves it open: the edit button toggles it
     const open = async (name) => {
       await page.evaluate(() => setSheet(true));
-      await page.evaluate((n) => [...document.querySelectorAll("#trip-list .trip-row")].find((r) => r.textContent.includes(n))
-        .querySelector("button[title='Edit this trip']").click(), name);
+      await page.evaluate((n) => {
+        const row = [...document.querySelectorAll("#trip-list .trip-row")].find((r) => r.textContent.includes(n));
+        const f = row.nextElementSibling;
+        if (!(f && f.matches("form.trip-edit"))) row.querySelector("button[title='Edit this trip']").click();
+      }, name);
       await page.waitForSelector("form.trip-edit");
     };
     await open("F2 Reopen");
@@ -178,5 +186,39 @@ export const tests = [
     await open("F2 Planned");
     assert.equal(await page.locator("form.trip-edit button", { hasText: "Reopen trip" }).count(), 0);
     await ctx.close();
+  }],
+  ["F2 end to end: the real server's undo brings a deleted trip and its pin back", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    const t = await trips(page, [{ name: "F2 Real undo", start_at: "2021-03-01", end_at: "2021-03-02" }]);
+    const id = t["F2 Real undo"].id;
+    await api(page, "POST", "/api/pins", { holiday_id: id, lat: 48.85, lng: 2.35, title: "F2 real pin", note: "" });
+    page.on("dialog", (d) => d.accept());
+    await page.reload({ waitUntil: "networkidle" });
+    await page.evaluate(() => setSheet(true));
+    await page.evaluate(() => [...document.querySelectorAll("#trip-list .trip-row")].find((r) => r.textContent.includes("F2 Real undo"))
+      .querySelector("button[title='Edit this trip']").click());
+    await page.click("form.trip-edit button.danger");
+    await page.waitForSelector("#toast .toast-act");
+    assert.equal((await api(page, "GET", "/api/holidays")).body.some((h) => h.id === id), false, "really deleted");
+    await page.click("#toast .toast-act");
+    await page.waitForFunction(() => document.getElementById("toast").textContent.includes("is back"));
+    const back = (await api(page, "GET", "/api/map")).body;
+    assert.ok(back.holidays.some((h) => h.id === id && h.name === "F2 Real undo"));
+    assert.ok(back.pins.some((p) => p.holiday_id === id && p.title === "F2 real pin"));
+    assert.ok(await page.evaluate((i) => state.holidays.some((h) => h.id === i), id), "the list shows it again");
+    await ctx.close();
+  }],
+  ["day numbers: a trip started at 21:00 in New York is day 1 that evening and day 2 the next day", async ({ browser, base }) => {
+    for (const [tz, start, at, want] of [
+      ["America/New_York", "2026-08-01T01:00:00Z", "2026-08-01T02:00:00Z", 1], // 31 Jul 21:00 → 22:00
+      ["America/New_York", "2026-08-01T01:00:00Z", "2026-08-01T16:00:00Z", 2], // 1 Aug noon
+      ["Asia/Bangkok", "2026-07-31T22:00:00Z", "2026-08-01T05:00:00Z", 1],     // 1 Aug 05:00 → noon
+      ["Europe/London", "2026-05-23", "2026-05-24T11:00:00Z", 2],              // a picked date
+    ]) {
+      const { ctx, page } = await signedIn(browser, base, { timezoneId: tz });
+      const n = await page.evaluate(([s, a]) => tripDay({ start_at: s }, a).n, [start, at]);
+      assert.equal(n, want, `${tz} ${start} at ${at}`);
+      await ctx.close();
+    }
   }],
 ];

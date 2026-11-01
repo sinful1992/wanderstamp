@@ -190,6 +190,8 @@ async function syncQueue() {
   };
   try {
     for (const item of q) {
+      // discarded while an earlier pin was sending: don't send it
+      if (!pinQueue().some((x) => same(x, item))) continue;
       const { qid, ...pin } = item;
       try {
         await api("POST", "/api/pins", pin);
@@ -418,8 +420,11 @@ function mapPins(pins) {
 function tripDay(h, at) {
   const t = new Date(new Date(at).getTime() - 4 * 3600000);
   const key = `${t.getFullYear()}-${t.getMonth()}-${t.getDate()}`;
-  const [y, m, dd] = h.start_at.slice(0, 10).split("-").map(Number);
-  const first = new Date(y, m - 1, dd);
+  // the first day in the viewer's calendar: a picked date as that date, a
+  // real start moment in local time (start_at's UTC date is a day off in
+  // New York or Bangkok)
+  const s0 = calDay(h.start_at);
+  const first = new Date(s0.getFullYear(), s0.getMonth(), s0.getDate());
   const today = new Date(t.getFullYear(), t.getMonth(), t.getDate());
   const n = Math.max(1, Math.round((today - first) / 86400000) + 1);
   const label = t.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
@@ -1232,13 +1237,16 @@ async function busy(btn, fn, label) {
   // A form being saved still holds what was typed: it stays "dirty" (see
   // editing()) until the save worked, so a reload while it runs, or after it
   // failed, doesn't wipe it.
+  // "saving" turns back to "1" if more is typed meanwhile (the input
+  // listener), and then the form stays dirty after the save too.
   const form = btn && btn.type === "submit" ? btn.form : null;
-  if (form) form.dataset.dirty = "1";
+  if (form) form.dataset.dirty = "saving";
   try {
     const r = await fn();
-    if (form) delete form.dataset.dirty;
+    if (form && form.dataset.dirty === "saving") delete form.dataset.dirty;
     return r;
   } catch (err) {
+    if (form) form.dataset.dirty = "1";
     toast(err && err.message ? err.message : "Something went wrong");
   } finally {
     if (btn) {
@@ -1410,6 +1418,10 @@ function renderSheet() {
   $("pill-label").textContent = state.holidays.length ? plural(state.holidays.length, "trip") : "Trips";
 
   const list = $("trip-list");
+  // An edit form that's open but untouched is rebuilt with the fresh data,
+  // not closed: a background photo sync shouldn't shut it under your finger.
+  const openForm = list.querySelector("form.trip-edit");
+  const reopenId = openForm ? Number(openForm.dataset.hid) : null;
   list.textContent = "";
   if (!state.holidays.length) {
     // the sheet's first page: the same blank stamp the passport shows
@@ -1551,11 +1563,13 @@ function renderSheet() {
       }
     };
     list.appendChild(row);
+    if (h.id === reopenId) row.after(tripEditForm(h));
   }
 }
 
 function tripEditForm(h) {
   const wrap = el("form", "trip-edit");
+  wrap.dataset.hid = h.id;
   const name = el("input");
   name.type = "text"; name.value = h.name; name.maxLength = 60; name.required = true;
   const sw = el("div");
@@ -1705,6 +1719,8 @@ function tripEditForm(h) {
       await api("PATCH", `/api/holidays/${h.id}`, body);
       toast("Trip saved");
       const dates = startChanged || endChanged;
+      // Saved: the form closes, unless more was typed while it saved.
+      if (wrap.dataset.dirty === "saving") wrap.remove();
       loadData();
       if (dates) api("POST", `/api/holidays/${h.id}/sync`).then(() => loadData()).catch(() => {});
     });

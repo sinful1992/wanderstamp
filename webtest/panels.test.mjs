@@ -48,6 +48,22 @@ export const tests = [
     assert.equal(await page.$eval("form.trip-edit textarea", (t) => t.value), "words that must not be lost");
     await ctx.close();
   }],
+  ["an open, untouched edit form survives a background reload with fresh data", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    const h = await trip(page, "Open B4");
+    await page.reload({ waitUntil: "networkidle" });
+    await page.evaluate(() => {
+      setSheet(true);
+      [...document.querySelectorAll("#trip-list .trip-row")].find((r) => r.textContent.includes("Open B4"))
+        .querySelector("button[title='Edit this trip']").click();
+    });
+    await page.waitForSelector("form.trip-edit");
+    await api(page, "PATCH", `/api/holidays/${h.id}`, { journal: "written on another phone" });
+    await page.evaluate(() => loadData());
+    assert.equal(await page.$eval("form.trip-edit textarea", (t) => t.value), "written on another phone");
+    assert.equal(await page.$$eval("form.trip-edit", (fs) => fs.length), 1);
+    await ctx.close();
+  }],
   ["B4: an untouched open form is still refreshed", async ({ browser, base }) => {
     const { ctx, page } = await signedIn(browser, base);
     await page.evaluate(() => { document.querySelectorAll("form[data-dirty]").forEach((f) => delete f.dataset.dirty); });

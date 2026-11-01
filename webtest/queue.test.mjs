@@ -77,4 +77,26 @@ export const tests = [
     assert.deepEqual(left, ["late"]);
     await ctx.close();
   }],
+  ["a pin discarded while the sync is sending another one isn't sent", async ({ browser, base }) => {
+    const { ctx, page } = await setup(browser, base);
+    await page.evaluate(() => {
+      const q = JSON.parse(localStorage.getItem(QUEUE_KEY));
+      q.push({ ...q[0], qid: "gone", title: "discarded B2" });
+      localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
+    });
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const sent = [];
+    await page.route("**/api/pins", async (r) => {
+      if (r.request().method() === "POST") { sent.push(JSON.parse(r.request().postData()).title); await gate; }
+      r.continue();
+    });
+    const run = page.evaluate(() => syncQueue());
+    await page.waitForTimeout(200);
+    await page.evaluate(() => localStorage.setItem(QUEUE_KEY, JSON.stringify(JSON.parse(localStorage.getItem(QUEUE_KEY)).filter((p) => p.qid !== "gone"))));
+    release();
+    await run;
+    assert.deepEqual(sent, ["queued B2"]);
+    await ctx.close();
+  }],
 ];
