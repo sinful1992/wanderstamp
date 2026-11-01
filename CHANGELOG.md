@@ -7,6 +7,7 @@
 - Deleted a pin or a trip by mistake? The toast has Undo for 10 seconds. An ended trip has Reopen trip in its edit form, to make it live again.
 - An open trip edit form stays open, with the fresh data, when a photo sync reloads the map; text typed while a save runs is kept.
 - Day numbers on the live banner and in the story count from the day the trip started where you are (they were a day off in New York or Bangkok). A queued offline pin you discard while others are sending is not sent.
+F6: the story says who started the trip, who added each pin and who wrote the journal (nothing for old entries or on a share).
 
 ## 1.13.1 (unreleased)
 

@@ -1016,6 +1016,8 @@ button.linkish, a.linkish {
   margin: 0 0 8px; font-family: var(--prose);
   font-size: 14.5px; line-height: 1.5; white-space: pre-wrap;
 }
+.story-by { margin: -4px 0 8px; font-size: 12px; font-style: italic; color: var(--muted); }
+.story-by-trip { margin: 0 0 10px; }
 .story-actions { display: flex; gap: 12px; margin-top: 8px; }
 .story-actions button {
   background: none; border: none; padding: 2px;

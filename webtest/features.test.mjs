@@ -221,4 +221,31 @@ export const tests = [
       await ctx.close();
     }
   }],
+  ["F6: the story says who started the trip, added a pin and wrote the journal; a share says none of it", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    const t = await trips(page, [{ name: "F6 Who", start_at: "2020-06-01", end_at: "2020-06-03" }]);
+    const id = t["F6 Who"].id;
+    if (!(await api(page, "GET", "/api/map")).body.pins.some((p) => p.holiday_id === id)) {
+      await api(page, "POST", "/api/pins", { holiday_id: id, lat: 50.7, lng: -1.9, title: "F6 beach", note: "sandy" });
+      await api(page, "POST", "/api/pins", { holiday_id: id, lat: 50.8, lng: -1.8, title: "F6 old pin", note: "" });
+    }
+    await api(page, "PATCH", `/api/holidays/${id}`, { journal: "A good week." });
+    await page.reload({ waitUntil: "networkidle" });
+    const byLines = () => page.$$eval("#story-scroll .story-by", (ns) => ns.map((n) => n.textContent));
+    // an old pin ('' = unknown) shows nothing
+    await page.evaluate((i) => {
+      state.pins.find((p) => p.holiday_id === i && p.title === "F6 old pin").created_by = "";
+      openStory(holidayById(i));
+    }, id);
+    assert.deepEqual(await byLines(), ["Trip started by tester", "Added by tester", "Written by tester"]);
+    const beach = await page.$eval("#story-scroll .story-sec", (s) => s.textContent);
+    assert.ok(beach.includes("F6 beach") && beach.includes("Added by tester"), beach);
+    const url = (await api(page, "POST", `/api/holidays/${id}/share`, { days: 7 })).body.url;
+    await page.goto(base + url, { waitUntil: "networkidle" });
+    await page.evaluate(() => openStory(state.holidays[0]));
+    await page.waitForSelector("#story:not([hidden])");
+    assert.ok((await page.textContent("#story-scroll")).includes("F6 beach"));
+    assert.deepEqual(await byLines(), []);
+    await ctx.close();
+  }],
 ];

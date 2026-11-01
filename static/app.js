@@ -827,6 +827,8 @@ function openStory(h, pinId) {
   const scroll = $("story-scroll");
   scroll.textContent = "";
   scroll.scrollTop = 0;
+  // F6: who started the trip ('' on old rows and on a share: say nothing)
+  if (h.created_by) scroll.appendChild(el("p", "story-by story-by-trip", `Trip started by ${h.created_by}`));
 
   story.photos = new Map();
   const pins = state.pins.filter((p) => p.holiday_id === h.id);
@@ -863,7 +865,10 @@ function openStory(h, pinId) {
     if (stop.again) sec.appendChild(el("p", "story-day", "Back again"));
     sec.appendChild(el("h3", "story-place", pin.title || (pin.kind === "photo" ? "Photo stop" : "Pin")));
     // the note is about the place: said once, at its first stop
-    if (pin.note && stops.find((s) => s.pin === pin) === stop) sec.appendChild(el("p", "story-note", pin.note));
+    const first = stops.find((s) => s.pin === pin) === stop;
+    if (pin.note && first) sec.appendChild(el("p", "story-note", pin.note));
+    // F6: who dropped the pin, once, at its first stop
+    if (pin.created_by && first) sec.appendChild(el("p", "story-by", `Added by ${pin.created_by}`));
     if (stop.n > 0) {
       // A chapter shows a contact strip, not the whole roll. Day 1 of a trip
       // can carry 20+ photos, and an uncapped grid made every chapter several
@@ -936,6 +941,7 @@ function openStory(h, pinId) {
     const sec = el("section", "story-sec");
     sec.appendChild(el("h3", "story-place", "Journal"));
     sec.appendChild(el("p", "story-note", h.journal));
+    if (h.journal_by) sec.appendChild(el("p", "story-by", `Written by ${h.journal_by}`));
     scroll.appendChild(sec);
   }
   if (h.unplaced_count > 0) {
