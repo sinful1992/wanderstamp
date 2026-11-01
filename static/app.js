@@ -146,23 +146,35 @@ function isRetryable(ex) {
 let syncingQueue = false;
 async function syncQueue() {
   if (syncingQueue || SHARE) return;
-  let q = pinQueue();
+  const q = pinQueue();
   if (!q.length) return;
   syncingQueue = true;
   let sent = 0, dropped = 0;
+  // Taken off the stored queue one by one, so a pin queued while this runs
+  // stays queued.
+  const same = (a, b) => (a.qid || b.qid ? a.qid === b.qid : JSON.stringify(a) === JSON.stringify(b));
+  const remove = (item) => {
+    const cur = pinQueue();
+    const i = cur.findIndex((x) => same(x, item));
+    if (i >= 0) { cur.splice(i, 1); setPinQueue(cur); }
+  };
   try {
-    while (q.length) {
-      const { qid, ...pin } = q[0];
+    for (const item of q) {
+      const { qid, ...pin } = item;
       try {
         await api("POST", "/api/pins", pin);
         sent++;
       } catch (ex) {
-        // still offline, or logged out mid-queue: stop and keep everything
-        if (isRetryable(ex)) break;
+        if (isRetryable(ex)) {
+          // A 5xx is about this pin's request: keep it for the next pass and
+          // try the rest. No network, a sign-in or a rate limit hits every
+          // pin alike: stop and keep everything.
+          if (ex && ex.status >= 500) continue;
+          break;
+        }
         dropped++; // the server said no (trip deleted?) — retrying forever won't fix it
       }
-      q = q.slice(1);
-      setPinQueue(q);
+      remove(item);
     }
   } finally {
     syncingQueue = false;
@@ -305,6 +317,8 @@ document.addEventListener("input", (e) => {
   const f = e.target.closest && e.target.closest("form");
   if (f) f.dataset.dirty = "1";
 }, true);
+// A plain form is done with at submit; one saved through busy() stays dirty
+// until its save worked.
 document.addEventListener("submit", (e) => { delete e.target.dataset.dirty; }, true);
 
 function editing(id) {
@@ -1182,8 +1196,15 @@ async function busy(btn, fn, label) {
   }
   const old = btn && label ? btn.textContent : null;
   if (old !== null) btn.textContent = label;
+  // A form being saved still holds what was typed: it stays "dirty" (see
+  // editing()) until the save worked, so a reload while it runs, or after it
+  // failed, doesn't wipe it.
+  const form = btn && btn.type === "submit" ? btn.form : null;
+  if (form) form.dataset.dirty = "1";
   try {
-    return await fn();
+    const r = await fn();
+    if (form) delete form.dataset.dirty;
+    return r;
   } catch (err) {
     toast(err && err.message ? err.message : "Something went wrong");
   } finally {
@@ -2210,7 +2231,8 @@ function renderBanner() {
   $("banner-name").textContent = active.name;
   // Live, the same stub counts up instead: which day of the trip this is.
   // Never below 1 — a start later today is still the first day.
-  const day = tripDays({ start_at: active.start_at, end_at: null });
+  // Same day count as the story's (a day turns over at 4 am, see tripDay).
+  const day = tripDay(active, Date.now()).n;
   $("banner-stub").hidden = false;
   $("stub-n").textContent = day > 1 ? String(day) : "day";
   $("stub-unit").textContent = day > 1 ? "day" : "first";

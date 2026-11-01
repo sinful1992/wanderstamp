@@ -2,6 +2,9 @@
 import assert from "node:assert/strict";
 import { signedIn, api } from "./harness.mjs";
 
+// ICU builds differ: some put spaces round a range dash ("23 – 24 May").
+const dash = (s) => s.replace(/\s*–\s*/g, "–").replace(/\s/g, " ");
+
 async function tripMeta(page, name) {
   await page.reload({ waitUntil: "networkidle" });
   return page.evaluate((n) => {
@@ -16,18 +19,18 @@ export const tests = [
     const r = await api(page, "POST", "/api/holidays", { name: "Bransgore B1", color: "#1d6fb8", start_at: "2026-05-23", end_at: "2026-05-24" });
     assert.ok(r.status < 300, JSON.stringify(r));
     const m = await tripMeta(page, "Bransgore B1");
-    assert.equal(m.range, "23–24 May 2026");
+    assert.equal(dash(m.range), "23–24 May 2026");
     assert.equal(m.days, 2);
     // the trips list shows the same line
     const shown = await page.evaluate(() => [...document.querySelectorAll(".trip-meta")].map((e) => e.textContent).find((t) => t.includes("May 2026")));
-    assert.ok(shown && shown.startsWith("23–24 May 2026"), shown);
+    assert.ok(shown && dash(shown).startsWith("23–24 May 2026"), shown);
     await ctx.close();
   }],
   ["west of UTC: the start day does not slip back a day", async ({ browser, base }) => {
     const { ctx, page } = await signedIn(browser, base, { timezoneId: "America/New_York" });
     await api(page, "POST", "/api/holidays", { name: "NY B1", color: "#c0392b", start_at: "2026-01-10", end_at: "2026-01-12" });
     const m = await tripMeta(page, "NY B1");
-    assert.equal(m.range, "10–12 Jan 2026");
+    assert.equal(dash(m.range), "10–12 Jan 2026");
     assert.equal(m.days, 3);
     await ctx.close();
   }],
@@ -44,7 +47,7 @@ export const tests = [
     }));
     assert.equal(out.one, "4 Jul 2026");
     assert.equal(out.oneDays, 1);
-    assert.equal(out.ny.replace(/\s/g, " "), "30 Dec 2025 – 2 Jan 2026");
+    assert.equal(dash(out.ny), "30 Dec 2025–2 Jan 2026");
     assert.equal(out.moment, "24 May 2026");
     assert.equal(out.bare, "24 May 2026");
     assert.equal(out.bad, "Invalid Date");

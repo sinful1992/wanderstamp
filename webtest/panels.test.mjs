@@ -29,6 +29,25 @@ export const tests = [
     assert.equal(j, "half a sentence about the beach");
     await ctx.close();
   }],
+  ["B4: a save that fails keeps the form dirty, so a reload doesn't wipe it", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    const h = await trip(page, "Failing B4");
+    await page.reload({ waitUntil: "networkidle" });
+    await page.evaluate(() => {
+      setSheet(true);
+      const row = [...document.querySelectorAll("#trip-list .trip-row")].find((r) => r.textContent.includes("Failing B4"));
+      row.querySelector("button[title='Edit this trip']").click();
+    });
+    await page.waitForSelector("form.trip-edit");
+    await page.fill("form.trip-edit textarea", "words that must not be lost");
+    await page.route(`**/api/holidays/${h.id}`, (r) => ["PUT", "PATCH"].includes(r.request().method())
+      ? r.fulfill({ status: 500, contentType: "text/plain", body: "boom" }) : r.continue());
+    await page.click("form.trip-edit button[type=submit]");
+    await page.waitForFunction(() => !document.querySelector("form.trip-edit button[type=submit]").disabled, null, { timeout: 3000 });
+    await page.evaluate(() => loadData());
+    assert.equal(await page.$eval("form.trip-edit textarea", (t) => t.value), "words that must not be lost");
+    await ctx.close();
+  }],
   ["B4: an untouched open form is still refreshed", async ({ browser, base }) => {
     const { ctx, page } = await signedIn(browser, base);
     await page.evaluate(() => { document.querySelectorAll("form[data-dirty]").forEach((f) => delete f.dataset.dirty); });

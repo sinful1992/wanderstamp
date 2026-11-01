@@ -19,9 +19,11 @@
 ### Frontend
 - Trip dates show the days you picked in every timezone: in summer time a trip that ended 24 May no longer reads
   "23–25 May", and the passport's days away is no longer one too many.
-- A pin dropped offline waits through server restarts and proxy errors (5xx, 429) instead of being thrown away.
+- A pin dropped offline waits through server restarts and proxy errors (5xx, 429) instead of being thrown away. One pin
+  the server keeps refusing with a 5xx no longer holds up the pins queued after it.
 - The username box no longer capitalises on an iPhone.
-- A background photo sync no longer wipes a trip or pin form you're typing in.
+- A background photo sync no longer wipes a trip or pin form you're typing in, also after a save that failed.
+- The live banner's day number turns over at 4 am, the same as the trip story's.
 - One tap, one request: Start, Add pin, Save, Share, Delete and Sync are off while they run, so a double tap
   can't make two trips. End holiday shows "Ending…" while it pulls the last photos.
 - A failed delete, revoke, End holiday or family action says what went wrong instead of nothing.
