@@ -104,6 +104,9 @@ func main() {
 	mux.HandleFunc("GET /api/holidays/{id}/timeline", a.auth(a.handleHolidayTimeline))
 	mux.HandleFunc("GET /api/stamps", a.auth(a.handleStamps))
 	mux.HandleFunc("GET /api/stats", a.auth(a.handleStats))
+	mux.HandleFunc("POST /api/holidays/{id}/tracks", a.auth(a.handleUploadTrack))
+	mux.HandleFunc("GET /api/holidays/{id}/tracks", a.auth(a.handleListTracks))
+	mux.HandleFunc("DELETE /api/tracks/{id}", a.auth(a.handleDeleteTrack))
 	mux.HandleFunc("GET /api/geocode", a.auth(a.handleGeocode))
 	mux.HandleFunc("GET /api/geocode/reverse", a.auth(a.handleReverse))
 

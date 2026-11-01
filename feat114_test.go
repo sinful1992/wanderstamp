@@ -3,9 +3,12 @@ package main
 // Tests for the v1.14.0 server features (task 112, F2/F4/F6/F7/F9/F10).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -150,7 +153,7 @@ func TestUndoTripDeleteRestoresEveryRow(t *testing.T) {
 	}
 	for _, tb := range tables {
 		var n int
-		a.db.QueryRow(`SELECT COUNT(*) FROM "`+tb+`" WHERE `+map[bool]string{true: "id", false: "holiday_id"}[tb == "holidays"]+` = 1`).Scan(&n)
+		a.db.QueryRow(`SELECT COUNT(*) FROM "` + tb + `" WHERE ` + map[bool]string{true: "id", false: "holiday_id"}[tb == "holidays"] + ` = 1`).Scan(&n)
 		if tb != "pin_photos" && n != 0 {
 			t.Errorf("%s still has %d rows of the deleted trip", tb, n)
 		}
@@ -405,5 +408,125 @@ func TestStats(t *testing.T) {
 	empty := getRaw(t, featMux(newTestApp(t), "mum"), "GET", "/api/stats")
 	if strings.TrimSpace(empty) != `{"years":[],"trips":[],"countries":[]}` {
 		t.Errorf("empty: %s", empty)
+	}
+}
+
+func uploadGPX(t *testing.T, mux http.Handler, id int, filename, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", filename)
+	fw.Write([]byte(body))
+	mw.Close()
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/holidays/%d/tracks", id), &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func gpx(n int) string {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>Coast walk</name><trkseg>`)
+	for i := 0; i < n; i++ {
+		// a wiggly line, so simplifying has real shape to keep
+		fmt.Fprintf(&b, `<trkpt lat="%.6f" lon="%.6f"><ele>10</ele></trkpt>`, 50+float64(i)*0.0001, -1+0.001*math.Sin(float64(i)/7))
+	}
+	b.WriteString(`</trkseg></trk></gpx>`)
+	return b.String()
+}
+
+// F10: upload, list (simplified to ≤ 2,000 points), delete; gone with the
+// trip, back with an undo, and never on a share.
+func TestTracks(t *testing.T) {
+	a := newTestApp(t)
+	a.db.Exec(`INSERT INTO holidays (id, name, color, start_at, end_at) VALUES (1, 'Dorset', '#123456', '2026-05-01T00:00:00Z', '2026-05-03T00:00:00Z')`)
+	a.db.Exec(`INSERT INTO pins (id, holiday_id, kind, lat, lng) VALUES (1, 1, 'manual', 50, -1)`)
+	mux := featMux(a, "mum")
+	mux.HandleFunc("POST /api/holidays/{id}/tracks", a.handleUploadTrack)
+	mux.HandleFunc("GET /api/holidays/{id}/tracks", a.handleListTracks)
+	mux.HandleFunc("DELETE /api/tracks/{id}", a.handleDeleteTrack)
+
+	rec := uploadGPX(t, mux, 1, "walk.gpx", gpx(20000))
+	out := decode(t, rec)
+	if rec.Code != 201 || out["name"] != "Coast walk" || out["points"].(float64) > 2000 || out["points"].(float64) < 100 {
+		t.Fatalf("upload: %d %v", rec.Code, out)
+	}
+	// a route-only file, no name: the file name is used
+	rec = uploadGPX(t, mux, 1, "Day two.gpx", `<gpx><rte><rtept lat="50.1" lon="-1.1"/><rtept lat="50.2" lon="-1.2"/></rte></gpx>`)
+	if o := decode(t, rec); rec.Code != 201 || o["name"] != "Day two" || o["points"].(float64) != 2 {
+		t.Fatalf("route upload: %d %v", rec.Code, o)
+	}
+	for name, body := range map[string]string{
+		"not xml":    "hello",
+		"no points":  `<gpx><trk><trkseg></trkseg></trk></gpx>`,
+		"one point":  `<gpx><trk><trkseg><trkpt lat="1" lon="1"/></trkseg></trk></gpx>`,
+		"bad coords": `<gpx><trk><trkseg><trkpt lat="91" lon="1"/><trkpt lat="1" lon="200"/></trkseg></trk></gpx>`,
+	} {
+		if rec := uploadGPX(t, mux, 1, "x.gpx", body); rec.Code != 400 {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+	if rec := uploadGPX(t, mux, 99, "x.gpx", gpx(5)); rec.Code != 404 {
+		t.Errorf("missing trip: %d", rec.Code)
+	}
+	if rec := uploadGPX(t, mux, 1, "big.gpx", strings.Repeat(" ", maxGPXBytes+1)); rec.Code != 413 {
+		t.Errorf("11 MB file: %d %s", rec.Code, rec.Body)
+	}
+	if rec := serve(mux, "POST", "/api/holidays/1/tracks", `{"x":1}`); rec.Code != 400 {
+		t.Errorf("JSON instead of a file: %d", rec.Code)
+	}
+
+	var list []struct {
+		ID     int64
+		Name   string
+		Points [][2]float64
+	}
+	json.Unmarshal([]byte(getRaw(t, mux, "GET", "/api/holidays/1/tracks")), &list)
+	if len(list) != 2 || len(list[0].Points) > 2000 || list[0].Points[0] != [2]float64{50, -1} {
+		t.Fatalf("list: %d tracks, first %v", len(list), list)
+	}
+	if last := list[0].Points[len(list[0].Points)-1]; math.Abs(last[0]-(50+19999*0.0001)) > 1e-6 {
+		t.Errorf("simplify lost the end point: %v", last)
+	}
+	if strings.TrimSpace(getRaw(t, mux, "GET", "/api/holidays/7/tracks")) != "[]" {
+		t.Error("tracks of a trip without any should be []")
+	}
+
+	tok, _ := makeShareFor(t, mux, 1)
+	if share := getRaw(t, mux, "GET", "/api/share/"+tok); strings.Contains(share, "Coast walk") || strings.Contains(share, "track") {
+		t.Errorf("share includes tracks: %.300s", share)
+	}
+
+	if rec := serve(mux, "DELETE", fmt.Sprintf("/api/tracks/%d", list[1].ID), ""); rec.Code != 200 {
+		t.Errorf("delete track: %d", rec.Code)
+	}
+	if rec := serve(mux, "DELETE", "/api/tracks/999", ""); rec.Code != 404 {
+		t.Errorf("delete missing track: %d", rec.Code)
+	}
+	undo, _ := decode(t, serve(mux, "DELETE", "/api/holidays/1", ""))["undo"].(string)
+	var n int
+	a.db.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&n)
+	if n != 0 {
+		t.Errorf("%d tracks left after the trip was deleted", n)
+	}
+	serve(mux, "POST", "/api/undo/"+undo, "")
+	a.db.QueryRow(`SELECT COUNT(*) FROM tracks WHERE holiday_id = 1`).Scan(&n)
+	if n != 1 {
+		t.Errorf("undo brought back %d tracks, want 1", n)
+	}
+}
+
+func TestSimplifyStaysUnderMax(t *testing.T) {
+	// noise defeats Douglas-Peucker; the stride fallback still caps it
+	pts := make([][2]float64, 50000)
+	for i := range pts {
+		pts[i] = [2]float64{float64(i%2) * 0.5, float64(i) * 0.00001}
+	}
+	if got := simplifyTrack(pts, 2000); len(got) > 2000 || got[0] != pts[0] || got[len(got)-1] != pts[len(pts)-1] {
+		t.Errorf("simplify: %d points, ends %v %v", len(got), got[0], got[len(got)-1])
+	}
+	if got := simplifyTrack(pts[:10], 2000); len(got) != 10 {
+		t.Errorf("short track changed: %d", len(got))
 	}
 }

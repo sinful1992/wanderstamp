@@ -117,7 +117,16 @@ CREATE TABLE IF NOT EXISTS packing_items (
   UNIQUE (holiday_id, label)
 );
 
+-- F10: GPX tracks, simplified to at most 2,000 [lat,lng] points (JSON)
+CREATE TABLE IF NOT EXISTS tracks (
+  id         INTEGER PRIMARY KEY,
+  holiday_id INTEGER NOT NULL REFERENCES holidays(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL DEFAULT '',
+  points     TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_pins_holiday ON pins(holiday_id);
+CREATE INDEX IF NOT EXISTS idx_tracks_holiday ON tracks(holiday_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_packing_holiday ON packing_items(holiday_id);
 `
