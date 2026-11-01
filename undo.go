@@ -209,6 +209,42 @@ func (a *app) restore(s undoSnap) error {
 			held[k][fmt.Sprint(r[ac])] = true
 		}
 	}
+	// Bare resync twins go first, then where every photo is now is read once,
+	// before anything goes back, so the restore's own rows don't count.
+	for _, t := range s.tables {
+		if t.table != "pins" {
+			continue
+		}
+		ic := colIndex(t.cols, "id")
+		for _, r := range t.rows {
+			if err := dropBareTwin(tx, t.cols, r, held[fmt.Sprint(r[ic])]); err != nil {
+				return err
+			}
+		}
+	}
+	// A photo filed anywhere since (another pin, set aside, any other trip)
+	// stays where it is now; this trip's answers about it are replaced. Only this trip's unplaced copy is
+	// the resync's doing; the photo comes back from there to its pin.
+	taken := map[string]bool{}
+	{
+		rows, err := tx.Query(`
+			SELECT asset_id FROM pin_photos
+			UNION SELECT asset_id FROM set_aside
+			UNION SELECT asset_id FROM photo_choices WHERE holiday_id != ?
+			UNION SELECT asset_id FROM unplaced_photos WHERE holiday_id != ?`, s.holidayID, s.holidayID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			taken[id] = true
+		}
+		rows.Close()
+	}
 	for _, t := range s.tables {
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(t.cols)), ",")
 		names := make([]string, len(t.cols))
@@ -225,32 +261,13 @@ func (a *app) restore(s undoSnap) error {
 		}
 		stmt := verb + ` INTO ` + ident(t.table) + ` (` + strings.Join(names, ",") + `) VALUES (` + ph + `)`
 		for _, r := range t.rows {
-			if t.table == "pins" {
-				if err := dropBareTwin(tx, t.cols, r, held[fmt.Sprint(r[idCol])]); err != nil {
-					return err
-				}
-			}
 			if assetCol >= 0 {
-				// A photo filed on another trip since stays there. One the
-				// resync put back among this trip's unplaced photos comes
-				// back to its pin.
 				asset := fmt.Sprint(r[assetCol])
-				var elsewhere int
-				if err := tx.QueryRow(`SELECT COUNT(*) FROM (
-					SELECT p.holiday_id h FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id WHERE pp.asset_id = ?
-					UNION ALL SELECT holiday_id FROM unplaced_photos WHERE asset_id = ?
-					UNION ALL SELECT holiday_id FROM set_aside WHERE asset_id = ?
-					UNION ALL SELECT holiday_id FROM photo_choices WHERE asset_id = ?) WHERE h != ?`,
-					asset, asset, asset, asset, s.holidayID).Scan(&elsewhere); err != nil {
-					return err
-				}
-				if elsewhere > 0 {
+				if taken[asset] {
 					continue
 				}
-				if t.table == "pin_photos" {
-					if _, err := tx.Exec(`DELETE FROM unplaced_photos WHERE asset_id = ? AND holiday_id = ?`, asset, s.holidayID); err != nil {
-						return err
-					}
+				if _, err := tx.Exec(`DELETE FROM unplaced_photos WHERE asset_id = ? AND holiday_id = ?`, asset, s.holidayID); err != nil {
+					return err
 				}
 			}
 			if _, err := tx.Exec(stmt, r...); err != nil {
@@ -258,6 +275,25 @@ func (a *app) restore(s undoSnap) error {
 					return errUndoConflict
 				}
 				return err
+			}
+		}
+	}
+	// A photo pin whose photos all stayed elsewhere comes back empty; the
+	// next sync would delete it anyway, so it doesn't come back at all. If
+	// that was the pin the undo was for, nothing came back: say so.
+	for i, t := range s.tables {
+		if t.table != "pins" {
+			continue
+		}
+		ic := colIndex(t.cols, "id")
+		for _, r := range t.rows {
+			res, err := tx.Exec(`DELETE FROM pins WHERE id = ? AND kind = 'photo' AND note = ''
+				AND NOT EXISTS (SELECT 1 FROM pin_photos WHERE pin_id = pins.id)`, r[ic])
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n > 0 && i == 0 {
+				return errUndoConflict
 			}
 		}
 	}

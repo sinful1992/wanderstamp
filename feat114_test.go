@@ -233,18 +233,25 @@ func TestUndoTooLateUnknownAndPinDelete(t *testing.T) {
 // A sync may file the deleted pin's photo on another pin within the 30 s;
 // the undo takes it back rather than failing.
 func TestUndoPinAfterPhotoRefiled(t *testing.T) {
+	// The photo was filed on another pin since (ada #8191: it stays there).
+	// Pin 10 would come back empty, so nothing comes back and undo says so.
 	a := newTestApp(t)
 	seedFullTrip(t, a)
 	mux := featMux(a, "mum")
 	tok, _ := decode(t, serve(mux, "DELETE", "/api/pins/10", ""))["undo"].(string)
 	a.db.Exec(`INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng) VALUES (11, ?, '2026-05-02T10:00:00Z', 41.9, 12.5)`, uuidA)
-	if rec := serve(mux, "POST", "/api/undo/"+tok, ""); rec.Code != 200 {
+	if rec := serve(mux, "POST", "/api/undo/"+tok, ""); rec.Code != http.StatusConflict {
 		t.Fatalf("undo: %d %s", rec.Code, rec.Body)
 	}
 	var pin int64
 	a.db.QueryRow(`SELECT pin_id FROM pin_photos WHERE asset_id = ?`, uuidA).Scan(&pin)
-	if pin != 10 {
-		t.Errorf("photo on pin %d after undo, want 10", pin)
+	if pin != 11 {
+		t.Errorf("photo on pin %d after undo, want it left on 11", pin)
+	}
+	var n int
+	a.db.QueryRow(`SELECT COUNT(*) FROM pins WHERE id = 10`).Scan(&n)
+	if n != 0 {
+		t.Error("an empty pin 10 came back")
 	}
 }
 
