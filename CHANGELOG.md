@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.14.0 (unreleased)
+## 1.14.0 (2026-11-01)
 
 ### Server
 - Undo: deleting a pin or a trip keeps it for 30 seconds, so Undo puts back everything that went with it (photos, packing, share link, tracks). An ended trip can be reopened.
