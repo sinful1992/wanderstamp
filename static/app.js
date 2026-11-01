@@ -102,6 +102,13 @@ function deletedToast(what, r) {
         await api("POST", `/api/undo/${encodeURIComponent(r.undo)}`);
       } catch (ex) {
         if (ex.status === 410) { toast("Too late to undo"); return; }
+        // the server keeps whatever was made or changed since, rather than
+        // overwrite it (a pin the photo sync remade and someone named, say)
+        if (ex.status === 409) {
+          toast("Couldn't undo: something there has changed since, or another trip is live");
+          await loadData();
+          return;
+        }
         throw ex;
       }
       toast(`${what} is back`);

@@ -30,6 +30,7 @@
 - F5: legs over 300 km are drawn as the great circle a plane flies, with a small plane pointing the way; lines no longer jump across the 180th meridian.
 - D1: hand-placed pins are ringed map-maker's dots centred on the place; an open story numbers its stops on the map and in its chapters.
 - P2: below region zoom a trip's crowded pins fold into one dot with a count (tap to zoom in), and photo prints fetch no thumbnail until zoomed in; 1,800 pins draw as about 50 markers.
+- An undo the server refuses, because something there changed since or another trip is live, says so in plain words and reloads the map.
 
 ### Fixes from the task 112 review (planned as 1.13.1, released in 1.14.0)
 

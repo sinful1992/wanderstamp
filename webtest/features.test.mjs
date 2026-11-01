@@ -582,4 +582,17 @@ export const tests = [
     assert.equal(await page.$$eval(".ws-routes-btn", (b) => b.length), 0);
     await ctx.close();
   }],
+  ["F2: an undo the server refuses (409) says so in plain words and reloads", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    await page.route("**/api/undo/**", (r) => r.fulfill({ status: 409, contentType: "application/json", body: '{"error":"can\'t undo: another trip is live, or the item was replaced"}' }));
+    let loads = 0;
+    page.on("request", (r) => { if (r.url().endsWith("/api/map")) loads++; });
+    await page.evaluate(() => deletedToast("Pin", { ok: true, undo: "tok" }));
+    await page.click("#toast .toast-act");
+    await page.waitForFunction(() => document.getElementById("toast").textContent.startsWith("Couldn't undo"));
+    assert.equal(await page.textContent("#toast"), "Couldn't undo: something there has changed since, or another trip is live");
+    await page.waitForTimeout(300);
+    assert.ok(loads >= 1, "reloads the map");
+    await ctx.close();
+  }],
 ];
