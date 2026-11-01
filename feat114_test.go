@@ -794,3 +794,188 @@ func TestShareVideo(t *testing.T) {
 		t.Errorf("expired share video: %d", rec.Code)
 	}
 }
+
+// --- F9 import ---
+
+func asAdmin(admin bool, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h(w, r.WithContext(context.WithValue(r.Context(), userKey, sessionUser{ID: 1, Username: "ann", IsAdmin: admin})))
+	}
+}
+
+func importMux(a *app, isAdmin bool) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/import", asAdmin(isAdmin, admin(a.handleImport)))
+	mux.HandleFunc("GET /api/export", as("ann", a.handleExport))
+	return mux
+}
+
+func counts(t *testing.T, a *app) string {
+	t.Helper()
+	var h, p, ph, pk int
+	a.db.QueryRow(`SELECT (SELECT COUNT(*) FROM holidays), (SELECT COUNT(*) FROM pins),
+		(SELECT COUNT(*) FROM pin_photos), (SELECT COUNT(*) FROM packing_items)`).Scan(&h, &p, &ph, &pk)
+	return fmt.Sprintf("%d/%d/%d/%d", h, p, ph, pk)
+}
+
+const vidA = "00000000-0000-0000-0000-0000000000a1"
+const imgA = "00000000-0000-0000-0000-0000000000a2"
+
+func seedExport(t *testing.T) string {
+	t.Helper()
+	a := newTestApp(t)
+	for _, q := range []string{
+		`INSERT INTO holidays (id, name, color, start_at, end_at, journal, dest_name, dest_lat, dest_lng, dest_area)
+		 VALUES (1, 'Paris', '#123456', '2025-07-01T00:00:00Z', '2025-07-08T00:00:00Z', 'Lovely', 'Paris', 48.85, 2.35, '{"type":"Polygon"}')`,
+		`INSERT INTO holidays (id, name, color, start_at, end_at) VALUES (2, 'Rome', '#654321', '2024-05-01T00:00:00Z', '2024-05-03T00:00:00Z')`,
+		`INSERT INTO pins (id, holiday_id, kind, cluster_key, lat, lng, title, country) VALUES (10, 1, 'photo', '2425,117', 48.85, 2.35, 'Paris, France', 'France')`,
+		`INSERT INTO pins (id, holiday_id, kind, lat, lng, title, note) VALUES (11, 1, 'manual', 48.86, 2.29, 'Hotel', 'nice')`,
+		`INSERT INTO pins (id, holiday_id, kind, lat, lng, title) VALUES (12, 2, 'manual', 41.9, 12.5, 'Colosseum')`,
+		`INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng, type, duration) VALUES (10, '` + vidA + `', '2025-07-02T10:00:00Z', 48.85, 2.35, 'video', 12.5)`,
+		`INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng) VALUES (10, '` + imgA + `', '2025-07-02T11:00:00Z', 48.85, 2.35)`,
+		`INSERT INTO packing_items (holiday_id, label, checked, sort) VALUES (1, 'Passport', 1, 0), (1, 'Sun cream', 0, 1)`,
+	} {
+		if _, err := a.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return serve(importMux(a, true), "GET", "/api/export", "").Body.String()
+}
+
+func TestImportRoundTrip(t *testing.T) {
+	export := seedExport(t)
+	b := newTestApp(t)
+	mux := importMux(b, true)
+
+	rec := serve(mux, "POST", "/api/import?dry_run=1", export)
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"holidays":2,"pins":3,"photos":2,"packing":2,"skipped":0}` {
+		t.Fatalf("dry run: %d %s", rec.Code, rec.Body)
+	}
+	if c := counts(t, b); c != "0/0/0/0" {
+		t.Fatalf("dry run changed the DB: %s", c)
+	}
+	rec = serve(mux, "POST", "/api/import", export)
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"holidays":2,"pins":3,"photos":2,"packing":2,"skipped":0}` {
+		t.Fatalf("import: %d %s", rec.Code, rec.Body)
+	}
+	if c := counts(t, b); c != "2/3/2/2" {
+		t.Errorf("after import: %s", c)
+	}
+	// the same file again: both trips are there already
+	rec = serve(mux, "POST", "/api/import", export)
+	if strings.TrimSpace(rec.Body.String()) != `{"holidays":0,"pins":0,"photos":0,"packing":0,"skipped":2}` {
+		t.Errorf("re-import: %s", rec.Body)
+	}
+	if c := counts(t, b); c != "2/3/2/2" {
+		t.Errorf("re-import changed the DB: %s", c)
+	}
+	// what came back: the fields, the video, the photo pin's cluster key
+	var journal, area, key, typ string
+	var dur float64
+	var checked bool
+	b.db.QueryRow(`SELECT journal, dest_area FROM holidays WHERE name = 'Paris'`).Scan(&journal, &area)
+	b.db.QueryRow(`SELECT cluster_key FROM pins WHERE kind = 'photo'`).Scan(&key)
+	b.db.QueryRow(`SELECT type, duration FROM pin_photos WHERE asset_id = ?`, vidA).Scan(&typ, &dur)
+	b.db.QueryRow(`SELECT checked FROM packing_items WHERE label = 'Passport'`).Scan(&checked)
+	if journal != "Lovely" || area != `{"type":"Polygon"}` || key == "" || typ != "video" || dur != 12.5 || !checked {
+		t.Errorf("imported: journal %q area %q key %q video %q %v passport %v", journal, area, key, typ, dur, checked)
+	}
+	// the export of the import matches the original, apart from ids and date
+	strip := func(s string) string {
+		var doc map[string]any
+		json.Unmarshal([]byte(s), &doc)
+		hs := doc["holidays"].([]any)
+		for _, h := range hs {
+			hm := h.(map[string]any)
+			delete(hm, "id")
+			for _, p := range hm["pins"].([]any) {
+				delete(p.(map[string]any), "id")
+				delete(p.(map[string]any), "created_at")
+			}
+		}
+		out, _ := json.Marshal(hs)
+		return string(out)
+	}
+	if again := serve(mux, "GET", "/api/export", "").Body.String(); strip(again) != strip(export) {
+		t.Errorf("round trip differs:\n%s\n%s", strip(export), strip(again))
+	}
+}
+
+func TestImportRefusals(t *testing.T) {
+	export := seedExport(t)
+	b := newTestApp(t)
+	if rec := serve(importMux(b, false), "POST", "/api/import", export); rec.Code != 403 {
+		t.Errorf("non-admin: %d", rec.Code)
+	}
+	mux := importMux(b, true)
+	for name, body := range map[string]string{
+		"not json":      `{"holidays":`,
+		"no holidays":   `{"version":"x"}`,
+		"bad color":     `{"holidays":[{"name":"A","color":"red","start_at":"2025-01-01T00:00:00Z","pins":[]}]}`,
+		"no name":       `{"holidays":[{"name":"  ","color":"#123456","start_at":"2025-01-01T00:00:00Z"}]}`,
+		"bad start":     `{"holidays":[{"name":"A","color":"#123456","start_at":"yesterday"}]}`,
+		"end first":     `{"holidays":[{"name":"A","color":"#123456","start_at":"2025-01-05T00:00:00Z","end_at":"2025-01-01T00:00:00Z"}]}`,
+		"bad kind":      `{"holidays":[{"name":"A","color":"#123456","start_at":"2025-01-01T00:00:00Z","pins":[{"kind":"evil","lat":1,"lng":1}]}]}`,
+		"bad lat":       `{"holidays":[{"name":"A","color":"#123456","start_at":"2025-01-01T00:00:00Z","pins":[{"kind":"manual","lat":91,"lng":1}]}]}`,
+		"bad asset":     `{"holidays":[{"name":"A","color":"#123456","start_at":"2025-01-01T00:00:00Z","pins":[{"kind":"photo","lat":1,"lng":1,"photos":[{"asset_id":"../../etc","taken_at":"2025-01-01T00:00:00Z"}]}]}]}`,
+		"bad type":      `{"holidays":[{"name":"A","color":"#123456","start_at":"2025-01-01T00:00:00Z","pins":[{"kind":"photo","lat":1,"lng":1,"photos":[{"asset_id":"` + imgA + `","taken_at":"2025-01-01T00:00:00Z","type":"exe"}]}]}]}`,
+		"bad area":      `{"holidays":[{"name":"A","color":"#123456","start_at":"2025-01-01T00:00:00Z","dest_area":"x"}]}`,
+		"good then bad": `{"holidays":[{"name":"Ok","color":"#123456","start_at":"2025-01-01T00:00:00Z"},{"name":"B","color":"no","start_at":"2025-01-01T00:00:00Z"}]}`,
+	} {
+		if rec := serve(mux, "POST", "/api/import", body); rec.Code != 400 {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+	if c := counts(t, b); c != "0/0/0/0" {
+		t.Errorf("a refused import changed the DB: %s", c)
+	}
+	// form posts are refused, and a body over 20 MB gets 413
+	req := httptest.NewRequest("POST", "/api/import", strings.NewReader(export))
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != 415 {
+		t.Errorf("text/plain: %d", rec.Code)
+	}
+	big := `{"holidays":[{"name":"` + strings.Repeat("x", 21<<20) + `"}]}`
+	if rec := serve(mux, "POST", "/api/import", big); rec.Code != 413 {
+		t.Errorf("21 MB: %d", rec.Code)
+	}
+	// an empty export is fine and changes nothing
+	if rec := serve(mux, "POST", "/api/import", `{"holidays":[]}`); rec.Code != 200 {
+		t.Errorf("empty: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestImportKeepsLiveTripAndFiledPhotos(t *testing.T) {
+	b := newTestApp(t)
+	b.db.Exec(`INSERT INTO holidays (id, name, color, start_at) VALUES (1, 'Now', '#123456', '2026-10-30T00:00:00Z')`)
+	b.db.Exec(`INSERT INTO pins (id, holiday_id, kind, lat, lng) VALUES (5, 1, 'manual', 1, 1)`)
+	b.db.Exec(`INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng) VALUES (5, ?, '2026-10-30T10:00:00Z', 1, 1)`, imgA)
+	b.db.Exec(`INSERT INTO unplaced_photos (holiday_id, asset_id, taken_at) VALUES (1, ?, '2026-10-30T11:00:00Z')`, vidA)
+	mux := importMux(b, true)
+	body := `{"holidays":[
+		{"name":"Other live","color":"#123456","start_at":"2026-10-01T00:00:00Z","end_at":null},
+		{"name":"Future","color":"#123456","start_at":"2030-01-01T00:00:00Z","end_at":null},
+		{"name":"Old","color":"#123456","start_at":"2020-01-01T00:00:00Z","end_at":"2020-01-05T00:00:00Z","pins":[
+			{"kind":"photo","lat":2,"lng":2,"photos":[
+				{"asset_id":"` + imgA + `","taken_at":"2020-01-02T00:00:00Z","lat":2,"lng":2},
+				{"asset_id":"` + vidA + `","taken_at":"2020-01-02T00:00:00Z","lat":2,"lng":2},
+				{"asset_id":"00000000-0000-0000-0000-0000000000a3","taken_at":"2020-01-02T00:00:00Z","lat":2,"lng":2}]}]}]}`
+	rec := serve(mux, "POST", "/api/import", body)
+	if strings.TrimSpace(rec.Body.String()) != `{"holidays":2,"pins":1,"photos":1,"packing":0,"skipped":1}` {
+		t.Fatalf("import: %d %s", rec.Code, rec.Body)
+	}
+	var planned bool
+	var typ string
+	b.db.QueryRow(`SELECT planned FROM holidays WHERE name = 'Future'`).Scan(&planned)
+	b.db.QueryRow(`SELECT type FROM pin_photos WHERE asset_id = '00000000-0000-0000-0000-0000000000a3'`).Scan(&typ)
+	if !planned || typ != "image" {
+		t.Errorf("future trip planned=%v, old-export photo type %q", planned, typ)
+	}
+	var pin int64
+	b.db.QueryRow(`SELECT pin_id FROM pin_photos WHERE asset_id = ?`, imgA).Scan(&pin)
+	if pin != 5 {
+		t.Errorf("a photo already filed moved to pin %d", pin)
+	}
+}

@@ -139,6 +139,7 @@ func main() {
 	mux.HandleFunc("POST /api/packing/{id}/promote", a.auth(a.handlePromoteItem))
 
 	mux.HandleFunc("GET /api/export", a.auth(a.handleExport))
+	mux.HandleFunc("POST /api/import", a.auth(admin(a.handleImport)))
 
 	// view-only trip sharing: management needs a login, reading needs the token
 	mux.HandleFunc("POST /api/holidays/{id}/share", a.auth(a.handleCreateShare))
