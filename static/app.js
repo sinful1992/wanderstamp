@@ -317,6 +317,10 @@ function applyZoomTier() {
   const z = map.getZoom();
   $("map").dataset.zoom = z >= 11 ? "near" : z >= 7 ? "mid" : "far";
 }
+// P2: clusters are worked out per zoom level, and a print only fetches its
+// thumbnail once it's big enough to show it
+const CLUSTER_BELOW = 7;
+map.on("zoomend", () => { if (state.pins) renderMarkers(); });
 map.on("zoomend", applyZoomTier);
 applyZoomTier();
 
@@ -589,7 +593,9 @@ function journey(h, stops) {
 
 /* ---------- markers ---------- */
 
-function pinIcon(pin, color) {
+// D1: a stop number rides on the open story's pins (n = its first stop)
+function pinIcon(pin, color, n) {
+  const far = map.getZoom() < CLUSTER_BELOW;
   // A hand pin that photos were filed onto wears the print too, with a
   // pushpin head in its corner so it still reads as a place you chose.
   if (pin.kind === "photo" || pin.photo_count > 0) {
@@ -601,7 +607,7 @@ function pinIcon(pin, color) {
     const print = el("span", "print");
     // offline the thumb request can't succeed — the empty cream print reads
     // better than a broken-image glyph
-    if (pin.cover_asset && navigator.onLine) {
+    if (pin.cover_asset && navigator.onLine && !far) {
       const img = el("img");
       img.src = photoURL(pin.cover_asset, "thumb");
       img.alt = "";
@@ -610,27 +616,101 @@ function pinIcon(pin, color) {
     div.appendChild(print);
     div.appendChild(el("span", "badge-count", String(pin.photo_count)));
     if (pin.kind !== "photo") div.appendChild(el("span", "hand-mark"));
+    if (n) div.appendChild(el("span", "stop-n", String(n)));
     return L.divIcon({ html: div.outerHTML, iconSize: [48, 40], iconAnchor: [24, 20], popupAnchor: [0, -20] });
   }
-  const div = el("div", "manual-pin");
+  // a place picked by hand: a map-maker's ringed dot in the trip's ink,
+  // centred on the place (the old teardrop pointed a few px off it)
+  const div = el("div", "manual-pin" + (n ? " numbered" : ""));
   div.style.setProperty("--c", color);
-  div.style.position = "relative";
-  return L.divIcon({ html: div.outerHTML, iconSize: [22, 22], iconAnchor: [4, 20], popupAnchor: [7, -18] });
+  if (n) div.appendChild(el("span", "stop-n", String(n)));
+  return L.divIcon({ html: div.outerHTML, iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -11] });
+}
+
+// P2: a trip's pins that would sit on top of each other at world zoom fold
+// into one dot with a count; tapping it zooms in until they come apart
+function clusterIcon(n, color) {
+  const div = el("div", "pin-cluster");
+  div.style.setProperty("--c", color);
+  div.appendChild(el("span", "cl-n", String(n)));
+  const size = n < 10 ? 26 : n < 100 ? 30 : 36;
+  return L.divIcon({ html: div.outerHTML, iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
+}
+
+// Folds a trip's pins that sit within 44 px of each other at the current
+// zoom: each group grows around its first pin (lowest id, so the groups and
+// their markers stay put across reloads), found through a grid of seeds so
+// 1,800 pins stay cheap. The open story's trip is never folded: its chapters
+// need their own pins.
+const CLUSTER_PX = 44;
+function clusterPins(pins) {
+  if (map.getZoom() >= CLUSTER_BELOW) return { singles: pins, groups: [] };
+  const z = map.getZoom();
+  const seeds = new Map(); // "trip|cx|cy" -> [{ x, y, pins, key }]
+  const all = [];
+  const singles = [];
+  for (const pin of [...pins].sort((a, b) => a.id - b.id)) {
+    if (pin.holiday_id === story.hid) { singles.push(pin); continue; }
+    const p = map.project([pin.lat, pin.lng], z);
+    const cx = Math.floor(p.x / CLUSTER_PX), cy = Math.floor(p.y / CLUSTER_PX);
+    let best = null, bestD = CLUSTER_PX;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (const g of seeds.get(`${pin.holiday_id}|${cx + dx}|${cy + dy}`) || []) {
+          const d = Math.hypot(g.x - p.x, g.y - p.y);
+          if (d < bestD) { best = g; bestD = d; }
+        }
+      }
+    }
+    if (best) { best.pins.push(pin); continue; }
+    const g = { x: p.x, y: p.y, pins: [pin], key: `${pin.holiday_id}|${pin.id}` };
+    const k = `${pin.holiday_id}|${cx}|${cy}`;
+    if (!seeds.has(k)) seeds.set(k, []);
+    seeds.get(k).push(g);
+    all.push(g);
+  }
+  const groups = [];
+  for (const g of all) {
+    if (g.pins.length === 1) singles.push(g.pins[0]);
+    else groups.push({ key: g.key, pins: g.pins });
+  }
+  return { singles, groups };
+}
+
+// D1: each pin's number in the open story (its first stop), the same
+// numbers the chapters carry
+function storyNumbers() {
+  const nums = new Map();
+  if (story.hid === null) return nums;
+  const h = holidayById(story.hid);
+  if (!h) return nums;
+  tripStops(state.pins.filter((p) => p.holiday_id === h.id)).forEach((s, i) => {
+    if (!nums.has(s.pin.id)) nums.set(s.pin.id, i + 1);
+  });
+  return nums;
 }
 
 // Markers are reconciled, not rebuilt. Tearing the whole layer down on every
 // loadData() meant every pin replayed its pop-in animation after any edit or
 // reconnect, and it threw away Leaflet's DOM for pins that had not changed.
 // Now a marker is only rebuilt when something it draws from actually differs.
-function pinSig(pin, color) {
-  return [pin.kind, color, pin.cover_asset, pin.photo_count, navigator.onLine ? 1 : 0].join("|");
+function pinSig(pin, color, n) {
+  return [pin.kind, color, pin.cover_asset, pin.photo_count, navigator.onLine ? 1 : 0,
+    map.getZoom() < CLUSTER_BELOW ? "far" : "", n || ""].join("|");
 }
 
 function renderMarkers() {
   const want = new Map(); // key -> descriptor
-  for (const pin of visiblePins()) {
+  const nums = storyNumbers();
+  const shown = visiblePins();
+  const { singles, groups } = clusterPins(shown);
+  for (const pin of singles) {
     const h = holidayById(pin.holiday_id);
-    want.set("p" + pin.id, { pin, color: h ? h.color : "#666" });
+    want.set("p" + pin.id, { pin, color: h ? h.color : "#666", n: nums.get(pin.id) });
+  }
+  for (const g of groups) {
+    const h = holidayById(g.pins[0].holiday_id);
+    want.set("c" + g.key, { group: g, color: h ? h.color : "#666" });
   }
   // Pins waiting to sync ride along as ghosts: same pushpin, dashed and
   // faded. They're local-only until the network returns; tap to discard.
@@ -645,14 +725,45 @@ function renderMarkers() {
   }
 
   const byTrip = new Map();
+  for (const pin of shown) {
+    if (!byTrip.has(pin.holiday_id)) byTrip.set(pin.holiday_id, []);
+    byTrip.get(pin.holiday_id).push(pin);
+  }
   for (const [key, w] of want) {
+    if (w.group) {
+      const g = w.group;
+      const sig = `c|${w.color}|${g.pins.length}`;
+      let m = state.markers.get(key);
+      const ll = L.latLngBounds(g.pins.map((p) => [p.lat, p.lng])).getCenter();
+      if (!m) {
+        m = L.marker(ll, { icon: clusterIcon(g.pins.length, w.color), riseOnHover: true }).addTo(map);
+        m.sig = sig;
+        state.markers.set(key, m);
+        m.on("click", () => {
+          const b = L.latLngBounds(m.cluster.map((p) => [p.lat, p.lng]));
+          // the pins share a spot even at this zoom: go straight to where they part
+          if (b.getNorthEast().equals(b.getSouthWest(), 1e-4)) map.setView(b.getCenter(), CLUSTER_BELOW + 1);
+          else map.fitBounds(b, { padding: [40, 40], maxZoom: CLUSTER_BELOW + 4 });
+        });
+      } else {
+        m.setLatLng(ll);
+        if (m.sig !== sig) { m.setIcon(clusterIcon(g.pins.length, w.color)); m.sig = sig; }
+      }
+      m.cluster = g.pins;
+      m.tripId = g.pins[0].holiday_id;
+      m.pinId = null;
+      const trip = holidayById(m.tripId);
+      const elm = m.getElement();
+      if (elm) elm.setAttribute("aria-label", `${g.pins.length} pins${trip ? ` · ${trip.name}` : ""}, zoom in`);
+      continue;
+    }
     const pending = !w.pin;
     const src = w.pin || w.qp;
-    const sig = pending ? "q|" + w.color : pinSig(w.pin, w.color);
+    const sig = pending ? "q|" + w.color : pinSig(w.pin, w.color, w.n);
     let marker = state.markers.get(key);
     if (!marker) {
       marker = L.marker([src.lat, src.lng], {
-        icon: pending ? pendingIcon(w.color) : pinIcon(w.pin, w.color),
+        icon: pending ? pendingIcon(w.color) : pinIcon(w.pin, w.color, w.n),
         riseOnHover: true,
       }).addTo(map);
       marker.sig = sig;
@@ -661,7 +772,7 @@ function renderMarkers() {
       const ll = marker.getLatLng();
       if (ll.lat !== src.lat || ll.lng !== src.lng) marker.setLatLng([src.lat, src.lng]);
       if (marker.sig !== sig) {
-        marker.setIcon(pending ? pendingIcon(w.color) : pinIcon(w.pin, w.color));
+        marker.setIcon(pending ? pendingIcon(w.color) : pinIcon(w.pin, w.color, w.n));
         marker.sig = sig;
       }
     }
@@ -686,10 +797,6 @@ function renderMarkers() {
         const owner = holidayById(marker.tripId);
         if (owner) openStory(owner, marker.pinId);
       });
-    }
-    if (!pending) {
-      if (!byTrip.has(w.pin.holiday_id)) byTrip.set(w.pin.holiday_id, []);
-      byTrip.get(w.pin.holiday_id).push(w.pin);
     }
   }
 
@@ -791,8 +898,7 @@ function renderDests() {
 function pendingIcon(color) {
   const div = el("div", "manual-pin pending");
   div.style.setProperty("--c", color);
-  div.style.position = "relative";
-  return L.divIcon({ html: div.outerHTML, iconSize: [22, 22], iconAnchor: [4, 20], popupAnchor: [7, -18] });
+  return L.divIcon({ html: div.outerHTML, iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -11] });
 }
 
 function openPendingPopup(qp) {
@@ -945,7 +1051,10 @@ function openStory(h, pinId) {
     sec.dataset.pinId = pin.id;
     sec.dataset.stop = stop.key;
     if (stop.again) sec.appendChild(el("p", "story-day", "Back again"));
-    sec.appendChild(el("h3", "story-place", pin.title || (pin.kind === "photo" ? "Photo stop" : "Pin")));
+    const place = el("h3", "story-place");
+    // D1: the same number the pin wears on the map
+    place.append(el("span", "stop-num", String(stops.indexOf(stop) + 1)), pin.title || (pin.kind === "photo" ? "Photo stop" : "Pin"));
+    sec.appendChild(place);
     // the note is about the place: said once, at its first stop
     const first = stops.find((s) => s.pin === pin) === stop;
     if (pin.note && first) sec.appendChild(el("p", "story-note", pin.note));
@@ -1066,6 +1175,7 @@ function openStory(h, pinId) {
     scroll.appendChild(el("p", "empty-note", "No pins on this trip yet — the story writes itself as you pin places."));
   }
   $("story").hidden = false;
+  renderMarkers(); // D1: this trip's pins take their numbers, and come out of any cluster
   // F10: GPX tracks, logged-in only (a share never carries tracks)
   if (!SHARE && window.WSTracks) window.WSTracks.draw(h.id);
   applyFocus(); // dims the other trips even before a chapter activates
@@ -1153,6 +1263,7 @@ function closeStory() {
   $("story").hidden = true;
   if (!SHARE && window.WSTracks) window.WSTracks.draw(null); // takes the track off the map
   document.body.classList.remove("storying");
+  renderMarkers();
   setFocus(null); // also clears story-active via applyFocus
 }
 

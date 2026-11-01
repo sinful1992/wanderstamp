@@ -416,4 +416,113 @@ export const tests = [
     assert.equal(await planes(), 1);
     await ctx.close();
   }],
+  ["P2: a trip's crowded pins fold into one count at world zoom, open up when tapped, and fold again", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base, { viewport: { width: 900, height: 700 } });
+    const t = await trips(page, [{ name: "P2 Paris", start_at: "2016-03-01", end_at: "2016-03-05" }, { name: "P2 Other", start_at: "2016-04-01", end_at: "2016-04-02" }]);
+    const id = t["P2 Paris"].id, other = t["P2 Other"].id;
+    const have = (await api(page, "GET", "/api/map")).body.pins;
+    if (!have.some((p) => p.holiday_id === id)) {
+      for (let i = 0; i < 12; i++) await api(page, "POST", "/api/pins", { holiday_id: id, lat: 48.85 + (i % 4) * 0.01, lng: 2.35 + Math.floor(i / 4) * 0.01, title: `P2 stop ${i}`, note: "" });
+      await api(page, "POST", "/api/pins", { holiday_id: other, lat: 48.86, lng: 2.36, title: "P2 other", note: "" });
+    }
+    await page.reload({ waitUntil: "networkidle" });
+    // only these two trips on the map
+    await page.evaluate(([a, b]) => { for (const h of state.holidays) if (h.id !== a && h.id !== b) state.hidden.add(h.id); }, [id, other]);
+    const look = () => page.evaluate((i) => {
+      const mine = [...state.markers.values()].filter((m) => m.tripId === i);
+      return { clusters: mine.filter((m) => m.cluster).map((m) => m.getElement().textContent), singles: mine.filter((m) => !m.cluster).length, zoom: map.getZoom() };
+    }, id);
+    await page.evaluate(() => { map.setView([48.86, 2.36], 4, { animate: false }); renderMarkers(); });
+    const first = await look();
+    assert.deepEqual(first, { clusters: ["12"], singles: 0, zoom: 4 }, JSON.stringify(first));
+    // another trip in the same spot keeps its own mark, in its own colour
+    assert.equal(await page.evaluate((o) => [...state.markers.values()].filter((m) => m.tripId === o && !m.cluster).length, other), 1);
+    assert.match(await page.evaluate((i) => [...state.markers.values()].find((m) => m.tripId === i && m.cluster).getElement().getAttribute("aria-label"), id), /^12 pins · P2 Paris/);
+    // routes still run through every stop
+    assert.equal(await page.evaluate((i) => state.routes.filter((r) => r.tripId === i && r instanceof L.Polyline).reduce((n, r) => n + r.getLatLngs().length, 0), id), 12);
+    await page.evaluate((i) => [...state.markers.values()].find((m) => m.tripId === i && m.cluster).fire("click"), id);
+    await page.waitForFunction(() => map.getZoom() >= 7);
+    await page.waitForTimeout(400);
+    let r = await look();
+    assert.equal(r.clusters.length, 0, JSON.stringify(r));
+    assert.equal(r.singles, 12);
+    await page.evaluate(() => map.setZoom(3, { animate: false }));
+    await page.waitForTimeout(300);
+    r = await look();
+    assert.deepEqual([r.clusters, r.singles], [["12"], 0]);
+    assert.equal(await page.$$eval(".leaflet-marker-pane .pin-cluster", (n) => n.length), 1);
+    // two pins on the very same spot: a tap goes straight to region zoom
+    await page.evaluate(() => {
+      state.pins = [...state.pins, { ...state.pins[0], id: 999001, holiday_id: -7, lat: 10, lng: 10 }, { ...state.pins[0], id: 999002, holiday_id: -7, lat: 10, lng: 10 }];
+      renderMarkers();
+      [...state.markers.values()].find((m) => m.tripId === -7).fire("click");
+    });
+    assert.equal(await page.evaluate(() => map.getZoom()), 8);
+    await ctx.close();
+  }],
+  ["P2: a print fetches no thumbnail at world zoom, and does once zoomed in; 1,800 pins make few markers", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base, { viewport: { width: 900, height: 700 } });
+    const asked = [];
+    await page.route("**/api/photo/**", (r) => { asked.push(r.request().url()); r.fulfill({ status: 404, body: "" }); });
+    const r = await page.evaluate(() => {
+      const h = { id: -9, name: "P2 big", color: "#1d6fb8", start_at: "2015-01-01", end_at: "2015-02-01" };
+      state.holidays = [...state.holidays, h];
+      for (const x of state.holidays) if (x.id !== -9) state.hidden.add(x.id);
+      const pins = [];
+      for (let i = 0; i < 1800; i++) {
+        pins.push({ id: 900000 + i, holiday_id: -9, kind: "photo", lat: 36 + (i % 60) * 0.3, lng: -8 + Math.floor(i / 60) * 0.9,
+          title: "", note: "", photo_count: 3, cover_asset: "a" + i, visited_at: new Date(Date.UTC(2015, 0, 1, 0, i)).toISOString() });
+      }
+      state.pins = pins;
+      map.setView([45, 5], 4, { animate: false });
+      const t0 = performance.now();
+      renderMarkers();
+      const ms = performance.now() - t0;
+      return { markers: state.markers.size, ms, imgs: document.querySelectorAll(".leaflet-marker-pane .print img").length };
+    });
+    console.log(`      1,800 pins at zoom 4: ${r.markers} markers, ${Math.round(r.ms)} ms`);
+    assert.ok(r.markers < 400, JSON.stringify(r));
+    assert.equal(r.imgs, 0);
+    await page.waitForTimeout(300);
+    assert.equal(asked.length, 0, "no thumbnails at world zoom");
+    await page.evaluate(() => map.setView([36, -8], 12, { animate: false }));
+    await page.waitForTimeout(500);
+    assert.ok(await page.$$eval(".leaflet-marker-pane .print img", (n) => n.length) > 0);
+    assert.ok(asked.length > 0 && asked.every((u) => u.includes("/thumb")), asked.slice(0, 3).join(","));
+    await ctx.close();
+  }],
+  ["D1: hand pins are ringed dots on the place; an open story numbers its stops on the map and in the chapters", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base, { viewport: { width: 900, height: 700 } });
+    const t = await trips(page, [{ name: "P2 Paris", start_at: "2016-03-01", end_at: "2016-03-05" }]);
+    const id = t["P2 Paris"].id;
+    await page.evaluate((i) => { for (const h of state.holidays) if (h.id !== i) state.hidden.add(h.id); map.setView([48.86, 2.36], 4, { animate: false }); renderMarkers(); }, id);
+    assert.equal(await page.evaluate((i) => [...state.markers.values()].some((m) => m.tripId === i && m.cluster), id), true);
+    // anchored on the place: the dot's centre is the pin's point (a still map, no fly)
+    await page.evaluate(() => map.setView([48.86, 2.36], 12, { animate: false }));
+    await page.waitForTimeout(300);
+    const off = await page.evaluate((i) => {
+      const m = [...state.markers.values()].find((x) => x.tripId === i && !x.cluster);
+      const r = m.getElement().getBoundingClientRect(), p = map.latLngToContainerPoint(m.getLatLng()), c = map.getContainer().getBoundingClientRect();
+      return [Math.abs(r.left + r.width / 2 - c.left - p.x), Math.abs(r.top + r.height / 2 - c.top - p.y)];
+    }, id);
+    assert.ok(off[0] < 1.5 && off[1] < 1.5, JSON.stringify(off));
+    await page.evaluate(() => { map.setView([48.86, 2.36], 4, { animate: false }); });
+    await page.evaluate((i) => openStory(holidayById(i)), id);
+    const nums = await page.evaluate((i) => [...state.markers.values()].filter((m) => m.tripId === i)
+      .map((m) => ({ c: !!m.cluster, n: m.getElement().querySelector(".stop-n")?.textContent, id: m.pinId })), id);
+    assert.equal(nums.some((x) => x.c), false, "the story's trip is never folded");
+    assert.deepEqual(nums.map((x) => +x.n).sort((a, b) => a - b), Array.from({ length: 12 }, (_, i) => i + 1));
+    // the chapter for a pin carries the pin's number
+    const pair = await page.evaluate(() => {
+      const sec = document.querySelectorAll("#story-scroll .story-sec[data-pin-id]")[4];
+      const m = [...state.markers.values()].find((x) => String(x.pinId) === sec.dataset.pinId);
+      return [sec.querySelector(".stop-num").textContent, m.getElement().querySelector(".stop-n").textContent];
+    });
+    assert.equal(pair[0], pair[1]);
+    assert.equal(pair[0], "5");
+    await page.evaluate(() => { closeStory(); map.setView([48.86, 2.36], 4, { animate: false }); });
+    assert.equal(await page.$$eval(".leaflet-marker-pane .stop-n", (n) => n.length), 0);
+    assert.equal(await page.evaluate((i) => [...state.markers.values()].some((m) => m.tripId === i && m.cluster), id), true);
+    await ctx.close();
+  }],
 ];

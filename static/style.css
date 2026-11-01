@@ -173,18 +173,48 @@ button { font: inherit; cursor: pointer; }
 #map[data-zoom] .route-line.dimmed { opacity: .12; }
 .trip-row.focused-trip { background: rgba(231, 221, 198, .1); box-shadow: inset 3px 0 0 var(--c, #1d6fb8); }
 
+/* D1: a hand-placed pin is a map-maker's town mark: an ink ring round a
+   solid dot, on a paper halo so it reads on any plate */
 .manual-pin {
-  width: 22px; height: 22px; border-radius: 50% 50% 50% 0;
-  transform: rotate(-45deg);
-  background:
-    radial-gradient(circle at 30% 30%, rgba(255,255,255,.35), transparent 55%),
-    var(--c, #1d6fb8);
-  border: 2px solid var(--paper);
-  box-shadow: 0 1px 4px rgba(0,0,0,.4);
+  position: relative; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--paper);
+  border: 2.5px solid var(--c, #1d6fb8);
+  box-shadow: 0 0 0 1.5px var(--paper), 0 1px 3px rgba(0,0,0,.35);
+  transition: scale .15s ease-out;
 }
 .manual-pin::after {
-  content: ""; position: absolute; inset: 6px;
-  border-radius: 50%; background: var(--paper);
+  content: ""; position: absolute; inset: 3.5px;
+  border-radius: 50%; background: var(--c, #1d6fb8);
+}
+#map[data-zoom="far"] .manual-pin { scale: .75; }
+/* D1: the open story's stop number, in the dot or on the print's corner */
+.stop-n {
+  position: absolute; z-index: 2;
+  font-family: var(--stamp); font-size: 11px; line-height: 1; color: #fffdf7;
+}
+.manual-pin.numbered::after { inset: 1.5px; }
+.manual-pin .stop-n { inset: 0; display: grid; place-items: center; }
+.photo-pin .stop-n {
+  left: -4px; top: -6px; min-width: 18px; height: 18px; padding: 0 3px;
+  display: grid; place-items: center; border-radius: 999px;
+  background: var(--ink, #26221c); box-shadow: 0 0 0 2px #fffdf7;
+}
+.photo-pin .hand-mark:has(~ .stop-n) { display: none; }
+#map[data-zoom="far"] .manual-pin.numbered { scale: 1; }
+/* P2: pins folded together at world zoom */
+.pin-cluster {
+  width: 100%; height: 100%; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--c, #1d6fb8); color: #fffdf7;
+  box-shadow: 0 0 0 2.5px #fffdf7, 0 0 0 4px var(--c, #1d6fb8), 0 2px 5px rgba(0,0,0,.35);
+  font-family: var(--stamp); font-size: 13px; line-height: 1;
+}
+.leaflet-marker-icon:hover .pin-cluster { scale: 1.1; }
+.story-place .stop-num {
+  display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 4px;
+  margin-right: 8px; vertical-align: 2px; border-radius: 999px;
+  background: var(--c, var(--ink)); color: #fffdf7;
+  font-size: 12px; letter-spacing: 0;
 }
 /* a pin queued offline: same pushpin, ghosted until it syncs */
 .manual-pin.pending {
@@ -192,6 +222,7 @@ button { font: inherit; cursor: pointer; }
   border-style: dashed;
   box-shadow: none;
 }
+.manual-pin.pending::after { display: none; }
 .leaflet-div-icon { background: none; border: none; }
 
 /* destination stamp: where a trip is headed. An un-inked passport stamp,
