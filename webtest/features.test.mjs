@@ -248,4 +248,48 @@ export const tests = [
     assert.deepEqual(await byLines(), []);
     await ctx.close();
   }],
+  ["hooks: the story draws tracks (none on close or on a share), the passport opens stats, Family opens import", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    // stand-in modules, served where linus's real ones live
+    const fake = {
+      "tracks.js": "window.WSTracks = { draw(id) { (window.trackCalls ||= []).push(id); } };",
+      "stats.js": "window.WSStats = { open() { window.statsOpened = (window.statsOpened || 0) + 1; } };",
+      "import.js": "window.WSImport = { open() { window.importOpened = (window.importOpened || 0) + 1; } };",
+    };
+    for (const [f, body] of Object.entries(fake)) {
+      await page.route(`**/${f}`, (r) => r.fulfill({ status: 200, contentType: "text/javascript", body }));
+    }
+    const t = await trips(page, [{ name: "Hooks trip", start_at: "2019-05-01", end_at: "2019-05-02" }]);
+    const id = t["Hooks trip"].id;
+    await page.reload({ waitUntil: "networkidle" });
+    assert.equal(await page.$eval("link[href='/print.css']", (l) => l.media), "print");
+    await page.evaluate((i) => openStory(holidayById(i)), id);
+    await page.evaluate(() => closeStory());
+    assert.deepEqual(await page.evaluate(() => window.trackCalls), [id, null]);
+    await page.evaluate(() => document.getElementById("btn-passport").click());
+    await page.waitForSelector(".pp-spread");
+    await page.click(".pp-stats");
+    assert.equal(await page.evaluate(() => window.statsOpened), 1);
+    await page.evaluate(() => openFamily());
+    await page.locator("button", { hasText: "Import a backup file" }).click();
+    assert.equal(await page.evaluate(() => window.importOpened), 1);
+    // a share loads the modules too, but never asks for tracks
+    const url = (await api(page, "POST", `/api/holidays/${id}/share`, { days: 7 })).body.url;
+    await page.goto(base + url, { waitUntil: "networkidle" });
+    await page.evaluate(() => { openStory(state.holidays[0]); closeStory(); });
+    assert.equal(await page.evaluate(() => window.trackCalls), undefined);
+    await ctx.close();
+  }],
+  ["hooks: without the modules the passport and Family pages carry no dead buttons", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    for (const f of ["tracks.js", "stats.js", "import.js"]) await page.route(`**/${f}`, (r) => r.fulfill({ status: 404, body: "" }));
+    await page.reload({ waitUntil: "networkidle" });
+    await page.evaluate(() => document.getElementById("btn-passport").click());
+    await page.waitForSelector(".pp-spread");
+    assert.equal(await page.$(".pp-stats"), null);
+    await page.evaluate(() => openFamily());
+    await page.waitForSelector(".fm-list");
+    assert.equal(await page.locator("button", { hasText: "Import a backup file" }).count(), 0);
+    await ctx.close();
+  }],
 ];

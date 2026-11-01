@@ -973,6 +973,8 @@ function openStory(h, pinId) {
     scroll.appendChild(el("p", "empty-note", "No pins on this trip yet — the story writes itself as you pin places."));
   }
   $("story").hidden = false;
+  // F10: GPX tracks, logged-in only (a share never carries tracks)
+  if (!SHARE && window.WSTracks) window.WSTracks.draw(h.id);
   applyFocus(); // dims the other trips even before a chapter activates
   renderSheet();
 
@@ -1056,6 +1058,7 @@ function closeStory() {
   story.activeEl = null;
   story.hid = null;
   $("story").hidden = true;
+  if (!SHARE && window.WSTracks) window.WSTracks.draw(null); // takes the track off the map
   document.body.classList.remove("storying");
   setFocus(null); // also clears story-active via applyFocus
 }
@@ -1843,6 +1846,13 @@ $("btn-passport").onclick = async () => {
     if (!stamps.length) {
       visas.appendChild(el("p", "pp-empty",
         "A country is stamped here once a trip has photos with a location on them."));
+    }
+    // F4: linus's stats module, when it's loaded
+    if (window.WSStats) {
+      const more = el("button", "sub-link pp-stats", "Travel stats");
+      more.type = "button";
+      more.onclick = () => window.WSStats.open();
+      visas.appendChild(more);
     }
     openOverlay("Passport", spread);
   } catch (err) {
@@ -3031,6 +3041,14 @@ async function openFamily() {
     }
   };
   box.appendChild(add);
+  // F9: linus's import module (admin only, as this page is)
+  if (window.WSImport) {
+    box.appendChild(el("h3", "day-head", "Restore from a backup"));
+    const imp = el("button", "linkish", "Import a backup file");
+    imp.type = "button";
+    imp.onclick = () => window.WSImport.open();
+    box.appendChild(imp);
+  }
   openOverlay("Family", box);
 }
 
