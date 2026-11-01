@@ -170,6 +170,11 @@ var migrations = []string{
 	`ALTER TABLE pins ADD COLUMN created_by TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE holidays ADD COLUMN created_by TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE holidays ADD COLUMN journal_by TEXT NOT NULL DEFAULT ''`,
+	// F7 video: what each asset is, and a video's length in seconds
+	`ALTER TABLE pin_photos ADD COLUMN type TEXT NOT NULL DEFAULT 'image'`,
+	`ALTER TABLE pin_photos ADD COLUMN duration REAL NOT NULL DEFAULT 0`,
+	`ALTER TABLE unplaced_photos ADD COLUMN type TEXT NOT NULL DEFAULT 'image'`,
+	`ALTER TABLE unplaced_photos ADD COLUMN duration REAL NOT NULL DEFAULT 0`,
 }
 
 func openDB(path string) (*sql.DB, error) {

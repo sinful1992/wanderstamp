@@ -511,20 +511,16 @@ func (a *app) handleUnplacedPhotos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := a.db.Query(`
-		SELECT asset_id, taken_at FROM unplaced_photos WHERE holiday_id = ? ORDER BY taken_at`, id)
+		SELECT asset_id, taken_at, type, duration FROM unplaced_photos WHERE holiday_id = ? ORDER BY taken_at`, id)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
 	}
 	defer rows.Close()
-	type photo struct {
-		AssetID string `json:"asset_id"`
-		TakenAt string `json:"taken_at"`
-	}
-	out := []photo{}
+	out := []photoOut{}
 	for rows.Next() {
-		var p photo
-		if err := rows.Scan(&p.AssetID, &p.TakenAt); err != nil {
+		var p photoOut
+		if err := rows.Scan(&p.AssetID, &p.TakenAt, &p.Type, &p.Duration); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -561,15 +557,16 @@ func (a *app) handleAttachPhotos(w http.ResponseWriter, r *http.Request) {
 	moved := 0
 	for _, asset := range req.AssetIDs {
 		// Only photos genuinely unplaced on this holiday are eligible.
-		var takenAt string
-		if err := tx.QueryRow(`SELECT taken_at FROM unplaced_photos WHERE asset_id = ? AND holiday_id = ?`,
-			asset, holidayID).Scan(&takenAt); err != nil {
+		var takenAt, typ string
+		var duration float64
+		if err := tx.QueryRow(`SELECT taken_at, type, duration FROM unplaced_photos WHERE asset_id = ? AND holiday_id = ?`,
+			asset, holidayID).Scan(&takenAt, &typ, &duration); err != nil {
 			continue
 		}
 		if _, err := tx.Exec(`
-			INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng)
-			VALUES (?, ?, ?, ?, ?) ON CONFLICT (asset_id) DO NOTHING`,
-			id, asset, takenAt, lat, lng); err != nil {
+			INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng, type, duration)
+			VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (asset_id) DO NOTHING`,
+			id, asset, takenAt, lat, lng, typ, duration); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -594,7 +591,7 @@ func (a *app) handleAskPhotos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := a.db.Query(`
-		SELECT p.id, p.title, p.lat, p.lng, pp.asset_id, pp.taken_at, pp.lat, pp.lng
+		SELECT p.id, p.title, p.lat, p.lng, pp.asset_id, pp.taken_at, pp.type, pp.duration, pp.lat, pp.lng
 		FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
 		WHERE p.holiday_id = ? AND pp.ask = 1
 		ORDER BY p.id, pp.taken_at`, id)
@@ -604,9 +601,8 @@ func (a *app) handleAskPhotos(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	type photo struct {
-		AssetID string  `json:"asset_id"`
-		TakenAt string  `json:"taken_at"`
-		KM      float64 `json:"km"`
+		photoOut
+		KM float64 `json:"km"`
 	}
 	type group struct {
 		PinID  int64   `json:"pin_id"`
@@ -618,7 +614,7 @@ func (a *app) handleAskPhotos(w http.ResponseWriter, r *http.Request) {
 		var g group
 		var plat, plng, lat, lng float64
 		var ph photo
-		if err := rows.Scan(&g.PinID, &g.Title, &plat, &plng, &ph.AssetID, &ph.TakenAt, &lat, &lng); err != nil {
+		if err := rows.Scan(&g.PinID, &g.Title, &plat, &plng, &ph.AssetID, &ph.TakenAt, &ph.Type, &ph.Duration, &lat, &lng); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -699,24 +695,20 @@ func (a *app) handleHolidayTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := a.db.Query(`
-		SELECT pp.asset_id, pp.taken_at FROM pin_photos pp
+		SELECT pp.asset_id, pp.taken_at, pp.type, pp.duration FROM pin_photos pp
 		  JOIN pins p ON p.id = pp.pin_id WHERE p.holiday_id = ?
 		UNION ALL
-		SELECT up.asset_id, up.taken_at FROM unplaced_photos up WHERE up.holiday_id = ?
+		SELECT up.asset_id, up.taken_at, up.type, up.duration FROM unplaced_photos up WHERE up.holiday_id = ?
 		ORDER BY taken_at`, id, id)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
 	}
 	defer rows.Close()
-	type photo struct {
-		AssetID string `json:"asset_id"`
-		TakenAt string `json:"taken_at"`
-	}
-	out := []photo{}
+	out := []photoOut{}
 	for rows.Next() {
-		var p photo
-		if err := rows.Scan(&p.AssetID, &p.TakenAt); err != nil {
+		var p photoOut
+		if err := rows.Scan(&p.AssetID, &p.TakenAt, &p.Type, &p.Duration); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -991,26 +983,30 @@ func (a *app) resyncPinSoon(pinID int64) {
 	}
 }
 
+// photoOut is one entry of every photo list (F7: type and duration).
+type photoOut struct {
+	AssetID  string  `json:"asset_id"`
+	TakenAt  string  `json:"taken_at"`
+	Type     string  `json:"type"`     // "image" or "video"
+	Duration float64 `json:"duration"` // seconds; 0 for an image
+}
+
 func (a *app) handlePinPhotos(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
 	rows, err := a.db.Query(`
-		SELECT asset_id, taken_at FROM pin_photos WHERE pin_id = ? ORDER BY taken_at`, id)
+		SELECT asset_id, taken_at, type, duration FROM pin_photos WHERE pin_id = ? ORDER BY taken_at`, id)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
 	}
 	defer rows.Close()
-	type photo struct {
-		AssetID string `json:"asset_id"`
-		TakenAt string `json:"taken_at"`
-	}
-	out := []photo{}
+	out := []photoOut{}
 	for rows.Next() {
-		var p photo
-		if err := rows.Scan(&p.AssetID, &p.TakenAt); err != nil {
+		var p photoOut
+		if err := rows.Scan(&p.AssetID, &p.TakenAt, &p.Type, &p.Duration); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -1024,10 +1020,12 @@ func (a *app) handlePinPhotos(w http.ResponseWriter, r *http.Request) {
 // not files; the image data itself lives (and is backed up) in Immich.
 func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 	type photoExp struct {
-		AssetID string  `json:"asset_id"`
-		TakenAt string  `json:"taken_at"`
-		Lat     float64 `json:"lat"`
-		Lng     float64 `json:"lng"`
+		AssetID  string  `json:"asset_id"`
+		TakenAt  string  `json:"taken_at"`
+		Lat      float64 `json:"lat"`
+		Lng      float64 `json:"lng"`
+		Type     string  `json:"type"`
+		Duration float64 `json:"duration"`
 	}
 	type pinExp struct {
 		ID         int64      `json:"id"`
@@ -1103,7 +1101,7 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		byPin[p.ID] = p
 	}
 
-	phRows, err := a.db.Query(`SELECT pin_id, asset_id, taken_at, lat, lng FROM pin_photos ORDER BY taken_at`)
+	phRows, err := a.db.Query(`SELECT pin_id, asset_id, taken_at, lat, lng, type, duration FROM pin_photos ORDER BY taken_at`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
@@ -1112,7 +1110,7 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 	for phRows.Next() {
 		var pid int64
 		var ph photoExp
-		if err := phRows.Scan(&pid, &ph.AssetID, &ph.TakenAt, &ph.Lat, &ph.Lng); err != nil {
+		if err := phRows.Scan(&pid, &ph.AssetID, &ph.TakenAt, &ph.Lat, &ph.Lng, &ph.Type, &ph.Duration); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}

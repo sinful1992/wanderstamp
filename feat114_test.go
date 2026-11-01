@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"mime/multipart"
 	"net/http"
@@ -528,5 +529,268 @@ func TestSimplifyStaysUnderMax(t *testing.T) {
 	}
 	if got := simplifyTrack(pts[:10], 2000); len(got) != 10 {
 		t.Errorf("short track changed: %d", len(got))
+	}
+}
+
+// --- F7 video ---
+
+func TestImmichDurationSeconds(t *testing.T) {
+	cases := []struct {
+		typ, dur string
+		want     float64
+	}{
+		{"VIDEO", "0:00:12.345678", 12.3},
+		{"VIDEO", "1:02:03.000000", 3723},
+		{"VIDEO", "00:05.5", 5.5},
+		{"VIDEO", "", 0},
+		{"VIDEO", "garbage", 0},
+		{"VIDEO", "1:2:3:4", 0},
+		{"VIDEO", "-0:00:05", 0},
+		{"VIDEO", "NaN", 0},
+		{"IMAGE", "0:00:00.00000", 0},
+		{"IMAGE", "0:00:09", 0},
+	}
+	for _, c := range cases {
+		if got := (immichAsset{Type: c.typ, Duration: c.dur}).seconds(); got != c.want {
+			t.Errorf("%s %q: %v, want %v", c.typ, c.dur, got, c.want)
+		}
+	}
+}
+
+// fakeImmichF7 answers the search with two photos, two videos and an audio
+// file, and serves video playback with Range (http.ServeContent).
+func fakeImmichF7(t *testing.T, searchBody *string) *httptest.Server {
+	t.Helper()
+	film := []byte("0123456789abcdefghij")
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/search/metadata":
+			if searchBody != nil {
+				b, _ := io.ReadAll(r.Body)
+				*searchBody = string(b)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"assets":{"items":[
+				{"id":"00000000-0000-0000-0000-00000000000a","type":"IMAGE","duration":"0:00:00.00000","fileCreatedAt":"2026-07-01T10:00:00Z","exifInfo":{"latitude":48.85,"longitude":2.35,"city":"Paris","country":"France"}},
+				{"id":"00000000-0000-0000-0000-00000000000b","type":"VIDEO","duration":"0:00:12.345678","fileCreatedAt":"2026-07-01T10:05:00Z","exifInfo":{"latitude":48.851,"longitude":2.351,"city":"Paris","country":"France"}},
+				{"id":"00000000-0000-0000-0000-00000000000c","type":"VIDEO","duration":"0:01:30.000000","fileCreatedAt":"2026-07-01T11:00:00Z","exifInfo":{}},
+				{"id":"00000000-0000-0000-0000-00000000000d","type":"IMAGE","fileCreatedAt":"2026-07-01T12:00:00Z"},
+				{"id":"00000000-0000-0000-0000-00000000000e","type":"AUDIO","duration":"0:03:00.0","fileCreatedAt":"2026-07-01T12:30:00Z","exifInfo":{"latitude":48.85,"longitude":2.35}}
+			],"nextPage":null}}`))
+		case r.URL.Path == "/api/assets/00000000-0000-0000-0000-00000000000b/video/playback":
+			if r.Header.Get("x-api-key") != "key" {
+				w.WriteHeader(401)
+				return
+			}
+			w.Header().Set("Content-Type", "video/mp4")
+			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(film))
+		case strings.HasPrefix(r.URL.Path, "/api/assets/") && strings.HasSuffix(r.URL.Path, "/video/playback"):
+			w.WriteHeader(400) // Immich: not a video
+		case strings.HasPrefix(r.URL.Path, "/api/assets/"):
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Write([]byte("jpeg"))
+		default:
+			w.Write([]byte(`{}`))
+		}
+	}))
+}
+
+func f7App(t *testing.T, searchBody *string) (*app, *http.ServeMux) {
+	t.Helper()
+	srv := fakeImmichF7(t, searchBody)
+	t.Cleanup(srv.Close)
+	a := newTestApp(t)
+	a.immich = newImmichClient(srv.URL, "key")
+	a.lastSync = map[int64]time.Time{}
+	if _, err := a.db.Exec(`INSERT INTO holidays (id, name, color, start_at, end_at) VALUES
+		(1, 'Paris', '#123456', '2026-07-01T00:00:00Z', '2026-07-02T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/pins/{id}/photos", as("ann", a.handlePinPhotos))
+	mux.HandleFunc("GET /api/holidays/{id}/timeline", as("ann", a.handleHolidayTimeline))
+	mux.HandleFunc("GET /api/holidays/{id}/unplaced", as("ann", a.handleUnplacedPhotos))
+	mux.HandleFunc("GET /api/holidays/{id}/ask", as("ann", a.handleAskPhotos))
+	mux.HandleFunc("POST /api/pins/{id}/attach", as("ann", a.handleAttachPhotos))
+	mux.HandleFunc("GET /api/photo/{asset}/{kind}", as("ann", a.handlePhoto))
+	mux.HandleFunc("GET /api/export", as("ann", a.handleExport))
+	mux.HandleFunc("POST /api/holidays/{id}/share", a.handleCreateShare)
+	mux.HandleFunc("GET /api/share/{token}/pins/{id}/photos", a.handleSharePinPhotos)
+	mux.HandleFunc("GET /api/share/{token}/photo/{asset}/{kind}", a.handleSharePhoto)
+	return a, mux
+}
+
+func TestSyncTakesVideos(t *testing.T) {
+	var body string
+	a, mux := f7App(t, &body)
+	if strings.Contains(body, `"type"`) {
+		t.Errorf("search still filters by type: %s", body)
+	}
+	type row struct {
+		typ string
+		dur float64
+	}
+	got := map[string]row{}
+	rows, _ := a.db.Query(`SELECT asset_id, type, duration FROM pin_photos UNION ALL SELECT asset_id, type, duration FROM unplaced_photos`)
+	for rows.Next() {
+		var id string
+		var r row
+		rows.Scan(&id, &r.typ, &r.dur)
+		got[id] = r
+	}
+	rows.Close()
+	want := map[string]row{"00000000-0000-0000-0000-00000000000a": {"image", 0}, "00000000-0000-0000-0000-00000000000b": {"video", 12.3}, "00000000-0000-0000-0000-00000000000c": {"video", 90}, "00000000-0000-0000-0000-00000000000d": {"image", 0}}
+	if len(got) != len(want) {
+		t.Errorf("synced %v, want %v (audio left out)", got, want)
+	}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("%s: %+v, want %+v", id, got[id], w)
+		}
+	}
+
+	var pinID int64
+	a.db.QueryRow(`SELECT pin_id FROM pin_photos WHERE asset_id = '00000000-0000-0000-0000-00000000000b'`).Scan(&pinID)
+	var list []photoOut
+	for _, path := range []string{fmt.Sprintf("/api/pins/%d/photos", pinID), "/api/holidays/1/timeline", "/api/holidays/1/unplaced"} {
+		rec := serve(mux, "GET", path, "")
+		if rec.Code != 200 {
+			t.Fatalf("%s: %d", path, rec.Code)
+		}
+		// every entry carries both keys, even an image
+		var raw []map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &raw)
+		for _, p := range raw {
+			if _, ok := p["type"]; !ok {
+				t.Errorf("%s: no type in %v", path, p)
+			}
+			if _, ok := p["duration"]; !ok {
+				t.Errorf("%s: no duration in %v", path, p)
+			}
+		}
+		json.Unmarshal(rec.Body.Bytes(), &list)
+		for _, p := range list {
+			if w := want[p.AssetID]; p.Type != w.typ || p.Duration != w.dur {
+				t.Errorf("%s: %+v, want %+v", path, p, w)
+			}
+		}
+	}
+
+	// a re-sync is idempotent and keeps the type
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatal(err)
+	}
+	var typ string
+	a.db.QueryRow(`SELECT type FROM pin_photos WHERE asset_id = '00000000-0000-0000-0000-00000000000b'`).Scan(&typ)
+	if typ != "video" {
+		t.Errorf("after re-sync 00000000-0000-0000-0000-00000000000b is %q", typ)
+	}
+
+	// attaching an unplaced video to a pin keeps it a video
+	rec := serve(mux, "POST", fmt.Sprintf("/api/pins/%d/attach", pinID), `{"asset_ids":["00000000-0000-0000-0000-00000000000c"]}`)
+	if rec.Code != 200 {
+		t.Fatalf("attach: %d %s", rec.Code, rec.Body)
+	}
+	var dur float64
+	a.db.QueryRow(`SELECT type, duration FROM pin_photos WHERE asset_id = '00000000-0000-0000-0000-00000000000c'`).Scan(&typ, &dur)
+	if typ != "video" || dur != 90 {
+		t.Errorf("attached 00000000-0000-0000-0000-00000000000c is %q %v, want video 90", typ, dur)
+	}
+	// and the export carries it, for F9 import
+	if !strings.Contains(serve(mux, "GET", "/api/export", "").Body.String(), `"type":"video","duration":90`) {
+		t.Error("export leaves out the video type")
+	}
+}
+
+func TestOldPhotoRowsReadAsImages(t *testing.T) {
+	a := newTestApp(t)
+	a.db.Exec(`INSERT INTO holidays (id, name, color, start_at) VALUES (1, 'Old', '#123456', '2025-07-01T00:00:00Z')`)
+	a.db.Exec(`INSERT INTO pins (id, holiday_id, kind, lat, lng) VALUES (3, 1, 'photo', 1, 1)`)
+	// an insert as 1.13 wrote it, naming no type
+	if _, err := a.db.Exec(`INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng) VALUES (3, 'old', '2025-07-01T10:00:00Z', 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/pins/{id}/photos", as("ann", a.handlePinPhotos))
+	body := serve(mux, "GET", "/api/pins/3/photos", "").Body.String()
+	if !strings.Contains(body, `"type":"image","duration":0`) {
+		t.Errorf("old row: %s", body)
+	}
+}
+
+func TestVideoStreamHonoursRange(t *testing.T) {
+	_, mux := f7App(t, nil)
+	req := httptest.NewRequest("GET", "/api/photo/00000000-0000-0000-0000-00000000000b/video", nil)
+	req.Header.Set("Range", "bytes=2-5")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != 206 || rec.Body.String() != "2345" {
+		t.Fatalf("range: %d %q", rec.Code, rec.Body)
+	}
+	if cr := rec.Header().Get("Content-Range"); cr != "bytes 2-5/20" {
+		t.Errorf("Content-Range %q", cr)
+	}
+	if rec.Header().Get("Content-Type") != "video/mp4" || rec.Header().Get("Content-Length") != "4" {
+		t.Errorf("headers %v", rec.Header())
+	}
+	// whole file without Range
+	if rec := serve(mux, "GET", "/api/photo/00000000-0000-0000-0000-00000000000b/video", ""); rec.Code != 200 || rec.Body.Len() != 20 || rec.Header().Get("Accept-Ranges") != "bytes" {
+		t.Errorf("full: %d %d %v", rec.Code, rec.Body.Len(), rec.Header())
+	}
+	// past the end: 416 passes through, not a 502
+	req = httptest.NewRequest("GET", "/api/photo/00000000-0000-0000-0000-00000000000b/video", nil)
+	req.Header.Set("Range", "bytes=50-60")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != 416 {
+		t.Errorf("unsatisfiable range: %d", rec.Code)
+	}
+	// a photo has no video; an unknown asset is still unknown
+	if rec := serve(mux, "GET", "/api/photo/00000000-0000-0000-0000-00000000000a/video", ""); rec.Code != 404 {
+		t.Errorf("video of a photo: %d", rec.Code)
+	}
+	if rec := serve(mux, "GET", "/api/photo/00000000-0000-0000-0000-00000000000f/video", ""); rec.Code != 404 {
+		t.Errorf("unknown asset: %d", rec.Code)
+	}
+	// a video's thumb is its poster frame, the usual thumbnail route
+	if rec := serve(mux, "GET", "/api/photo/00000000-0000-0000-0000-00000000000b/thumb", ""); rec.Code != 200 || rec.Body.String() != "jpeg" {
+		t.Errorf("poster: %d %q", rec.Code, rec.Body)
+	}
+}
+
+func TestShareVideo(t *testing.T) {
+	a, mux := f7App(t, nil)
+	rec := serve(mux, "POST", "/api/holidays/1/share", `{"days":7}`)
+	url, _ := decode(t, rec)["url"].(string)
+	token := strings.TrimPrefix(url, "/share/")
+	if token == "" {
+		t.Fatalf("share: %d %s", rec.Code, rec.Body)
+	}
+	var pinID int64
+	a.db.QueryRow(`SELECT pin_id FROM pin_photos WHERE asset_id = '00000000-0000-0000-0000-00000000000b'`).Scan(&pinID)
+	body := serve(mux, "GET", fmt.Sprintf("/api/share/%s/pins/%d/photos", token, pinID), "").Body.String()
+	if !strings.Contains(body, `"asset_id":"00000000-0000-0000-0000-00000000000b","taken_at":"2026-07-01T10:05:00Z","type":"video","duration":12.3`) {
+		t.Errorf("share photos: %s", body)
+	}
+	req := httptest.NewRequest("GET", "/api/share/"+token+"/photo/00000000-0000-0000-0000-00000000000b/video", nil)
+	req.Header.Set("Range", "bytes=0-3")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != 206 || rec.Body.String() != "0123" {
+		t.Errorf("share video: %d %q", rec.Code, rec.Body)
+	}
+	if rec := serve(mux, "GET", "/api/share/"+token+"/photo/00000000-0000-0000-0000-00000000000a/video", ""); rec.Code != 404 {
+		t.Errorf("share video of a photo: %d", rec.Code)
+	}
+	if rec := serve(mux, "GET", "/api/share/"+token+"/photo/00000000-0000-0000-0000-00000000000b/original", ""); rec.Code != 403 {
+		t.Errorf("share original: %d", rec.Code)
+	}
+	// expired link stops the video too
+	a.db.Exec(`UPDATE shares SET expires_at = '2000-01-01T00:00:00Z'`)
+	if rec := serve(mux, "GET", "/api/share/"+token+"/photo/00000000-0000-0000-0000-00000000000b/video", ""); rec.Code != 410 {
+		t.Errorf("expired share video: %d", rec.Code)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -39,6 +40,7 @@ type immichClient struct {
 	baseURL string
 	apiKey  string
 	http    *http.Client
+	stream  *http.Client // video playback: no overall timeout, ends with the request
 }
 
 func newImmichClient(baseURL, apiKey string) *immichClient {
@@ -46,6 +48,7 @@ func newImmichClient(baseURL, apiKey string) *immichClient {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
 		http:    &http.Client{Timeout: 60 * time.Second, Transport: immichTransport{http.DefaultTransport}},
+		stream:  &http.Client{Transport: immichTransport{http.DefaultTransport}},
 	}
 }
 
@@ -100,6 +103,7 @@ func (c *immichClient) validate() error {
 type immichAsset struct {
 	ID            string    `json:"id"`
 	Type          string    `json:"type"`
+	Duration      string    `json:"duration"` // "0:00:12.345678" for a video
 	FileCreatedAt time.Time `json:"fileCreatedAt"`
 	ExifInfo      *struct {
 		Latitude  *float64 `json:"latitude"`
@@ -109,7 +113,38 @@ type immichAsset struct {
 	} `json:"exifInfo"`
 }
 
-// searchRange pages through /api/search/metadata for IMAGE assets in [after, before].
+// mediaType is the stored type of an asset: "video" or "image".
+func (a immichAsset) mediaType() string {
+	if a.Type == "VIDEO" {
+		return "video"
+	}
+	return "image"
+}
+
+// seconds turns Immich's "H:MM:SS.ffffff" duration into seconds; 0 for an
+// image or anything it can't read.
+func (a immichAsset) seconds() float64 {
+	if a.Type != "VIDEO" {
+		return 0
+	}
+	parts := strings.Split(strings.TrimSpace(a.Duration), ":")
+	if len(parts) == 0 || len(parts) > 3 {
+		return 0
+	}
+	total := 0.0
+	for _, part := range parts {
+		v, err := strconv.ParseFloat(part, 64)
+		if err != nil || strings.HasPrefix(part, "-") || v < 0 || math.IsInf(v, 0) || math.IsNaN(v) {
+			return 0
+		}
+		total = total*60 + v
+	}
+	return math.Round(total*10) / 10
+}
+
+// searchRange pages through /api/search/metadata for the photos and videos
+// (F7) in [after, before]. Live-photo motion clips are hidden in Immich, so
+// visibility "timeline" leaves them out; any other type (audio) is dropped.
 func (c *immichClient) searchRange(after, before time.Time) ([]immichAsset, error) {
 	var all []immichAsset
 	for page := 1; ; page++ {
@@ -117,7 +152,6 @@ func (c *immichClient) searchRange(after, before time.Time) ([]immichAsset, erro
 			"takenAfter":  after.UTC().Format(time.RFC3339),
 			"takenBefore": before.UTC().Format(time.RFC3339),
 			"withExif":    true,
-			"type":        "IMAGE",
 			"visibility":  "timeline",
 			"size":        1000,
 			"page":        page,
@@ -148,7 +182,11 @@ func (c *immichClient) searchRange(after, before time.Time) ([]immichAsset, erro
 		if err != nil {
 			return nil, fmt.Errorf("decode search response: %w", err)
 		}
-		all = append(all, result.Assets.Items...)
+		for _, it := range result.Assets.Items {
+			if it.Type == "IMAGE" || it.Type == "VIDEO" {
+				all = append(all, it)
+			}
+		}
 		if result.Assets.NextPage == nil {
 			break
 		}
@@ -464,9 +502,11 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 			}
 			// No GPS: keep the photo on the holiday anyway so nothing is lost.
 			if _, err := tx.Exec(`
-				INSERT INTO unplaced_photos (holiday_id, asset_id, taken_at)
-				VALUES (?, ?, ?) ON CONFLICT (asset_id) DO NOTHING`,
-				holidayID, asset.ID, takenAt); err != nil {
+				INSERT INTO unplaced_photos (holiday_id, asset_id, taken_at, type, duration)
+				VALUES (?, ?, ?, ?, ?) ON CONFLICT (asset_id) DO UPDATE SET
+				  type = excluded.type, duration = excluded.duration
+				WHERE unplaced_photos.holiday_id = excluded.holiday_id`,
+				holidayID, asset.ID, takenAt, asset.mediaType(), asset.seconds()); err != nil {
 				return 0, 0, err
 			}
 			seenUnplaced[asset.ID] = true
@@ -521,11 +561,12 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 			}
 		}
 		if _, err := tx.Exec(`
-			INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng, ask)
-			VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT (asset_id) DO UPDATE SET pin_id = excluded.pin_id, ask = excluded.ask
+			INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng, ask, type, duration)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (asset_id) DO UPDATE SET pin_id = excluded.pin_id, ask = excluded.ask,
+			  type = excluded.type, duration = excluded.duration
 			WHERE pin_photos.pin_id IN (SELECT id FROM pins WHERE holiday_id = ?)`,
-			pinID, asset.ID, takenAt, lat, lng, ask, holidayID); err != nil {
+			pinID, asset.ID, takenAt, lat, lng, ask, asset.mediaType(), asset.seconds(), holidayID); err != nil {
 			return 0, 0, err
 		}
 		seen[asset.ID] = true
@@ -702,7 +743,11 @@ var photoSizes = map[string]string{
 	"thumb":    "/thumbnail?size=thumbnail",
 	"preview":  "/thumbnail?size=preview",
 	"original": "/original",
+	"video":    "/video/playback", // F7: Immich's transcoded, seekable copy
 }
+
+// videoWriteWindow is how long one video response may keep writing.
+const videoWriteWindow = time.Hour
 
 // handlePhoto streams an Immich image to a logged-in family member. Only
 // assets already attached to a pin are reachable — the app never acts as an
@@ -722,37 +767,80 @@ func (a *app) handlePhoto(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "unknown photo")
 		return
 	}
+	if r.PathValue("kind") == "video" && !a.isVideo(assetID) {
+		httpError(w, http.StatusNotFound, "not a video")
+		return
+	}
 	// an asset id never changes what it shows, so the browser keeps it
 	a.streamPhoto(w, r, assetID, "private, max-age=31536000, immutable")
 }
 
+// isVideo reports whether a filed asset is a video (F7).
+func (a *app) isVideo(assetID string) bool {
+	var n int
+	a.reader().QueryRow(`
+		SELECT COUNT(*) FROM (
+		  SELECT 1 FROM pin_photos WHERE asset_id = ? AND type = 'video'
+		  UNION ALL SELECT 1 FROM unplaced_photos WHERE asset_id = ? AND type = 'video')`,
+		assetID, assetID).Scan(&n)
+	return n > 0
+}
+
 // streamPhoto proxies one Immich asset. Callers must have authorized the
 // asset already — this only translates kind → Immich URL and streams.
+// kind "video" (F7) is the transcoded playback: Range passes through both
+// ways so the browser can seek, and there is no 60 s client timeout.
 func (a *app) streamPhoto(w http.ResponseWriter, r *http.Request, assetID, cacheControl string) {
-	suffix, ok := photoSizes[r.PathValue("kind")]
+	kind := r.PathValue("kind")
+	suffix, ok := photoSizes[kind]
 	if !ok {
 		httpError(w, http.StatusBadRequest, "bad request")
 		return
 	}
+	video := kind == "video"
 	req, _ := http.NewRequestWithContext(r.Context(), "GET",
 		a.immich.baseURL+"/api/assets/"+assetID+suffix, nil)
 	req.Header.Set("x-api-key", a.immich.apiKey)
-	resp, err := a.immich.http.Do(req)
+	client := a.immich.http
+	if video {
+		for _, h := range []string{"Range", "If-Range"} {
+			if v := r.Header.Get(h); v != "" {
+				req.Header.Set(h, v)
+			}
+		}
+		client = a.immich.stream
+		// a film plays for longer than the server's 2 min write timeout
+		http.NewResponseController(w).SetWriteDeadline(time.Now().Add(videoWriteWindow))
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "photo service unavailable")
 		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	switch {
+	case resp.StatusCode == http.StatusOK:
+	case video && resp.StatusCode == http.StatusPartialContent:
+	case video && resp.StatusCode == http.StatusRequestedRangeNotSatisfiable:
+		if cr := resp.Header.Get("Content-Range"); cr != "" {
+			w.Header().Set("Content-Range", cr)
+		}
+		w.WriteHeader(resp.StatusCode)
+		return
+	default:
 		httpError(w, http.StatusBadGateway, "photo service error")
 		return
 	}
-	if ct := resp.Header.Get("Content-Type"); ct != "" {
-		w.Header().Set("Content-Type", ct)
+	headers := []string{"Content-Type", "Content-Length"}
+	if video {
+		headers = append(headers, "Content-Range", "Accept-Ranges", "ETag", "Last-Modified")
 	}
-	if cl := resp.Header.Get("Content-Length"); cl != "" {
-		w.Header().Set("Content-Length", cl)
+	for _, h := range headers {
+		if v := resp.Header.Get(h); v != "" {
+			w.Header().Set(h, v)
+		}
 	}
 	w.Header().Set("Cache-Control", cacheControl)
+	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }

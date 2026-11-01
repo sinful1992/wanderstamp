@@ -308,7 +308,7 @@ func (a *app) handleSharePinPhotos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := a.db.Query(`
-		SELECT pp.asset_id, pp.taken_at FROM pin_photos pp
+		SELECT pp.asset_id, pp.taken_at, pp.type, pp.duration FROM pin_photos pp
 		JOIN pins p ON p.id = pp.pin_id
 		WHERE pp.pin_id = ? AND p.holiday_id = ?
 		ORDER BY pp.taken_at`, pinID, hid)
@@ -317,14 +317,10 @@ func (a *app) handleSharePinPhotos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	type photo struct {
-		AssetID string `json:"asset_id"`
-		TakenAt string `json:"taken_at"`
-	}
-	out := []photo{}
+	out := []photoOut{}
 	for rows.Next() {
-		var p photo
-		if err := rows.Scan(&p.AssetID, &p.TakenAt); err != nil {
+		var p photoOut
+		if err := rows.Scan(&p.AssetID, &p.TakenAt, &p.Type, &p.Duration); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -357,6 +353,10 @@ func (a *app) handleSharePhoto(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := t.assets[assetID]; !ok {
 		httpError(w, http.StatusNotFound, "unknown photo")
+		return
+	}
+	if r.PathValue("kind") == "video" && !a.isVideo(assetID) {
+		httpError(w, http.StatusNotFound, "not a video")
 		return
 	}
 	// a day, not for good: revoking the link should stop the photos too
