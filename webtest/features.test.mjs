@@ -110,4 +110,73 @@ export const tests = [
     assert.equal(await page.isHidden("#trip-find"), true);
     await ctx.close();
   }],
+  // F2 server (linus) isn't on this branch yet: its contract answers are stubbed here.
+  ["F2: deleting a trip offers Undo, and Undo restores it", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    const t = await trips(page, [{ name: "F2 Undo me", start_at: "2022-05-01", end_at: "2022-05-03" }]);
+    const id = t["F2 Undo me"].id;
+    let undone = 0;
+    await page.route(`**/api/holidays/${id}`, (r) => r.request().method() === "DELETE"
+      ? r.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true,"undo":"tok-1"}' }) : r.continue());
+    await page.route("**/api/undo/tok-1", (r) => { undone++; r.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' }); });
+    page.on("dialog", (d) => d.accept());
+    await page.reload({ waitUntil: "networkidle" });
+    await page.evaluate(() => setSheet(true));
+    await page.evaluate(() => [...document.querySelectorAll("#trip-list .trip-row")].find((r) => r.textContent.includes("F2 Undo me"))
+      .querySelector("button[title='Edit this trip']").click());
+    await page.click("form.trip-edit button.danger");
+    await page.waitForSelector("#toast .toast-act");
+    assert.ok((await page.textContent("#toast")).startsWith("Trip deleted"));
+    await page.click("#toast .toast-act");
+    await page.waitForFunction(() => document.getElementById("toast").textContent.includes("is back"));
+    assert.equal(undone, 1);
+    await ctx.close();
+  }],
+  ["F2: Undo after the 30 s says it's too late; a delete without a token has no Undo", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    await page.route("**/api/undo/old", (r) => r.fulfill({ status: 410, contentType: "application/json", body: '{"error":"too late to undo"}' }));
+    await page.evaluate(() => deletedToast("Pin", { ok: true, undo: "old" }));
+    await page.click("#toast .toast-act");
+    await page.waitForFunction(() => document.getElementById("toast").textContent === "Too late to undo");
+    await page.evaluate(() => deletedToast("Pin", { ok: true }));
+    assert.equal(await page.$("#toast .toast-act"), null);
+    assert.equal(await page.textContent("#toast"), "Pin deleted");
+    await ctx.close();
+  }],
+  ["F2: an ended trip has Reopen trip; it posts reopen, and a live trip blocks it", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    const t = await trips(page, [{ name: "F2 Reopen", start_at: "2022-09-01", end_at: "2022-09-04" }]);
+    const id = t["F2 Reopen"].id;
+    let posted = 0;
+    await page.route(`**/api/holidays/${id}/reopen`, (r) => { posted++; r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...t["F2 Reopen"], end_at: null, active: true }) }); });
+    page.on("dialog", (d) => d.accept());
+    await page.reload({ waitUntil: "networkidle" });
+    const open = async (name) => {
+      await page.evaluate(() => setSheet(true));
+      await page.evaluate((n) => [...document.querySelectorAll("#trip-list .trip-row")].find((r) => r.textContent.includes(n))
+        .querySelector("button[title='Edit this trip']").click(), name);
+      await page.waitForSelector("form.trip-edit");
+    };
+    await open("F2 Reopen");
+    const reopen = page.locator("form.trip-edit button", { hasText: "Reopen trip" });
+    await reopen.click();
+    await page.waitForFunction(() => document.getElementById("toast").textContent.includes("is live again"));
+    assert.equal(posted, 1);
+    // with another trip live, it says so instead of asking the server
+    // (set and clicked in one go: a background reload would reset state.holidays)
+    await open("F2 Reopen");
+    await page.evaluate(() => {
+      state.holidays.find((h) => h.name !== "F2 Reopen").active = true;
+      [...document.querySelectorAll("form.trip-edit button")].find((b) => b.textContent === "Reopen trip").click();
+    });
+    await page.waitForFunction(() => document.getElementById("toast").textContent.includes("first"));
+    assert.equal(posted, 1);
+    // a planned or live trip has no Reopen
+    const r = await api(page, "POST", "/api/holidays", { name: "F2 Planned", color: "#1d6fb8", start_at: "2031-01-01" });
+    assert.ok(r.status < 300, JSON.stringify(r));
+    await page.reload({ waitUntil: "networkidle" });
+    await open("F2 Planned");
+    assert.equal(await page.locator("form.trip-edit button", { hasText: "Reopen trip" }).count(), 0);
+    await ctx.close();
+  }],
 ];

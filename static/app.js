@@ -51,12 +51,38 @@ function plural(n, one, many = one + "s") {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-function toast(msg) {
+// action, when given, is { label, fn }: a button in the toast (Undo). That
+// toast stays up longer, long enough to read it and reach the button.
+function toast(msg, action) {
   const t = $("toast");
   t.textContent = msg;
+  if (action) {
+    const b = el("button", "toast-act", action.label);
+    b.type = "button";
+    b.onclick = () => { t.hidden = true; clearTimeout(toast.timer); action.fn(); };
+    t.append(" ", b);
+  }
   t.hidden = false;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { t.hidden = true; }, 3500);
+  toast.timer = setTimeout(() => { t.hidden = true; }, action ? 10000 : 3500);
+}
+
+// F2: a delete answers with an undo token the server keeps for 30 s.
+function deletedToast(what, r) {
+  if (!r || !r.undo) { toast(`${what} deleted`); return; }
+  toast(`${what} deleted`, {
+    label: "Undo",
+    fn: () => busy(null, async () => {
+      try {
+        await api("POST", `/api/undo/${encodeURIComponent(r.undo)}`);
+      } catch (ex) {
+        if (ex.status === 410) { toast("Too late to undo"); return; }
+        throw ex;
+      }
+      toast(`${what} is back`);
+      await loadData();
+    }),
+  });
 }
 
 // meta, when given, receives the raw response (meta.resp) for its headers.
@@ -872,8 +898,7 @@ function openStory(h, pinId) {
       const what = visits > 1 ? `Delete this pin, and all ${visits} visits to it?` : "Delete this pin?";
       if (!confirm(pin.photo_count > 0 ? `${what} Its photos stay in Immich.` : what)) return;
       await busy(del, async () => {
-        await api("DELETE", `/api/pins/${pin.id}`);
-        toast("Pin deleted");
+        deletedToast("Pin", await api("DELETE", `/api/pins/${pin.id}`));
         loadData();
       });
     };
@@ -1590,13 +1615,28 @@ function tripEditForm(h) {
   del.onclick = async () => {
     if (!confirm(`Delete "${h.name}" and all its pins? Photos stay in Immich.`)) return;
     await busy(del, async () => {
-      await api("DELETE", `/api/holidays/${h.id}`);
-      toast("Trip deleted");
+      deletedToast("Trip", await api("DELETE", `/api/holidays/${h.id}`));
       loadData();
     });
   };
   const btnRow = el("div", "form-row");
   btnRow.append(save, del);
+  // F2: an ended trip can be live again (ended by mistake, or one more day).
+  if (h.end_at && !h.active && !h.planned) {
+    const reopen = el("button", null, "Reopen trip");
+    reopen.type = "button";
+    reopen.onclick = async () => {
+      const live = state.holidays.find((x) => x.active);
+      if (live) { toast(`End "${live.name}" first: one trip is live at a time`); return; }
+      if (!confirm(`Reopen "${h.name}"? New photos will join it until you end it again.`)) return;
+      await busy(reopen, async () => {
+        await api("POST", `/api/holidays/${h.id}/reopen`);
+        toast(`"${h.name}" is live again`);
+        await loadData();
+      });
+    };
+    btnRow.appendChild(reopen);
+  }
   let cover = h.cover_asset;
   // A live or planned trip gets its last day by being ended.
   wrap.append(name, sw, startRow, h.active || h.planned ? el("span") : endRow, destBox);

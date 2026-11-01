@@ -1192,6 +1192,10 @@ button.primary.gold { background: var(--gold); color: var(--navy-2); }
   padding: 10px 16px; border-radius: 10px; font-size: 14px;
   box-shadow: var(--shadow); max-width: calc(100vw - 30px); text-align: center;
 }
+#toast .toast-act {
+  margin-left: 10px; min-height: 44px; padding: 0 14px; border-radius: 8px;
+  font: inherit; font-weight: 600; color: var(--ink); background: var(--gold); border: none;
+}
 
 /* ---------- desktop ---------- */
 

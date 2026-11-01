@@ -4,6 +4,7 @@
 
 ### Frontend
 - Find a trip: once there are 5 or more, the trips list has a search box (name, place or journal; accents don't matter) and year chips. Trips you hide stay hidden after a reload, for each person on the device.
+- Deleted a pin or a trip by mistake? The toast has Undo for 10 seconds. An ended trip has Reopen trip in its edit form, to make it live again.
 
 ## 1.13.1 (unreleased)
 
