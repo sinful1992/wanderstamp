@@ -21,13 +21,13 @@
 - Deleted a pin or a trip by mistake? The toast has Undo for 10 seconds. An ended trip has Reopen trip in its edit form, to make it live again.
 - An open trip edit form stays open, with the fresh data, when a photo sync reloads the map; text typed while a save runs is kept.
 - Day numbers on the live banner and in the story count from the day the trip started where you are (they were a day off in New York or Bangkok). A queued offline pin you discard while others are sending is not sent.
-F6: the story says who started the trip, who added each pin and who wrote the journal (nothing for old entries or on a share).
-The map loads the GPX track, stats, import and print modules: the story draws a trip's tracks, the passport has Travel stats, Family has Import a backup file.
-F3: a trip's story has All photos: the whole roll, pinned and unplaced, under its trip days.
-F7: videos show as their poster with a play mark and length, and play in the photo viewer (from the share route on a share link).
-F5: legs over 300 km are drawn as the great circle a plane flies, with a small plane pointing the way; lines no longer jump across the 180th meridian.
-D1: hand-placed pins are ringed map-maker's dots centred on the place; an open story numbers its stops on the map and in its chapters.
-P2: below region zoom a trip's crowded pins fold into one dot with a count (tap to zoom in), and photo prints fetch no thumbnail until zoomed in; 1,800 pins draw as about 50 markers.
+- F6: the story says who started the trip, who added each pin and who wrote the journal (nothing for old entries or on a share).
+- The map loads the GPX track, stats, import and print modules: the story draws a trip's tracks, the passport has Travel stats, Family has Import a backup file.
+- F3: a trip's story has All photos: the whole roll, pinned and unplaced, under its trip days.
+- F7: videos show as their poster with a play mark and length, and play in the photo viewer. A share link shows the poster only, as a video can carry its GPS.
+- F5: legs over 300 km are drawn as the great circle a plane flies, with a small plane pointing the way; lines no longer jump across the 180th meridian.
+- D1: hand-placed pins are ringed map-maker's dots centred on the place; an open story numbers its stops on the map and in its chapters.
+- P2: below region zoom a trip's crowded pins fold into one dot with a count (tap to zoom in), and photo prints fetch no thumbnail until zoomed in; 1,800 pins draw as about 50 markers.
 
 ### Fixes from the task 112 review (planned as 1.13.1, released in 1.14.0)
 

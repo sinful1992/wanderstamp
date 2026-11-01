@@ -324,7 +324,7 @@ export const tests = [
     assert.equal(await page.getAttribute(".trip-gallery .vthumb img", "alt"), "Video, 1:05");
     await ctx.close();
   }],
-  ["F7: a video plays in the lightbox with its poster; stepping on or closing stops it; a share streams from the share", async ({ browser, base }) => {
+  ["F7: a video plays in the lightbox with its poster; stepping on or closing stops it; a share shows the poster only", async ({ browser, base }) => {
     const { ctx, page } = await signedIn(browser, base);
     const list = [
       { asset_id: "v1", taken_at: "2018-05-24T12:00:00Z", type: "video", duration: 9 },
@@ -363,8 +363,17 @@ export const tests = [
     await sp.goto(base + "/share/tok");
     await sp.waitForFunction(() => document.body.textContent.includes("has expired"), null, { timeout: 3000 });
     await sp.evaluate((l) => openLightbox(l, 0, {}), list);
-    const ss = await sp.evaluate(() => [document.getElementById("lb-video").getAttribute("src"), document.getElementById("lb-orig").getAttribute("href"), document.getElementById("lb-orig").textContent]);
-    assert.deepEqual(ss, ["/api/share/tok/photo/v1/video", "/api/share/tok/photo/v1/video", "Open video"]);
+    const ss = await sp.evaluate(() => {
+      const v = document.getElementById("lb-video"), i = document.getElementById("lb-img");
+      return { video: !v.hidden, vsrc: v.getAttribute("src"), img: !i.hidden, isrc: i.getAttribute("src"), note: !document.getElementById("lb-note").hidden,
+        orig: document.getElementById("lb-orig").getAttribute("href"), label: document.getElementById("lb-orig").textContent };
+    });
+    // a share never asks for the video (Immich may hand over the original, GPS and all)
+    assert.deepEqual(ss, { video: false, vsrc: null, img: true, isrc: "/api/share/tok/photo/v1/thumb", note: true, orig: "/api/share/tok/photo/v1/preview", label: "Open photo" });
+    assert.equal(await sp.textContent("#lb-note"), "Video: plays in the app, not on a share link · ");
+    // the next one is a photo: no note
+    await sp.click("#lb-next");
+    assert.equal(await sp.isHidden("#lb-note"), true);
     await sctx.close();
   }],
   ["F5: long legs bend into great circles across the 180th meridian; short legs stay straight", async ({ browser, base }) => {

@@ -2951,7 +2951,10 @@ function showLightbox() {
   $("lb-date").textContent = fmtDate(ph.taken_at);
   $("lb-prev").style.visibility = lb.idx > 0 ? "visible" : "hidden";
   $("lb-next").style.visibility = lb.idx < lb.photos.length - 1 ? "visible" : "hidden";
-  if (ph.type === "video") {
+  // a share never streams a video: Immich's playback can be the original
+  // file, GPS and all (S2), so a share shows its poster and says so
+  $("lb-note").hidden = !(SHARE && ph.type === "video");
+  if (ph.type === "video" && !SHARE) {
     // F7: the server streams Immich's playback (Range), the poster is its preview
     ++lb.seq;
     img.hidden = true;
@@ -2960,8 +2963,8 @@ function showLightbox() {
     v.poster = photoURL(ph.asset_id, "preview");
     v.src = photoURL(ph.asset_id, "video");
     v.hidden = false;
-    $("lb-orig").href = photoURL(ph.asset_id, SHARE ? "video" : "original");
-    $("lb-orig").textContent = SHARE ? "Open video" : "Open original";
+    $("lb-orig").href = photoURL(ph.asset_id, "original");
+    $("lb-orig").textContent = "Open original";
     return;
   }
   const url = photoURL(ph.asset_id, "preview");
