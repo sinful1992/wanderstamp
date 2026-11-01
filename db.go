@@ -157,6 +157,10 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_set_aside_holiday ON set_aside(holiday_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_photo_choices_holiday ON photo_choices(holiday_id)`,
+	// F6 "added by": the username at the time; '' = before 1.14.0
+	`ALTER TABLE pins ADD COLUMN created_by TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE holidays ADD COLUMN created_by TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE holidays ADD COLUMN journal_by TEXT NOT NULL DEFAULT ''`,
 }
 
 func openDB(path string) (*sql.DB, error) {

@@ -38,6 +38,7 @@ type app struct {
 	lastSync     map[int64]time.Time
 	areaMu       sync.Mutex
 	areas        map[int64]cachedArea // parsed destination outlines, by holiday id
+	undo         undoStore            // F2: what the last deletes removed, for 30 s
 }
 
 // version is stamped by release builds via -ldflags "-X main.version=v1.x.x";
@@ -97,9 +98,12 @@ func main() {
 	mux.HandleFunc("POST /api/holidays/{id}/sync", a.auth(a.handleSyncHoliday))
 	mux.HandleFunc("PATCH /api/holidays/{id}", a.auth(a.handleUpdateHoliday))
 	mux.HandleFunc("DELETE /api/holidays/{id}", a.auth(a.handleDeleteHoliday))
+	mux.HandleFunc("POST /api/holidays/{id}/reopen", a.auth(a.handleReopenHoliday))
+	mux.HandleFunc("POST /api/undo/{token}", a.auth(a.handleUndo))
 	mux.HandleFunc("GET /api/holidays/{id}/unplaced", a.auth(a.handleUnplacedPhotos))
 	mux.HandleFunc("GET /api/holidays/{id}/timeline", a.auth(a.handleHolidayTimeline))
 	mux.HandleFunc("GET /api/stamps", a.auth(a.handleStamps))
+	mux.HandleFunc("GET /api/stats", a.auth(a.handleStats))
 	mux.HandleFunc("GET /api/geocode", a.auth(a.handleGeocode))
 	mux.HandleFunc("GET /api/geocode/reverse", a.auth(a.handleReverse))
 

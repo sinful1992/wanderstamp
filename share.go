@@ -150,6 +150,7 @@ func (a *app) loadSharedTrip(hid int64) (*sharedTrip, error) {
 	t := &sharedTrip{assets: map[string]int64{}}
 	for _, p := range all {
 		if !drop[p.ID] {
+			p.CreatedBy = "" // a share never says who in the family added what
 			t.pins = append(t.pins, p)
 		}
 	}

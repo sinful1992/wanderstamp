@@ -88,6 +88,8 @@ type holidayOut struct {
 	DestLng       float64 `json:"dest_lng"`
 	DestArea      bool    `json:"dest_area"`   // has an outline, not just a point
 	ArrivalPin    int64   `json:"arrival_pin"` // first pin that reached the destination; 0 = none yet
+	CreatedBy     string  `json:"created_by"`  // F6: who started the trip; '' = unknown
+	JournalBy     string  `json:"journal_by"`  // F6: who last wrote the journal
 }
 
 // arrive fills in the destination fields computed from pins and outline.
@@ -165,7 +167,8 @@ func (a *app) listHolidays(pins []pinOut) ([]holidayOut, error) {
 		       (SELECT s.expires_at FROM shares s WHERE s.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id),
 		       (SELECT COUNT(*) FROM packing_items pi WHERE pi.holiday_id = h.id AND pi.checked = 1),
-		       h.dest_name, h.dest_lat, h.dest_lng, h.planned, length(h.dest_area)
+		       h.dest_name, h.dest_lat, h.dest_lng, h.planned, length(h.dest_area),
+		       h.created_by, h.journal_by
 		FROM holidays h ORDER BY h.start_at DESC`)
 	if err != nil {
 		return nil, err
@@ -176,7 +179,7 @@ func (a *app) listHolidays(pins []pinOut) ([]holidayOut, error) {
 		var h holidayOut
 		var n int
 		var expires sql.NullString
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.UnplacedCount, &h.AskCount, &h.SetAsideCount, &h.Shared, &expires, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned, &n); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.UnplacedCount, &h.AskCount, &h.SetAsideCount, &h.Shared, &expires, &h.PackTotal, &h.PackDone, &h.DestName, &h.DestLat, &h.DestLng, &h.Planned, &n, &h.CreatedBy, &h.JournalBy); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -267,8 +270,9 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	destArea := resolveArea(r.Context(), destName, req.DestOSM)
-	res, err := a.db.Exec(`INSERT INTO holidays (name, color, start_at, end_at, dest_name, dest_lat, dest_lng, dest_area, planned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.Name, req.Color, start.Format(time.RFC3339), endAt, destName, destLat, destLng, destArea, planned)
+	by := userName(r)
+	res, err := a.db.Exec(`INSERT INTO holidays (name, color, start_at, end_at, dest_name, dest_lat, dest_lng, dest_area, planned, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.Name, req.Color, start.Format(time.RFC3339), endAt, destName, destLat, destLng, destArea, planned, by)
 	if err != nil {
 		httpError(w, http.StatusConflict, "a holiday is already active — end it first")
 		return
@@ -278,6 +282,7 @@ func (a *app) handleCreateHoliday(w http.ResponseWriter, r *http.Request) {
 		ID: id, Name: req.Name, Color: req.Color,
 		StartAt: start.Format(time.RFC3339), EndAt: endAt, Active: endAt == nil && !planned, Planned: planned,
 		DestName: destName, DestLat: destLat, DestLng: destLng, DestArea: destArea != "",
+		CreatedBy: by,
 	})
 }
 
@@ -416,7 +421,7 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Journal != nil {
-		a.db.Exec(`UPDATE holidays SET journal = ? WHERE id = ?`, *req.Journal, id)
+		a.db.Exec(`UPDATE holidays SET journal = ?, journal_by = ? WHERE id = ?`, *req.Journal, userName(r), id)
 	}
 	if req.DestName != nil {
 		// a new destination without a search hit (typed coordinates) drops
@@ -465,7 +470,8 @@ func (a *app) handleDeleteHoliday(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := a.db.Exec(`DELETE FROM holidays WHERE id = ?`, id); err != nil {
+	tok, found, err := a.deleteWithUndo("holidays", id, id)
+	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
 	}
@@ -473,7 +479,11 @@ func (a *app) handleDeleteHoliday(w http.ResponseWriter, r *http.Request) {
 	delete(a.lastSync, id)
 	a.stateMu.Unlock()
 	a.forgetArea(id)
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	out := map[string]any{"ok": true}
+	if found {
+		out["undo"] = tok
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *app) handleSyncHoliday(w http.ResponseWriter, r *http.Request) {
@@ -778,12 +788,13 @@ type pinOut struct {
 	PhotoCount int     `json:"photo_count"`
 	CoverAsset string  `json:"cover_asset"`
 	Visits     []visit `json:"visits"`
+	CreatedBy  string  `json:"created_by"` // F6; '' = unknown, and always '' on a share
 }
 
 // queryPins returns pins for one holiday, or every pin when holidayID is 0.
 func (a *app) queryPins(holidayID int64) ([]pinOut, error) {
 	rows, err := a.reader().Query(`
-		SELECT p.id, p.holiday_id, p.kind, p.lat, p.lng, p.title, p.note, p.created_at,
+		SELECT p.id, p.holiday_id, p.kind, p.lat, p.lng, p.title, p.note, p.created_at, p.created_by,
 		       COALESCE((SELECT MIN(pp.taken_at) FROM pin_photos pp WHERE pp.pin_id = p.id),
 		                p.created_at),
 		       (SELECT COUNT(*) FROM pin_photos pp WHERE pp.pin_id = p.id),
@@ -798,7 +809,7 @@ func (a *app) queryPins(holidayID int64) ([]pinOut, error) {
 	out := []pinOut{}
 	for rows.Next() {
 		var p pinOut
-		if err := rows.Scan(&p.ID, &p.HolidayID, &p.Kind, &p.Lat, &p.Lng, &p.Title, &p.Note, &p.CreatedAt, &p.VisitedAt, &p.PhotoCount, &p.CoverAsset); err != nil {
+		if err := rows.Scan(&p.ID, &p.HolidayID, &p.Kind, &p.Lat, &p.Lng, &p.Title, &p.Note, &p.CreatedAt, &p.CreatedBy, &p.VisitedAt, &p.PhotoCount, &p.CoverAsset); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -875,10 +886,10 @@ func (a *app) handleCreatePin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	res, err := a.db.Exec(`
-		INSERT INTO pins (holiday_id, kind, lat, lng, title, note, created_at)
-		VALUES (?, 'manual', ?, ?, ?, ?, ?)`,
+		INSERT INTO pins (holiday_id, kind, lat, lng, title, note, created_at, created_by)
+		VALUES (?, 'manual', ?, ?, ?, ?, ?, ?)`,
 		req.HolidayID, req.Lat, req.Lng, strings.TrimSpace(req.Title), req.Note,
-		createdAt.Format(time.RFC3339))
+		createdAt.Format(time.RFC3339), userName(r))
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "no such holiday")
 		return
@@ -888,7 +899,7 @@ func (a *app) handleCreatePin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, pinOut{
 		ID: id, HolidayID: req.HolidayID, Kind: "manual",
 		Lat: req.Lat, Lng: req.Lng, Title: strings.TrimSpace(req.Title), Note: req.Note,
-		CreatedAt: createdAt.Format(time.RFC3339),
+		CreatedAt: createdAt.Format(time.RFC3339), CreatedBy: userName(r),
 	})
 }
 
@@ -941,10 +952,28 @@ func (a *app) handleDeletePin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var holidayID int64
+	a.db.QueryRow(`SELECT holiday_id FROM pins WHERE id = ?`, id).Scan(&holidayID)
 	// Its photos go with it until the next sync files them again.
-	a.resyncPinSoon(id)
-	a.db.Exec(`DELETE FROM pins WHERE id = ?`, id)
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	tok, found, err := a.deleteWithUndo("pins", id, holidayID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	a.resyncSoon(holidayID)
+	out := map[string]any{"ok": true}
+	if found {
+		out["undo"] = tok
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// userName is the signed-in family member, for "added by" (F6).
+func userName(r *http.Request) string {
+	if u, ok := r.Context().Value(userKey).(sessionUser); ok {
+		return u.Username
+	}
+	return ""
 }
 
 // resyncSoon makes the next map load re-sync the trip, so a pin placed,
