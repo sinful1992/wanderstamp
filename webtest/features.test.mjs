@@ -534,4 +534,36 @@ export const tests = [
     assert.equal(await page.evaluate((i) => [...state.markers.values()].some((m) => m.tripId === i && m.cluster), id), true);
     await ctx.close();
   }],
+  ["F10 seam: a data reload with a story open keeps its routes (no refetch); closing takes them off", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    const t = await trips(page, [{ name: "F10 Seam", start_at: "2014-06-01", end_at: "2014-06-02" }]);
+    const id = t["F10 Seam"].id;
+    let gets = 0;
+    await page.route(`**/api/holidays/${id}/tracks`, (r) => {
+      if (r.request().method() !== "GET") return r.continue();
+      gets++;
+      r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ id: 1, name: "Walk", points: [[50.7, -1.9], [50.71, -1.88], [50.72, -1.87]] }]) });
+    });
+    await page.reload({ waitUntil: "networkidle" });
+    await page.evaluate((i) => openStory(holidayById(i)), id);
+    await page.waitForSelector(".ws-routes-btn");
+    assert.equal(gets, 1);
+    await page.evaluate(() => loadData());
+    await page.evaluate(() => loadData());
+    await page.waitForTimeout(300);
+    assert.equal(gets, 1, "a refresh must not clear and refetch the routes");
+    assert.equal(await page.$$eval(".ws-routes-btn", (b) => b.length), 1);
+    // opening another trip's story swaps the routes
+    const t2 = await trips(page, [{ name: "F10 Seam two", start_at: "2014-07-01", end_at: "2014-07-02" }]);
+    await page.reload({ waitUntil: "networkidle" });
+    gets = 0;
+    await page.evaluate((i) => openStory(holidayById(i)), id);
+    await page.waitForSelector(".ws-routes-btn");
+    await page.evaluate((i) => openStory(holidayById(i)), t2["F10 Seam two"].id);
+    await page.waitForTimeout(200);
+    assert.equal(gets, 1, "only the first trip's tracks were asked for");
+    await page.evaluate(() => closeStory());
+    assert.equal(await page.$$eval(".ws-routes-btn", (b) => b.length), 0);
+    await ctx.close();
+  }],
 ];

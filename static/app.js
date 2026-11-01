@@ -1005,7 +1005,7 @@ function loadStoryPhotos(sec) {
 }
 
 function openStory(h, pinId) {
-  closeStory();
+  closeStory(true);
   story.hid = h.id;
   state.focused = h.id;
   document.body.classList.add("storying");
@@ -1254,16 +1254,19 @@ $("story-scroll").onscroll = () => {
   requestAnimationFrame(() => { story.ticking = false; if (story.hid !== null) onStoryScroll(); });
 };
 
-function closeStory() {
+// reopening: openStory is about to show a story again (often the same one,
+// on a data reload), so the routes and markers are left for it to redo
+function closeStory(reopening) {
   if (story.hid === null) return;
+  const again = reopening === true; // the close button passes an event
   story.loadObserver.disconnect();
   story.loadObserver = null;
   story.activeEl = null;
   story.hid = null;
   $("story").hidden = true;
-  if (!SHARE && window.WSTracks) window.WSTracks.draw(null); // takes the track off the map
+  if (!again && !SHARE && window.WSTracks) window.WSTracks.draw(null); // takes the track off the map
   document.body.classList.remove("storying");
-  renderMarkers();
+  if (!again) renderMarkers();
   setFocus(null); // also clears story-active via applyFocus
 }
 
