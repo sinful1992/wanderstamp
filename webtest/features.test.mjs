@@ -367,4 +367,53 @@ export const tests = [
     assert.deepEqual(ss, ["/api/share/tok/photo/v1/video", "/api/share/tok/photo/v1/video", "Open video"]);
     await sctx.close();
   }],
+  ["F5: long legs bend into great circles across the 180th meridian; short legs stay straight", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    const r = await page.evaluate(() => {
+      const jumps = (pts) => pts.slice(1).some((p, i) => Math.abs(p[1] - pts[i][1]) > 180);
+      const bad = (pts) => pts.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]));
+      const short = arcRoute([[50.72, -1.88], [50.75, -1.7], [51.5, -0.12]]);
+      const atlantic = arcRoute([[51.47, -0.45], [40.64, -73.78]]);
+      const pacific = arcRoute([[35.55, 139.78], [33.94, -118.4]]);
+      const chain = arcRoute([[33.94, -118.4], [35.55, 139.78], [35.44, 139.64], [33.94, -118.4]]);
+      const opposite = arcRoute([[10, 20], [-10, -160]]);
+      return {
+        short: [short.pts.length, short.planes.length],
+        atlantic: { n: atlantic.pts.length, top: Math.max(...atlantic.pts.map((p) => p[0])), planes: atlantic.planes.length, deg: atlantic.planes[0].deg },
+        pacific: { jumps: jumps(pacific.pts), bad: bad(pacific.pts), deg: pacific.planes[0].deg, end: pacific.pts[pacific.pts.length - 1] },
+        chain: { jumps: jumps(chain.pts), planes: chain.planes.length, bad: bad(chain.pts) },
+        opposite: { bad: bad(opposite.pts), n: opposite.pts.length },
+      };
+    });
+    assert.deepEqual(r.short, [3, 0]);
+    assert.ok(r.atlantic.n > 30 && r.atlantic.planes === 1, JSON.stringify(r.atlantic));
+    assert.ok(r.atlantic.top > 52, "the arc bows north of both ends: " + r.atlantic.top);
+    assert.ok(r.atlantic.deg < -60 && r.atlantic.deg > -120, "flying west: " + r.atlantic.deg);
+    assert.equal(r.pacific.jumps, false);
+    assert.equal(r.pacific.bad, false);
+    assert.ok(r.pacific.deg > 60 && r.pacific.deg < 120, "flying east: " + r.pacific.deg);
+    assert.ok(Math.abs(r.pacific.end[1] - (-118.4 + 360)) < 1e-6, "LA drawn east of Tokyo: " + r.pacific.end);
+    assert.deepEqual([r.chain.jumps, r.chain.planes, r.chain.bad], [false, 2, false]);
+    assert.deepEqual(r.opposite, { bad: false, n: 2 });
+    await ctx.close();
+  }],
+  ["F5: a flown trip shows one plane per long leg on the map, dimmed with its trip", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    const t = await trips(page, [{ name: "F5 New York", start_at: "2017-04-01", end_at: "2017-04-09" }]);
+    const id = t["F5 New York"].id;
+    if (!(await api(page, "GET", "/api/map")).body.pins.some((p) => p.holiday_id === id)) {
+      await api(page, "POST", "/api/pins", { holiday_id: id, lat: 51.47, lng: -0.45, title: "F5 Heathrow", note: "" });
+      await api(page, "POST", "/api/pins", { holiday_id: id, lat: 40.64, lng: -73.78, title: "F5 JFK", note: "" });
+      await api(page, "POST", "/api/pins", { holiday_id: id, lat: 40.75, lng: -73.99, title: "F5 Midtown", note: "" });
+    }
+    await page.reload({ waitUntil: "networkidle" });
+    const planes = () => page.evaluate((i) => state.routes.filter((r) => r instanceof L.Marker && r.tripId === i).length, id);
+    assert.equal(await planes(), 1);
+    await page.evaluate(() => setFocus(-1));
+    assert.equal(await page.evaluate((i) => state.routes.find((r) => r instanceof L.Marker && r.tripId === i).getElement().classList.contains("dimmed"), id), true);
+    // a reload doesn't stack planes
+    await page.evaluate(() => loadData());
+    assert.equal(await planes(), 1);
+    await ctx.close();
+  }],
 ];

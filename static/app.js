@@ -514,6 +514,63 @@ function kmBetween(a, b) {
   return 12742 * Math.asin(Math.sqrt(x));
 }
 
+// F5: a leg this long was flown, not driven: it's drawn as the great circle
+// a plane takes, with a small plane at its middle pointing the way it went.
+const ARC_KM = 300;
+
+// Points along the great circle from a to b ([lat, lng] pairs). Longitudes
+// are unwrapped so the line never jumps across the map at the 180th meridian.
+function greatCircle(a, b, n = 64) {
+  const rad = Math.PI / 180;
+  const toV = ([lat, lng]) => [Math.cos(lat * rad) * Math.cos(lng * rad), Math.cos(lat * rad) * Math.sin(lng * rad), Math.sin(lat * rad)];
+  const va = toV(a), vb = toV(b);
+  const dot = Math.min(1, Math.max(-1, va[0] * vb[0] + va[1] * vb[1] + va[2] * vb[2]));
+  const w = Math.acos(dot);
+  if (w < 1e-9 || Math.PI - w < 1e-6) return [a, b]; // same point, or exactly opposite (no single way)
+  const out = [];
+  let prev = a[1];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const k1 = Math.sin((1 - t) * w) / Math.sin(w), k2 = Math.sin(t * w) / Math.sin(w);
+    const x = k1 * va[0] + k2 * vb[0], y = k1 * va[1] + k2 * vb[1], z = k1 * va[2] + k2 * vb[2];
+    let lng = Math.atan2(y, x) / rad;
+    while (lng - prev > 180) lng -= 360;
+    while (lng - prev < -180) lng += 360;
+    prev = lng;
+    out.push([Math.atan2(z, Math.hypot(x, y)) / rad, lng]);
+  }
+  return out;
+}
+
+// A route's points with every long leg bent into its arc, plus where each
+// arc's plane sits and which way it points (degrees clockwise from north on
+// the map; Mercator keeps angles, so it holds at every zoom).
+function arcRoute(latlngs) {
+  const pts = [latlngs[0]];
+  const planes = [];
+  for (let i = 1; i < latlngs.length; i++) {
+    const a = latlngs[i - 1], b = latlngs[i];
+    if (kmBetween({ lat: a[0], lng: a[1] }, { lat: b[0], lng: b[1] }) < ARC_KM) { const last = pts[pts.length - 1]; pts.push([b[0], b[1] + (last[1] - a[1])]); continue; }
+    // the arc starts at the previous point as it was drawn (unwrapped), so a
+    // chain of flights stays continuous
+    const from = pts[pts.length - 1];
+    const arc = greatCircle(from, [b[0], b[1] + (from[1] - a[1])]);
+    pts.push(...arc.slice(1));
+    const m = Math.floor(arc.length / 2);
+    const p = L.CRS.EPSG3857.latLngToPoint(L.latLng(arc[m - 1]), 4), q = L.CRS.EPSG3857.latLngToPoint(L.latLng(arc[m + 1] || arc[m]), 4);
+    planes.push({ at: arc[m], deg: Math.atan2(q.x - p.x, p.y - q.y) * 180 / Math.PI });
+  }
+  return { pts, planes };
+}
+
+function planeIcon(color, deg) {
+  const div = el("div", "plane-mark");
+  div.style.setProperty("--c", color);
+  div.style.transform = `rotate(${Math.round(deg)}deg)`;
+  div.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c.8 0 1.4.9 1.4 2v5.2l7.6 4.4v2l-7.6-2.3v4.6l2.2 1.7V21L12 20l-3.6 1v-1.4l2.2-1.7v-4.6L3 15.6v-2l7.6-4.4V4c0-1.1.6-2 1.4-2z"/></svg>';
+  return L.divIcon({ html: div.outerHTML, className: "plane-icon", iconSize: [18, 18], iconAnchor: [9, 9] });
+}
+
 // Splits a trip's pins (in visit order) at the first one that reached the
 // destination — decided by the server (arrival_pin), which holds the place's
 // real outline: anywhere inside Paris is Paris, and a pin within 5 km of the
@@ -651,7 +708,13 @@ function renderMarkers() {
   const draw = (hid, latlngs, cls, dash) => {
     if (latlngs.length < 2) return;
     const h = holidayById(hid);
-    const line = L.polyline(latlngs, {
+    const { pts, planes } = arcRoute(latlngs);
+    for (const pl of planes) {
+      const mark = L.marker(pl.at, { icon: planeIcon(h ? h.color : "#666", pl.deg), interactive: false, keyboard: false }).addTo(map);
+      mark.tripId = hid;
+      state.routes.push(mark);
+    }
+    const line = L.polyline(pts, {
       color: h ? h.color : "#666",
       weight: 2.5, dashArray: dash, lineCap: "round", opacity: 0.8,
       interactive: false, // never steal taps from pins or the map

@@ -155,6 +155,11 @@ button { font: inherit; cursor: pointer; }
    at street zoom so the photo prints stay the heroes. CSS opacity multiplies
    the stroke-opacity Leaflet sets inline, so these are fractions of 0.8. */
 .route-line { transition: opacity .18s ease; }
+/* F5: the plane on a flown leg; the leaflet-marker-icon box stays bare */
+.plane-icon { background: none; border: none; }
+.plane-mark { width: 18px; height: 18px; transition: opacity .18s ease; }
+.plane-mark svg { display: block; width: 100%; height: 100%; fill: var(--c); stroke: #fffdf7; stroke-width: 1.2; paint-order: stroke; }
+.plane-icon.dimmed { opacity: .12; }
 #map[data-zoom="mid"] .route-line { opacity: .75; }
 #map[data-zoom="near"] .route-line { opacity: .55; }
 /* the stretch of a live trip's drive still to go, last stop to destination */

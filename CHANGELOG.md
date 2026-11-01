@@ -11,6 +11,7 @@ F6: the story says who started the trip, who added each pin and who wrote the jo
 The map loads the GPX track, stats, import and print modules: the story draws a trip's tracks, the passport has Travel stats, Family has Import a backup file.
 F3: a trip's story has All photos: the whole roll, pinned and unplaced, under its trip days.
 F7: videos show as their poster with a play mark and length, and play in the photo viewer (from the share route on a share link).
+F5: legs over 300 km are drawn as the great circle a plane flies, with a small plane pointing the way; lines no longer jump across the 180th meridian.
 
 ## 1.13.1 (unreleased)
 
