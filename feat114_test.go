@@ -775,23 +775,23 @@ func TestShareVideo(t *testing.T) {
 	if !strings.Contains(body, `"asset_id":"00000000-0000-0000-0000-00000000000b","taken_at":"2026-07-01T10:05:00Z","type":"video","duration":12.3`) {
 		t.Errorf("share photos: %s", body)
 	}
-	req := httptest.NewRequest("GET", "/api/share/"+token+"/photo/00000000-0000-0000-0000-00000000000b/video", nil)
-	req.Header.Set("Range", "bytes=0-3")
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != 206 || rec.Body.String() != "0123" {
-		t.Errorf("share video: %d %q", rec.Code, rec.Body)
+	// never the video file on a share: it can be the original, with its GPS
+	for _, asset := range []string{"00000000-0000-0000-0000-00000000000b", "00000000-0000-0000-0000-00000000000a"} {
+		if rec := serve(mux, "GET", "/api/share/"+token+"/photo/"+asset+"/video", ""); rec.Code != 403 {
+			t.Errorf("share video of %s: %d", asset, rec.Code)
+		}
 	}
-	if rec := serve(mux, "GET", "/api/share/"+token+"/photo/00000000-0000-0000-0000-00000000000a/video", ""); rec.Code != 404 {
-		t.Errorf("share video of a photo: %d", rec.Code)
+	// its poster still shows
+	if rec := serve(mux, "GET", "/api/share/"+token+"/photo/00000000-0000-0000-0000-00000000000b/preview", ""); rec.Code != 200 {
+		t.Errorf("share poster: %d", rec.Code)
 	}
 	if rec := serve(mux, "GET", "/api/share/"+token+"/photo/00000000-0000-0000-0000-00000000000b/original", ""); rec.Code != 403 {
 		t.Errorf("share original: %d", rec.Code)
 	}
-	// expired link stops the video too
+	// an expired link stops the poster too
 	a.db.Exec(`UPDATE shares SET expires_at = '2000-01-01T00:00:00Z'`)
-	if rec := serve(mux, "GET", "/api/share/"+token+"/photo/00000000-0000-0000-0000-00000000000b/video", ""); rec.Code != 410 {
-		t.Errorf("expired share video: %d", rec.Code)
+	if rec := serve(mux, "GET", "/api/share/"+token+"/photo/00000000-0000-0000-0000-00000000000b/preview", ""); rec.Code != 410 {
+		t.Errorf("expired share poster: %d", rec.Code)
 	}
 }
 

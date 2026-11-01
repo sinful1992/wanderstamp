@@ -342,7 +342,9 @@ func (a *app) handleSharePhoto(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "bad request")
 		return
 	}
-	if r.PathValue("kind") == "original" {
+	// a video too: Immich's playback is the original file whenever it didn't
+	// need a transcode (an iPhone H.264 clip), GPS atom and all
+	if k := r.PathValue("kind"); k == "original" || k == "video" {
 		httpError(w, http.StatusForbidden, "not available on a share link")
 		return
 	}
@@ -353,10 +355,6 @@ func (a *app) handleSharePhoto(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := t.assets[assetID]; !ok {
 		httpError(w, http.StatusNotFound, "unknown photo")
-		return
-	}
-	if r.PathValue("kind") == "video" && !a.isVideo(assetID) {
-		httpError(w, http.StatusNotFound, "not a video")
 		return
 	}
 	// a day, not for good: revoking the link should stop the photos too
