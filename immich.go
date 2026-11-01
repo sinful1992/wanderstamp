@@ -810,7 +810,9 @@ func (a *app) streamPhoto(w http.ResponseWriter, r *http.Request, assetID, cache
 		}
 		client = a.immich.stream
 		// a film plays for longer than the server's 2 min write timeout
-		http.NewResponseController(w).SetWriteDeadline(time.Now().Add(videoWriteWindow))
+		if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(videoWriteWindow)); err != nil {
+			log.Printf("video %s: can't extend the write deadline: %v", assetID, err)
+		}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

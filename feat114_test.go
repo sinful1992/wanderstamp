@@ -979,3 +979,26 @@ func TestImportKeepsLiveTripAndFiledPhotos(t *testing.T) {
 		t.Errorf("a photo already filed moved to pin %d", pin)
 	}
 }
+
+// The video route extends its write deadline past the server's 2 min
+// WriteTimeout; that only works if every middleware wrapper unwraps.
+func TestWriteDeadlineReachesConnThroughMiddleware(t *testing.T) {
+	var got error = fmt.Errorf("handler not reached")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/photo/{asset}/{kind}", func(w http.ResponseWriter, r *http.Request) {
+		got = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(videoWriteWindow))
+		w.Write([]byte("ok"))
+	})
+	srv := httptest.NewServer(requestLog(securityHeaders(gzipJSON(mux))))
+	defer srv.Close()
+	req, _ := http.NewRequest("GET", srv.URL+"/api/photo/00000000-0000-0000-0000-00000000000b/video", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got != nil {
+		t.Errorf("SetWriteDeadline through the middleware: %v", got)
+	}
+}

@@ -110,6 +110,10 @@ func (s *statusRecorder) Write(p []byte) (int, error) {
 	return s.ResponseWriter.Write(p)
 }
 
+// Unwrap lets http.ResponseController reach the connection through the
+// recorder: a video stream extends its write deadline (F7).
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
 // Flush keeps streaming responses streaming through the recorder.
 func (s *statusRecorder) Flush() {
 	if f, ok := s.ResponseWriter.(http.Flusher); ok {
