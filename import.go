@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"strings"
@@ -78,7 +79,18 @@ func (a *app) handleImport(w http.ResponseWriter, r *http.Request) {
 	var doc struct {
 		Holidays []importHoliday `json:"holidays"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
+	dec := json.NewDecoder(r.Body)
+	err := dec.Decode(&doc)
+	if err == nil {
+		// one JSON document and nothing after it (reading on also enforces
+		// the size cap on trailing padding)
+		if err = dec.Decode(&struct{}{}); err == io.EOF {
+			err = nil
+		} else if err == nil {
+			err = errors.New("trailing data")
+		}
+	}
+	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
 			httpError(w, http.StatusRequestEntityTooLarge, "an import can be at most 20 MB")

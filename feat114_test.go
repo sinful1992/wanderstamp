@@ -1002,3 +1002,26 @@ func TestWriteDeadlineReachesConnThroughMiddleware(t *testing.T) {
 		t.Errorf("SetWriteDeadline through the middleware: %v", got)
 	}
 }
+
+// Undo of a photo pin replaces the bare pin the resync made in its cell, but
+// never one somebody has written a note on since: that is a conflict.
+func TestUndoPhotoPinKeepsAnnotatedTwin(t *testing.T) {
+	a, _ := f7App(t, nil)
+	mux := b114Mux(a, "mum")
+	var pid int64
+	var key string
+	a.db.QueryRow(`SELECT id, cluster_key FROM pins WHERE kind = 'photo' AND cluster_key IS NOT NULL LIMIT 1`).Scan(&pid, &key)
+	tok, _ := decode(t, serve(mux, "DELETE", fmt.Sprintf("/api/pins/%d", pid), ""))["undo"].(string)
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatal(err)
+	}
+	a.db.Exec(`UPDATE pins SET note = 'lovely café' WHERE cluster_key = ?`, key)
+	if rec := serve(mux, "POST", "/api/undo/"+tok, ""); rec.Code != 409 {
+		t.Errorf("undo over an annotated pin: %d", rec.Code)
+	}
+	var note string
+	a.db.QueryRow(`SELECT note FROM pins WHERE cluster_key = ?`, key).Scan(&note)
+	if note != "lovely café" {
+		t.Errorf("the annotated pin was lost: %q", note)
+	}
+}

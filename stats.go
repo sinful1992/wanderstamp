@@ -53,11 +53,30 @@ func calDays(start string, end *string, now time.Time) int {
 }
 
 // tripKM sums the great-circle legs between a trip's stops in visit order.
+// A stop is a visit, not a pin: London → Paris → London again is two legs,
+// as the map's route and the story draw it.
 func tripKM(pins []pinOut) float64 {
-	sort.SliceStable(pins, func(i, j int) bool { return pins[i].VisitedAt < pins[j].VisitedAt })
+	type stop struct {
+		at       string
+		id       int64
+		lat, lng float64
+	}
+	var stops []stop
+	for _, p := range pins {
+		if len(p.Visits) == 0 {
+			stops = append(stops, stop{p.VisitedAt, p.ID, p.Lat, p.Lng})
+			continue
+		}
+		for _, v := range p.Visits {
+			stops = append(stops, stop{v.At, p.ID, p.Lat, p.Lng})
+		}
+	}
+	sort.SliceStable(stops, func(i, j int) bool { return stops[i].at < stops[j].at })
 	km := 0.0
-	for i := 1; i < len(pins); i++ {
-		km += haversineKM(pins[i-1].Lat, pins[i-1].Lng, pins[i].Lat, pins[i].Lng)
+	for i := 1; i < len(stops); i++ {
+		if stops[i].id != stops[i-1].id {
+			km += haversineKM(stops[i-1].lat, stops[i-1].lng, stops[i].lat, stops[i].lng)
+		}
 	}
 	return math.Round(km*10) / 10
 }

@@ -42,7 +42,7 @@
 
   async function draw(holidayId, force) {
     if (holidayId == null) { clear(); return; }
-    if (!force && holidayId === current && control) return; // a story refresh: already drawn
+    if (!force && holidayId === current && control) return; // a story refresh: already drawn or loading
     clear();
     if (!window.L || !WS() || !WS().map) return;
     current = holidayId;
@@ -51,7 +51,12 @@
     let tracks;
     try {
       tracks = await WS().api("GET", `/api/holidays/${holidayId}/tracks`);
-    } catch { return; } // offline or gone: the story works without its routes
+    } catch {
+      // offline or gone: the story works without its routes, and the next
+      // draw of this trip tries again instead of thinking it's drawn
+      if (mine === seq) current = null;
+      return;
+    }
     if (mine !== seq) return;
     layer = L.layerGroup();
     const c = color(holidayId);
@@ -60,7 +65,9 @@
       // a pale casing under the line keeps it readable on any map tile
       L.polyline(t.points, { color: "#fff", weight: 7, opacity: 0.7, interactive: false }).addTo(layer);
       L.polyline(t.points, { color: c, weight: 4, opacity: 0.9, dashArray: "1 7", lineCap: "round" })
-        .bindTooltip(t.name || "Route", { sticky: true }).addTo(layer);
+        // a node, not a string: Leaflet puts a string in as HTML, and the
+        // name comes from whoever made the GPX file
+        .bindTooltip(WS().el("span", "", t.name || "Route"), { sticky: true }).addTo(layer);
     }
     layer.addTo(WS().map);
     // keep the lines under the pins

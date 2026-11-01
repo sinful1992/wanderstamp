@@ -193,21 +193,45 @@ func (a *app) restore(s undoSnap) error {
 		return err
 	}
 	defer tx.Rollback()
-	for i, t := range s.tables {
+	for _, t := range s.tables {
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(t.cols)), ",")
 		names := make([]string, len(t.cols))
+		idCol, kindCol, keyCol, holCol := -1, -1, -1, -1
 		for j, c := range t.cols {
 			names[j] = ident(c)
+			switch c {
+			case "id":
+				idCol = j
+			case "kind":
+				kindCol = j
+			case "cluster_key":
+				keyCol = j
+			case "holiday_id":
+				holCol = j
+			}
 		}
-		// The deleted row itself must come back exactly; if its id was taken
-		// meanwhile that's a conflict. Its children may meet a photo a sync
-		// has filed elsewhere since (asset_id is UNIQUE): theirs wins back.
-		verb := "INSERT"
-		if i > 0 {
-			verb = "INSERT OR REPLACE"
+		// A row with its own id (trip, pin, track, packing item) must come
+		// back exactly: ids aren't AUTOINCREMENT, so a new row made since may
+		// hold it, and replacing that would lose it. That's a conflict.
+		// Rows keyed by asset (pin_photos, unplaced, set_aside, choices) may
+		// meet a photo a sync has filed elsewhere since: theirs wins back.
+		verb := "INSERT OR REPLACE"
+		if idCol >= 0 {
+			verb = "INSERT"
 		}
 		stmt := verb + ` INTO ` + ident(t.table) + ` (` + strings.Join(names, ",") + `) VALUES (` + ph + `)`
 		for _, r := range t.rows {
+			if t.table == "pins" && kindCol >= 0 && keyCol >= 0 && holCol >= 0 && fmt.Sprint(r[kindCol]) == "photo" && r[keyCol] != nil {
+				// The resync after the delete files the photos again on a
+				// fresh photo pin in the same cell, often with the same id (ids
+				// are reused). The restored pin takes its place: its photos
+				// come back with it, the rest at the next sync. A pin someone
+				// has written on is left alone, and then it's a conflict.
+				if _, err := tx.Exec(`DELETE FROM pins WHERE holiday_id = ? AND kind = 'photo' AND note = ''
+					AND (cluster_key = ? OR id = ?)`, r[holCol], r[keyCol], r[idCol]); err != nil {
+					return err
+				}
+			}
 			if _, err := tx.Exec(stmt, r...); err != nil {
 				if strings.Contains(err.Error(), "constraint") {
 					return errUndoConflict

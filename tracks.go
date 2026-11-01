@@ -20,8 +20,9 @@ const (
 )
 
 type gpxDoc struct {
-	Name   string `xml:"metadata>name"`
-	Tracks []struct {
+	XMLName xml.Name
+	Name    string `xml:"metadata>name"`
+	Tracks  []struct {
 		Name     string `xml:"name"`
 		Segments []struct {
 			Points []gpxPoint `xml:"trkpt"`
@@ -45,7 +46,7 @@ func parseGPX(r io.Reader) (string, [][2]float64, error) {
 	var doc gpxDoc
 	dec := xml.NewDecoder(r)
 	dec.Strict = false
-	if err := dec.Decode(&doc); err != nil {
+	if err := dec.Decode(&doc); err != nil || !strings.EqualFold(doc.XMLName.Local, "gpx") {
 		return "", nil, errors.New("not a GPX file")
 	}
 	var pts [][2]float64
@@ -171,6 +172,10 @@ func (a *app) handleUploadTrack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	if !strings.EqualFold(filepath.Ext(hdr.Filename), ".gpx") {
+		httpError(w, http.StatusBadRequest, "choose a .gpx file")
+		return
+	}
 	if hdr.Size > maxGPXBytes {
 		httpError(w, http.StatusRequestEntityTooLarge, "GPX files can be up to 10 MB")
 		return
