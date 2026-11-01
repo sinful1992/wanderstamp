@@ -39,6 +39,30 @@ function el(tag, cls, text) {
   return n;
 }
 
+// F7: "1:05" for a video's length
+function fmtDuration(sec) {
+  const s = Math.max(0, Math.round(sec || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// One photo tile. A video is its poster frame with a play mark and its
+// length on it; onClick gets the img either way (selection marks the img).
+function thumbCell(ph, onClick) {
+  const img = el("img");
+  img.loading = "lazy";
+  img.src = photoURL(ph.asset_id, "thumb");
+  img.alt = "";
+  img.dataset.asset = ph.asset_id;
+  img.onclick = (e) => onClick(e, img);
+  if (ph.type !== "video") return img;
+  const cell = el("span", "vthumb");
+  const badge = el("span", "vbadge", `\u25B6 ${fmtDuration(ph.duration)}`);
+  badge.setAttribute("aria-hidden", "true");
+  img.alt = `Video, ${fmtDuration(ph.duration)}`;
+  cell.append(img, badge);
+  return cell;
+}
+
 // The trips sheet is a disclosure; one setter keeps the pill's announced
 // state and the class in step.
 function setSheet(open) {
@@ -800,12 +824,7 @@ function loadStoryPhotos(sec) {
     const photos = at ? all.filter((ph) => ph.taken_at >= at && ph.taken_at <= until) : all;
     grid.textContent = "";
     photos.slice(0, STORY_THUMBS).forEach((ph, i) => {
-      const img = el("img");
-      img.loading = "lazy";
-      img.src = photoURL(ph.asset_id, "thumb");
-      img.alt = "";
-      img.onclick = (e) => { e.stopPropagation(); openLightbox(photos, i, { aside: !SHARE }); };
-      grid.appendChild(img);
+      grid.appendChild(thumbCell(ph, (e) => { e.stopPropagation(); openLightbox(photos, i, { aside: !SHARE }); }));
     });
     const more = sec.querySelector(".story-more");
     if (more) {
@@ -936,6 +955,17 @@ function openStory(h, pinId) {
     sec.onclick = () => activateSection(sec);
     scroll.appendChild(sec);
     secs.push(sec);
+  }
+  // F3: every photo of the trip, day by day, one tap from the story
+  const total = pins.reduce((n, p) => n + (p.photo_count || 0), 0) + (h.unplaced_count || 0);
+  if (!SHARE && total > 0) {
+    const sec = el("section", "story-sec story-gallery");
+    sec.appendChild(el("h3", "story-place", "All photos"));
+    const open = el("button", "sub-link", `See ${total === 1 ? "the photo" : `all ${total} photos`} day by day`);
+    open.type = "button";
+    open.onclick = () => openGallery(h);
+    sec.appendChild(open);
+    scroll.appendChild(sec);
   }
   if (h.journal) {
     const sec = el("section", "story-sec");
@@ -1862,27 +1892,38 @@ $("btn-passport").onclick = async () => {
 
 // dayGroupedGallery lays photos out in taken order under day headings.
 // onClick(photos, index) handles a tap; if absent, taps open the lightbox.
-function dayGroupedGallery(photos, onClick) {
+// With a trip (h), the headings are its days ("Day 2 · Sunday 24 May"), cut
+// at the same 4 am line as the story.
+function dayGroupedGallery(photos, onClick, h) {
   const wrap = el("div");
   let lastDay = "";
   let grid = null;
   photos.forEach((ph, i) => {
-    const day = fmtDate(ph.taken_at);
+    const d = h ? tripDay(h, ph.taken_at) : null;
+    const day = d ? d.key : fmtDate(ph.taken_at);
     if (day !== lastDay) {
-      wrap.appendChild(el("h3", "day-head", day));
+      const head = el("h3", "day-head", d ? `Day ${d.n} \u00B7 ${d.label}` : day);
+      wrap.appendChild(head);
       grid = el("div", "gallery-grid");
       wrap.appendChild(grid);
       lastDay = day;
     }
-    const img = el("img");
-    img.loading = "lazy";
-    img.src = photoURL(ph.asset_id, "thumb");
-    img.alt = "";
-    img.dataset.asset = ph.asset_id;
-    img.onclick = () => (onClick ? onClick(photos, i, img) : openLightbox(photos, i));
-    grid.appendChild(img);
+    grid.appendChild(thumbCell(ph, (_e, img) => (onClick ? onClick(photos, i, img) : openLightbox(photos, i))));
   });
   return wrap;
+}
+
+// F3: the trip's whole roll (pinned and unplaced), in taken order
+async function openGallery(h) {
+  try {
+    const photos = await api("GET", `/api/holidays/${h.id}/timeline`);
+    const wrap = el("div", "trip-gallery");
+    if (!photos.length) wrap.appendChild(el("p", "empty-note", "No photos on this trip yet."));
+    else wrap.appendChild(dayGroupedGallery(photos, (all, i) => openLightbox(all, i, { aside: true }), h));
+    openOverlay(`Photos \u00B7 ${h.name}`, wrap);
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 async function openUnplaced(h) {
@@ -2721,9 +2762,34 @@ function openLightbox(photos, idx, { aside = false } = {}) {
   showLightbox();
 }
 
+function stopVideo() {
+  const v = $("lb-video");
+  if (!v.hidden || v.getAttribute("src")) { v.pause(); v.removeAttribute("src"); v.load(); }
+  v.hidden = true;
+}
+
 function showLightbox() {
   const ph = lb.photos[lb.idx];
   const img = $("lb-img");
+  stopVideo();
+  img.hidden = false;
+  $("lb-count").textContent = `${lb.idx + 1} / ${lb.photos.length}`;
+  $("lb-date").textContent = fmtDate(ph.taken_at);
+  $("lb-prev").style.visibility = lb.idx > 0 ? "visible" : "hidden";
+  $("lb-next").style.visibility = lb.idx < lb.photos.length - 1 ? "visible" : "hidden";
+  if (ph.type === "video") {
+    // F7: the server streams Immich's playback (Range), the poster is its preview
+    ++lb.seq;
+    img.hidden = true;
+    img.removeAttribute("src");
+    const v = $("lb-video");
+    v.poster = photoURL(ph.asset_id, "preview");
+    v.src = photoURL(ph.asset_id, "video");
+    v.hidden = false;
+    $("lb-orig").href = photoURL(ph.asset_id, SHARE ? "video" : "original");
+    $("lb-orig").textContent = SHARE ? "Open video" : "Open original";
+    return;
+  }
   const url = photoURL(ph.asset_id, "preview");
   const seq = ++lb.seq; // a late preview for a photo already left is dropped
   // the blur lifts only once the full image is decoded, so the thumb never
@@ -2741,19 +2807,15 @@ function showLightbox() {
     loadPreview(url).then(() => { if (seq === lb.seq) sharpen(); },
       () => { if (seq === lb.seq) img.classList.remove("soft"); });
   }
-  $("lb-count").textContent = `${lb.idx + 1} / ${lb.photos.length}`;
-  $("lb-date").textContent = fmtDate(ph.taken_at);
   // a share link gets the preview, never the original file with its GPS data
   $("lb-orig").href = photoURL(ph.asset_id, SHARE ? "preview" : "original");
   $("lb-orig").textContent = SHARE ? "Open photo" : "Open original";
-  $("lb-prev").style.visibility = lb.idx > 0 ? "visible" : "hidden";
-  $("lb-next").style.visibility = lb.idx < lb.photos.length - 1 ? "visible" : "hidden";
 }
 
 // Only once the photo on screen has landed, and one at a time: on a thin
 // uplink a parallel fetch would slow the very photo being looked at.
 function preloadAhead(seq) {
-  const at = (i) => lb.photos[i] && photoURL(lb.photos[i].asset_id, "preview");
+  const at = (i) => lb.photos[i] && lb.photos[i].type !== "video" && photoURL(lb.photos[i].asset_id, "preview");
   const ahead = at(lb.idx + lb.dir), behind = at(lb.idx - lb.dir);
   (ahead ? loadPreview(ahead) : Promise.resolve())
     .catch(() => {})
@@ -2765,7 +2827,7 @@ function lbStep(d) {
   if (next >= 0 && next < lb.photos.length) { lb.idx = next; lb.dir = d; showLightbox(); }
 }
 
-$("lb-close").onclick = () => { lb.seq++; modalClose("lightbox"); $("lb-img").src = ""; };
+$("lb-close").onclick = () => { lb.seq++; stopVideo(); modalClose("lightbox"); $("lb-img").src = ""; };
 $("lb-prev").onclick = () => lbStep(-1);
 // Takes the photo off the trip here, never out of Immich; it waits in the
 // trip's "Set aside" list to be put back.

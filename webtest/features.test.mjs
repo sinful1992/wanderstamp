@@ -292,4 +292,79 @@ export const tests = [
     assert.equal(await page.locator("button", { hasText: "Import a backup file" }).count(), 0);
     await ctx.close();
   }],
+  ["F3: the story's All photos opens the whole roll under trip-day headings; a share has no gallery", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base, { timezoneId: "Europe/London" });
+    const t = await trips(page, [{ name: "F3 Roll", start_at: "2018-05-23", end_at: "2018-05-25" }]);
+    const id = t["F3 Roll"].id;
+    if (!(await api(page, "GET", "/api/map")).body.pins.some((p) => p.holiday_id === id)) {
+      await api(page, "POST", "/api/pins", { holiday_id: id, lat: 50.75, lng: -1.7, title: "F3 pin", note: "" });
+    }
+    const roll = [
+      { asset_id: "p1", taken_at: "2018-05-23T10:00:00Z", type: "image", duration: 0 },
+      { asset_id: "p2", taken_at: "2018-05-24T02:30:00Z", type: "image", duration: 0 }, // before 4 am: still day 1
+      { asset_id: "v1", taken_at: "2018-05-24T12:00:00Z", type: "video", duration: 65.4 },
+    ];
+    let asked = 0;
+    await page.route(`**/api/holidays/${id}/timeline`, (r) => { asked++; r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(roll) }); });
+    await page.reload({ waitUntil: "networkidle" });
+    // no photos: no gallery section
+    await page.evaluate((i) => openStory(holidayById(i)), id);
+    assert.equal(await page.$(".story-gallery"), null);
+    await page.evaluate((i) => { state.pins.find((p) => p.holiday_id === i).photo_count = 3; openStory(holidayById(i)); }, id);
+    assert.equal(await page.textContent(".story-gallery button"), "See all 3 photos day by day");
+    await page.click(".story-gallery button");
+    await page.waitForSelector(".trip-gallery .gallery-grid");
+    assert.equal(asked, 1);
+    const heads = await page.$$eval(".trip-gallery .day-head", (hs) => hs.map((h) => h.textContent));
+    assert.equal(heads.length, 2, heads.join("|"));
+    assert.match(heads[0], /^Day 1 · Wednesday,? 23 May$/);
+    assert.match(heads[1], /^Day 2 · Thursday,? 24 May$/);
+    assert.equal(await page.$$eval(".trip-gallery .gallery-grid", (g) => g.map((x) => x.children.length).join(",")), "2,1");
+    assert.equal(await page.textContent(".trip-gallery .vbadge"), "▶ 1:05");
+    assert.equal(await page.getAttribute(".trip-gallery .vthumb img", "alt"), "Video, 1:05");
+    await ctx.close();
+  }],
+  ["F7: a video plays in the lightbox with its poster; stepping on or closing stops it; a share streams from the share", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    const list = [
+      { asset_id: "v1", taken_at: "2018-05-24T12:00:00Z", type: "video", duration: 9 },
+      { asset_id: "p1", taken_at: "2018-05-24T13:00:00Z", type: "image", duration: 0 },
+    ];
+    const lbState = () => page.evaluate(() => {
+      const v = document.getElementById("lb-video"), i = document.getElementById("lb-img");
+      return { video: !v.hidden, src: v.getAttribute("src"), poster: v.getAttribute("poster"), img: !i.hidden,
+        orig: document.getElementById("lb-orig").getAttribute("href"), label: document.getElementById("lb-orig").textContent };
+    });
+    await page.evaluate((l) => openLightbox(l, 0, {}), list);
+    let s = await lbState();
+    assert.deepEqual([s.video, s.img, s.src, s.poster, s.orig], [true, false, "/api/photo/v1/video", "/api/photo/v1/preview", "/api/photo/v1/original"]);
+    assert.equal(await page.isVisible("#lb-video"), true);
+    await page.click("#lb-next");
+    s = await lbState();
+    assert.deepEqual([s.video, s.img, s.src], [false, true, null]);
+    await page.click("#lb-prev");
+    await page.click("#lb-close");
+    s = await lbState();
+    assert.deepEqual([s.video, s.src], [false, null]);
+    // a story chapter marks its video tile
+    await page.evaluate((l) => {
+      const g = document.createElement("div");
+      g.id = "probe";
+      g.appendChild(thumbCell(l[0], () => {}));
+      g.appendChild(thumbCell(l[1], () => {}));
+      document.body.appendChild(g);
+    }, list);
+    assert.deepEqual(await page.$$eval("#probe > *", (n) => n.map((x) => x.tagName + (x.className ? "." + x.className : ""))), ["SPAN.vthumb", "IMG"]);
+    await ctx.close();
+    // share: the stream and the open link stay on the share route
+    const sctx = await browser.newContext({ serviceWorkers: "block" });
+    const sp = await sctx.newPage();
+    await sp.route("**/api/share/tok**", (r) => r.fulfill({ status: 410, contentType: "application/json", body: '{"error":"this share link has expired"}' }));
+    await sp.goto(base + "/share/tok");
+    await sp.waitForFunction(() => document.body.textContent.includes("has expired"), null, { timeout: 3000 });
+    await sp.evaluate((l) => openLightbox(l, 0, {}), list);
+    const ss = await sp.evaluate(() => [document.getElementById("lb-video").getAttribute("src"), document.getElementById("lb-orig").getAttribute("href"), document.getElementById("lb-orig").textContent]);
+    assert.deepEqual(ss, ["/api/share/tok/photo/v1/video", "/api/share/tok/photo/v1/video", "Open video"]);
+    await sctx.close();
+  }],
 ];

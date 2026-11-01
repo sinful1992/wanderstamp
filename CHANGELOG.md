@@ -9,6 +9,8 @@
 - Day numbers on the live banner and in the story count from the day the trip started where you are (they were a day off in New York or Bangkok). A queued offline pin you discard while others are sending is not sent.
 F6: the story says who started the trip, who added each pin and who wrote the journal (nothing for old entries or on a share).
 The map loads the GPX track, stats, import and print modules: the story draws a trip's tracks, the passport has Travel stats, Family has Import a backup file.
+F3: a trip's story has All photos: the whole roll, pinned and unplaced, under its trip days.
+F7: videos show as their poster with a play mark and length, and play in the photo viewer (from the share route on a share link).
 
 ## 1.13.1 (unreleased)
 

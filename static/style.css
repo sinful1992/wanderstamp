@@ -1034,6 +1034,14 @@ button.linkish, a.linkish {
   box-shadow: 0 0 0 2px #fffdf7, 0 1px 2px rgba(38, 34, 28, .25);
 }
 .story-grid img { cursor: pointer; }
+/* F7: a video tile is its poster with a play mark and its length */
+.vthumb { position: relative; display: block; }
+.vthumb img { display: block; }
+.vbadge {
+  position: absolute; left: 4px; bottom: 4px; pointer-events: none;
+  padding: 1px 5px; border-radius: 3px; font-size: 11px; line-height: 1.4;
+  color: #fff; background: rgba(15, 13, 10, .7);
+}
 /* the tail of a long chapter, opened in the lightbox rather than scrolled */
 .story-more {
   margin-top: 6px; width: 100%;
@@ -1118,6 +1126,8 @@ body.shared #sheet, body.shared #fabs, body.shared #banner { display: none !impo
    size while the preview is still on its way */
 #lb-img { width: 100vw; height: 100vh; height: 100dvh; object-fit: contain; transition: filter .25s; }
 #lb-img.soft { filter: blur(8px); }
+#lb-img[hidden], #lb-video[hidden] { display: none; }
+#lb-video { width: 100vw; height: 100vh; height: 100dvh; object-fit: contain; background: #000; }
 #lb-close, #lb-prev, #lb-next {
   position: absolute; z-index: 1;
   background: rgba(255,255,255,.12); color: #fff; border: none;
