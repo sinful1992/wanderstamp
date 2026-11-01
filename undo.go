@@ -193,43 +193,64 @@ func (a *app) restore(s undoSnap) error {
 		return err
 	}
 	defer tx.Rollback()
+	// the photos each restored pin held, to tell a bare resync twin from a
+	// pin someone has added to since
+	held := map[string]map[string]bool{}
+	for _, t := range s.tables {
+		if t.table != "pin_photos" {
+			continue
+		}
+		pc, ac := colIndex(t.cols, "pin_id"), colIndex(t.cols, "asset_id")
+		for _, r := range t.rows {
+			k := fmt.Sprint(r[pc])
+			if held[k] == nil {
+				held[k] = map[string]bool{}
+			}
+			held[k][fmt.Sprint(r[ac])] = true
+		}
+	}
 	for _, t := range s.tables {
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(t.cols)), ",")
 		names := make([]string, len(t.cols))
-		idCol, kindCol, keyCol, holCol := -1, -1, -1, -1
 		for j, c := range t.cols {
 			names[j] = ident(c)
-			switch c {
-			case "id":
-				idCol = j
-			case "kind":
-				kindCol = j
-			case "cluster_key":
-				keyCol = j
-			case "holiday_id":
-				holCol = j
-			}
 		}
+		idCol, assetCol := colIndex(t.cols, "id"), colIndex(t.cols, "asset_id")
 		// A row with its own id (trip, pin, track, packing item) must come
 		// back exactly: ids aren't AUTOINCREMENT, so a new row made since may
 		// hold it, and replacing that would lose it. That's a conflict.
-		// Rows keyed by asset (pin_photos, unplaced, set_aside, choices) may
-		// meet a photo a sync has filed elsewhere since: theirs wins back.
-		verb := "INSERT OR REPLACE"
-		if idCol >= 0 {
-			verb = "INSERT"
+		verb := "INSERT"
+		if idCol < 0 {
+			verb = "INSERT OR REPLACE"
 		}
 		stmt := verb + ` INTO ` + ident(t.table) + ` (` + strings.Join(names, ",") + `) VALUES (` + ph + `)`
 		for _, r := range t.rows {
-			if t.table == "pins" && kindCol >= 0 && keyCol >= 0 && holCol >= 0 && fmt.Sprint(r[kindCol]) == "photo" && r[keyCol] != nil {
-				// The resync after the delete files the photos again on a
-				// fresh photo pin in the same cell, often with the same id (ids
-				// are reused). The restored pin takes its place: its photos
-				// come back with it, the rest at the next sync. A pin someone
-				// has written on is left alone, and then it's a conflict.
-				if _, err := tx.Exec(`DELETE FROM pins WHERE holiday_id = ? AND kind = 'photo' AND note = ''
-					AND (cluster_key = ? OR id = ?)`, r[holCol], r[keyCol], r[idCol]); err != nil {
+			if t.table == "pins" {
+				if err := dropBareTwin(tx, t.cols, r, held[fmt.Sprint(r[idCol])]); err != nil {
 					return err
+				}
+			}
+			if assetCol >= 0 {
+				// A photo filed on another trip since stays there. One the
+				// resync put back among this trip's unplaced photos comes
+				// back to its pin.
+				asset := fmt.Sprint(r[assetCol])
+				var elsewhere int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM (
+					SELECT p.holiday_id h FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id WHERE pp.asset_id = ?
+					UNION ALL SELECT holiday_id FROM unplaced_photos WHERE asset_id = ?
+					UNION ALL SELECT holiday_id FROM set_aside WHERE asset_id = ?
+					UNION ALL SELECT holiday_id FROM photo_choices WHERE asset_id = ?) WHERE h != ?`,
+					asset, asset, asset, asset, s.holidayID).Scan(&elsewhere); err != nil {
+					return err
+				}
+				if elsewhere > 0 {
+					continue
+				}
+				if t.table == "pin_photos" {
+					if _, err := tx.Exec(`DELETE FROM unplaced_photos WHERE asset_id = ? AND holiday_id = ?`, asset, s.holidayID); err != nil {
+						return err
+					}
 				}
 			}
 			if _, err := tx.Exec(stmt, r...); err != nil {
@@ -241,6 +262,57 @@ func (a *app) restore(s undoSnap) error {
 		}
 	}
 	return tx.Commit()
+}
+
+func colIndex(cols []string, name string) int {
+	for i, c := range cols {
+		if c == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// dropBareTwin: after a photo pin is deleted, the resync files its photos
+// again on a fresh photo pin in the same cell. Undo puts the old pin back in
+// its place, but only while that twin is untouched: no title of its own, no
+// note, no cover, no added-by, and no photo the old pin didn't hold. Anything
+// else is someone's work, so it stays and the undo is a conflict.
+func dropBareTwin(tx *sql.Tx, cols []string, r []any, heldAssets map[string]bool) error {
+	kc, hc, cc, tc := colIndex(cols, "kind"), colIndex(cols, "holiday_id"), colIndex(cols, "cluster_key"), colIndex(cols, "title")
+	if kc < 0 || hc < 0 || cc < 0 || r[cc] == nil || fmt.Sprint(r[kc]) != "photo" {
+		return nil
+	}
+	title := ""
+	if tc >= 0 && r[tc] != nil {
+		title = fmt.Sprint(r[tc])
+	}
+	var twin int64
+	err := tx.QueryRow(`SELECT id FROM pins WHERE holiday_id = ? AND cluster_key = ? AND kind = 'photo'
+		AND note = '' AND cover_asset = '' AND created_by = '' AND (title = '' OR title = ?)`,
+		r[hc], r[cc], title).Scan(&twin)
+	if err == sql.ErrNoRows {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	rows, err := tx.Query(`SELECT asset_id FROM pin_photos WHERE pin_id = ?`, twin)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var asset string
+		if err := rows.Scan(&asset); err != nil {
+			return err
+		}
+		if !heldAssets[asset] {
+			return nil // a photo filed there since, by hand or by sync
+		}
+	}
+	rows.Close()
+	_, err = tx.Exec(`DELETE FROM pins WHERE id = ?`, twin)
+	return err
 }
 
 func (a *app) handleUndo(w http.ResponseWriter, r *http.Request) {

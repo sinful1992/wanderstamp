@@ -4,6 +4,8 @@ package main
 // or bringing back a trip deleted long ago from an old export.
 
 import (
+	"bufio"
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -79,7 +81,12 @@ func (a *app) handleImport(w http.ResponseWriter, r *http.Request) {
 	var doc struct {
 		Holidays []importHoliday `json:"holidays"`
 	}
-	dec := json.NewDecoder(r.Body)
+	// a file saved by a Windows editor can start with a UTF-8 BOM
+	body := bufio.NewReader(r.Body)
+	if b, _ := body.Peek(3); bytes.Equal(b, []byte{0xEF, 0xBB, 0xBF}) {
+		body.Discard(3)
+	}
+	dec := json.NewDecoder(body)
 	err := dec.Decode(&doc)
 	if err == nil {
 		// one JSON document and nothing after it (reading on also enforces
