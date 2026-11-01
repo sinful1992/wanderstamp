@@ -376,34 +376,50 @@ export const tests = [
     assert.equal(await sp.isHidden("#lb-note"), true);
     await sctx.close();
   }],
-  ["F5: long legs bend into great circles across the 180th meridian; short legs stay straight", async ({ browser, base }) => {
+  ["F5: long legs bend into great circles; lines cut at the 180th meridian and always meet their pins", async ({ browser, base }) => {
     const { ctx, page } = await signedIn(browser, base);
     const r = await page.evaluate(() => {
-      const jumps = (pts) => pts.slice(1).some((p, i) => Math.abs(p[1] - pts[i][1]) > 180);
-      const bad = (pts) => pts.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]));
-      const short = arcRoute([[50.72, -1.88], [50.75, -1.7], [51.5, -0.12]]);
-      const atlantic = arcRoute([[51.47, -0.45], [40.64, -73.78]]);
-      const pacific = arcRoute([[35.55, 139.78], [33.94, -118.4]]);
-      const chain = arcRoute([[33.94, -118.4], [35.55, 139.78], [35.44, 139.64], [33.94, -118.4]]);
-      const opposite = arcRoute([[10, 20], [-10, -160]]);
-      return {
-        short: [short.pts.length, short.planes.length],
-        atlantic: { n: atlantic.pts.length, top: Math.max(...atlantic.pts.map((p) => p[0])), planes: atlantic.planes.length, deg: atlantic.planes[0].deg },
-        pacific: { jumps: jumps(pacific.pts), bad: bad(pacific.pts), deg: pacific.planes[0].deg, end: pacific.pts[pacific.pts.length - 1] },
-        chain: { jumps: jumps(chain.pts), planes: chain.planes.length, bad: bad(chain.pts) },
-        opposite: { bad: bad(opposite.pts), n: opposite.pts.length },
+      const flat = (pieces) => pieces.flat();
+      const inWorld = (pieces) => flat(pieces).every((p) => p[1] >= -180 && p[1] <= 180 && Number.isFinite(p[0]));
+      const jumps = (pieces) => pieces.some((pc) => pc.slice(1).some((p, i) => Math.abs(p[1] - pc[i][1]) > 180));
+      // each pin is a point of the drawn line, in the pins' own world copy
+      const meets = (pieces, pins) => pins.every(([la, ln]) => flat(pieces).some((p) => Math.abs(p[0] - la) < 1e-6 && Math.abs(p[1] - ln) < 1e-6));
+      const out = {};
+      const cases = {
+        short: [[50.72, -1.88], [50.75, -1.7], [51.5, -0.12]],
+        atlantic: [[51.47, -0.45], [40.64, -73.78]],
+        pacific: [[35.55, 139.78], [33.94, -118.4]],
+        tokyoLaVegas: [[35.55, 139.78], [33.94, -118.4], [36.08, -115.15]],
+        laTokyo: [[33.94, -118.4], [35.55, 139.78]],
+        chain: [[33.94, -118.4], [35.55, 139.78], [35.44, 139.64], [33.94, -118.4]],
+        fiji: [[-16.8, 179.9], [-16.8, -179.9], [-16.7, -179.8]],
+        opposite: [[10, 20], [-10, -160]],
       };
+      for (const [k, pins] of Object.entries(cases)) {
+        const a = arcRoute(pins);
+        out[k] = { pieces: a.pieces.length, n: flat(a.pieces).length, inWorld: inWorld(a.pieces), jumps: jumps(a.pieces), meets: meets(a.pieces, pins),
+          planes: a.planes.map((p) => Math.round(p.deg)), planeIn: a.planes.every((p) => p.at[1] >= -180 && p.at[1] <= 180),
+          top: Math.max(...flat(a.pieces).map((p) => p[0])) };
+      }
+      out.dur = [fmtDuration(0), fmtDuration(65.4), fmtDuration(3599.6), fmtDuration(3725.4), fmtDuration(36000)];
+      return out;
     });
-    assert.deepEqual(r.short, [3, 0]);
-    assert.ok(r.atlantic.n > 30 && r.atlantic.planes === 1, JSON.stringify(r.atlantic));
+    for (const [k, v] of Object.entries(r)) {
+      if (k === "dur") continue;
+      assert.deepEqual([v.inWorld, v.jumps, v.meets, v.planeIn], [true, false, true, true], `${k}: ${JSON.stringify(v)}`);
+    }
+    assert.deepEqual([r.short.pieces, r.short.n, r.short.planes.length], [1, 3, 0]);
+    assert.ok(r.atlantic.n > 30 && r.atlantic.planes.length === 1 && r.atlantic.pieces === 1, JSON.stringify(r.atlantic));
     assert.ok(r.atlantic.top > 52, "the arc bows north of both ends: " + r.atlantic.top);
-    assert.ok(r.atlantic.deg < -60 && r.atlantic.deg > -120, "flying west: " + r.atlantic.deg);
-    assert.equal(r.pacific.jumps, false);
-    assert.equal(r.pacific.bad, false);
-    assert.ok(r.pacific.deg > 60 && r.pacific.deg < 120, "flying east: " + r.pacific.deg);
-    assert.ok(Math.abs(r.pacific.end[1] - (-118.4 + 360)) < 1e-6, "LA drawn east of Tokyo: " + r.pacific.end);
-    assert.deepEqual([r.chain.jumps, r.chain.planes, r.chain.bad], [false, 2, false]);
-    assert.deepEqual(r.opposite, { bad: false, n: 2 });
+    assert.ok(r.atlantic.planes[0] < -60 && r.atlantic.planes[0] > -120, "flying west: " + r.atlantic.planes[0]);
+    assert.equal(r.pacific.pieces, 2, "cut once at the seam");
+    assert.ok(r.pacific.planes[0] > 60 && r.pacific.planes[0] < 120, "flying east: " + r.pacific.planes[0]);
+    assert.ok(r.laTokyo.planes[0] < -60 && r.laTokyo.planes[0] > -120, "flying west: " + r.laTokyo.planes[0]);
+    assert.deepEqual([r.tokyoLaVegas.pieces, r.tokyoLaVegas.planes.length], [2, 2]); // LA→Vegas is 370 km: flown too
+    assert.deepEqual([r.chain.pieces, r.chain.planes.length], [3, 2]);
+    assert.deepEqual([r.fiji.pieces, r.fiji.n, r.fiji.planes.length], [2, 5, 0], JSON.stringify(r.fiji));
+    assert.equal(r.opposite.n, 2);
+    assert.deepEqual(r.dur, ["0:00", "1:05", "1:00:00", "1:02:05", "10:00:00"]);
     await ctx.close();
   }],
   ["F5: a flown trip shows one plane per long leg on the map, dimmed with its trip", async ({ browser, base }) => {
@@ -448,7 +464,7 @@ export const tests = [
     assert.equal(await page.evaluate((o) => [...state.markers.values()].filter((m) => m.tripId === o && !m.cluster).length, other), 1);
     assert.match(await page.evaluate((i) => [...state.markers.values()].find((m) => m.tripId === i && m.cluster).getElement().getAttribute("aria-label"), id), /^12 pins · P2 Paris/);
     // routes still run through every stop
-    assert.equal(await page.evaluate((i) => state.routes.filter((r) => r.tripId === i && r instanceof L.Polyline).reduce((n, r) => n + r.getLatLngs().length, 0), id), 12);
+    assert.equal(await page.evaluate((i) => state.routes.filter((r) => r.tripId === i && r instanceof L.Polyline).reduce((n, r) => n + r.getLatLngs().flat().length, 0), id), 12);
     await page.evaluate((i) => [...state.markers.values()].find((m) => m.tripId === i && m.cluster).fire("click"), id);
     await page.waitForFunction(() => map.getZoom() >= 7);
     await page.waitForTimeout(400);

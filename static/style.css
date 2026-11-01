@@ -190,7 +190,8 @@ button { font: inherit; cursor: pointer; }
 /* D1: the open story's stop number, in the dot or on the print's corner */
 .stop-n {
   position: absolute; z-index: 2;
-  font-family: var(--stamp); font-size: 11px; line-height: 1; color: #fffdf7;
+  /* the stamp face draws 1 like an I: numbers use the body face */
+  font-family: var(--body); font-weight: 700; font-variant-numeric: tabular-nums; font-size: 10.5px; line-height: 1; color: #fffdf7;
 }
 .manual-pin.numbered::after { inset: 1.5px; }
 .manual-pin .stop-n { inset: 0; display: grid; place-items: center; }
@@ -207,13 +208,14 @@ button { font: inherit; cursor: pointer; }
   display: grid; place-items: center;
   background: var(--c, #1d6fb8); color: #fffdf7;
   box-shadow: 0 0 0 2.5px #fffdf7, 0 0 0 4px var(--c, #1d6fb8), 0 2px 5px rgba(0,0,0,.35);
-  font-family: var(--stamp); font-size: 13px; line-height: 1;
+  font-family: var(--body); font-weight: 700; font-variant-numeric: tabular-nums; font-size: 12px; line-height: 1;
 }
 .leaflet-marker-icon:hover .pin-cluster { scale: 1.1; }
 .story-place .stop-num {
   display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 4px;
   margin-right: 8px; vertical-align: 2px; border-radius: 999px;
   background: var(--c, var(--ink)); color: #fffdf7;
+  font-family: var(--body); font-weight: 700; font-variant-numeric: tabular-nums;
   font-size: 12px; letter-spacing: 0;
 }
 /* a pin queued offline: same pushpin, ghosted until it syncs */

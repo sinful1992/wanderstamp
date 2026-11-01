@@ -42,7 +42,8 @@ function el(tag, cls, text) {
 // F7: "1:05" for a video's length
 function fmtDuration(sec) {
   const s = Math.max(0, Math.round(sec || 0));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
 
 // One photo tile. A video is its poster frame with a play mark and its
@@ -546,25 +547,55 @@ function greatCircle(a, b, n = 64) {
   return out;
 }
 
-// A route's points with every long leg bent into its arc, plus where each
-// arc's plane sits and which way it points (degrees clockwise from north on
-// the map; Mercator keeps angles, so it holds at every zoom).
+const wrapLng = (lng) => ((((lng + 180) % 360) + 360) % 360) - 180;
+
+// Cuts a continuous (unwrapped) line where it crosses the 180th meridian, so
+// every piece lies in -180..180, the world copy the pins are drawn in: the
+// line leaves at one edge and comes back in at the other, meeting each pin.
+function splitAtSeam(points) {
+  const pieces = [];
+  let off = 0;
+  let cur = [];
+  for (const p of points) {
+    const q = [p[0], p[1] + off];
+    if (cur.length && (q[1] > 180 || q[1] < -180)) {
+      const prev = cur[cur.length - 1];
+      const edge = q[1] > 180 ? 180 : -180;
+      const lat = prev[0] + (edge - prev[1]) / (q[1] - prev[1]) * (q[0] - prev[0]);
+      cur.push([lat, edge]);
+      pieces.push(cur);
+      off += edge === 180 ? -360 : 360;
+      cur = [[lat, -edge], [p[0], p[1] + off]];
+      continue;
+    }
+    cur.push(q);
+  }
+  if (cur.length > 1) pieces.push(cur);
+  return pieces;
+}
+
+// A route as line pieces, with every long leg bent into its arc, plus where
+// each arc's plane sits and which way it points (degrees clockwise from north
+// on the map; Mercator keeps angles, so it holds at every zoom).
 function arcRoute(latlngs) {
+  // first one continuous line: each leg takes the short way round, so a hop
+  // over the 180th meridian is a few km, not a sweep across the whole map
   const pts = [latlngs[0]];
   const planes = [];
   for (let i = 1; i < latlngs.length; i++) {
     const a = latlngs[i - 1], b = latlngs[i];
-    if (kmBetween({ lat: a[0], lng: a[1] }, { lat: b[0], lng: b[1] }) < ARC_KM) { const last = pts[pts.length - 1]; pts.push([b[0], b[1] + (last[1] - a[1])]); continue; }
-    // the arc starts at the previous point as it was drawn (unwrapped), so a
-    // chain of flights stays continuous
     const from = pts[pts.length - 1];
-    const arc = greatCircle(from, [b[0], b[1] + (from[1] - a[1])]);
+    let to = b[1] + (from[1] - a[1]);
+    while (to - from[1] > 180) to -= 360;
+    while (to - from[1] < -180) to += 360;
+    if (kmBetween({ lat: a[0], lng: a[1] }, { lat: b[0], lng: b[1] }) < ARC_KM) { pts.push([b[0], to]); continue; }
+    const arc = greatCircle(from, [b[0], to]);
     pts.push(...arc.slice(1));
     const m = Math.floor(arc.length / 2);
     const p = L.CRS.EPSG3857.latLngToPoint(L.latLng(arc[m - 1]), 4), q = L.CRS.EPSG3857.latLngToPoint(L.latLng(arc[m + 1] || arc[m]), 4);
-    planes.push({ at: arc[m], deg: Math.atan2(q.x - p.x, p.y - q.y) * 180 / Math.PI });
+    planes.push({ at: [arc[m][0], wrapLng(arc[m][1])], deg: Math.atan2(q.x - p.x, p.y - q.y) * 180 / Math.PI });
   }
-  return { pts, planes };
+  return { pieces: splitAtSeam(pts), planes };
 }
 
 function planeIcon(color, deg) {
@@ -815,13 +846,13 @@ function renderMarkers() {
   const draw = (hid, latlngs, cls, dash) => {
     if (latlngs.length < 2) return;
     const h = holidayById(hid);
-    const { pts, planes } = arcRoute(latlngs);
+    const { pieces, planes } = arcRoute(latlngs);
     for (const pl of planes) {
       const mark = L.marker(pl.at, { icon: planeIcon(h ? h.color : "#666", pl.deg), interactive: false, keyboard: false }).addTo(map);
       mark.tripId = hid;
       state.routes.push(mark);
     }
-    const line = L.polyline(pts, {
+    const line = L.polyline(pieces, {
       color: h ? h.color : "#666",
       weight: 2.5, dashArray: dash, lineCap: "round", opacity: 0.8,
       interactive: false, // never steal taps from pins or the map
