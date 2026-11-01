@@ -6,7 +6,7 @@
 - Undo: deleting a pin or a trip keeps it for 30 seconds, so Undo puts back everything that went with it (photos, packing, share link, tracks). An ended trip can be reopened.
 - `GET /api/stats`: trips, days and km per year, km per trip, and every country with its first visit.
 - Pins and trips remember who added them, and a journal who last wrote it (shares leave the names out).
-- Videos from Immich come in with the photos. Photo lists say `type` (image or video) and `duration`, and `/api/photo/{id}/video` streams the playable copy, with seeking. It works on a share link too.
+- Videos from Immich come in with the photos. Photo lists say `type` (image or video) and `duration`, and `/api/photo/{id}/video` streams the playable copy, with seeking. A share link shows only the poster: the video file can be the original, with its GPS.
 - Import (admin): `POST /api/import` loads an export back in, at most 20 MB. It shows a dry run first, and skips trips that are already there. Exports now include each photo's type and duration.
 - GPX tracks: upload a route to a trip (at most 10 MB, drawn with up to 2,000 points), list it or delete it. Tracks never show on a share link.
 
