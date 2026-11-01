@@ -120,8 +120,8 @@ func TestCrossSiteWritesRefused(t *testing.T) {
 		{"POST", "none", "", 200},
 		{"POST", "", "http://holiday.test", 200},
 		{"POST", "", "https://home.example:8448", 200}, // via X-Forwarded-Host below
-		{"POST", "", "", 200},           // curl, old WebViews
-		{"GET", "cross-site", "", 200}, // reads are fine, CORS keeps the body
+		{"POST", "", "", 200},                          // curl, old WebViews
+		{"GET", "cross-site", "", 200},                 // reads are fine, CORS keeps the body
 	}
 	for _, c := range cases {
 		req := httptest.NewRequest(c.method, "http://holiday.test/api/holidays/1/end", nil)

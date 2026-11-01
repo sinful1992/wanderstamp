@@ -77,8 +77,8 @@ type holidayOut struct {
 	PinCount      int     `json:"pin_count"`
 	PhotoCount    int     `json:"photo_count"`
 	UnplacedCount int     `json:"unplaced_count"`
-	AskCount      int     `json:"ask_count"`       // photos near a hand pin, waiting for "same place?"
-	SetAsideCount int     `json:"set_aside_count"` // photos taken off the trip by hand
+	AskCount      int     `json:"ask_count"`        // photos near a hand pin, waiting for "same place?"
+	SetAsideCount int     `json:"set_aside_count"`  // photos taken off the trip by hand
 	Shared        bool    `json:"shared"`           // a link that still works; false once it has expired
 	ShareExpires  *string `json:"share_expires_at"` // nil = never, or no link
 	PackTotal     int     `json:"pack_total"`

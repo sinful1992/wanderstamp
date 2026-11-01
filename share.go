@@ -362,4 +362,3 @@ func (a *app) handleSharePhoto(w http.ResponseWriter, r *http.Request) {
 	// a day, not for good: revoking the link should stop the photos too
 	a.streamPhoto(w, r, assetID, "private, max-age=86400")
 }
-
