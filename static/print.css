@@ -1,0 +1,43 @@
+/* F8 print: a trip prints as a keepsake page, not a screenshot of the app.
+   With a story open: the map on top, then the story's stops, photos and
+   journal on paper. With a page open (passport, stats): just that page.
+   Loaded with media="print", so nothing here touches the screen. */
+
+@page { margin: 14mm; }
+
+@media print {
+  html, body { background: #fff !important; color: #000 !important; height: auto !important; overflow: visible !important; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-shadow: none !important; }
+
+  /* app chrome never prints */
+  #fabs, #place-hint, #sheet, #toast, #lightbox, #login, #banner .tag-actions,
+  #story-close, #overlay-close, .leaflet-control-container, .ws-routes-btn,
+  button, input, select, textarea { display: none !important; }
+
+  /* the map: a fixed-size picture at the top of the page */
+  #map { position: relative !important; inset: auto !important; width: 100% !important; height: 95mm !important;
+    break-inside: avoid; border: 1px solid #999; margin-bottom: 6mm; }
+  #banner { position: static !important; box-shadow: none !important; }
+
+  /* the story: out of its sheet/side panel and into the page flow */
+  #story { position: static !important; inset: auto !important; width: auto !important; height: auto !important;
+    max-height: none !important; transform: none !important; background: #fff !important; border: 0 !important; }
+  #story-head { position: static !important; background: none !important; color: #000 !important; padding: 0 0 4mm !important; }
+  #story-title { font-size: 20pt; margin: 0; }
+  #story-scroll { overflow: visible !important; height: auto !important; max-height: none !important; padding: 0 !important; }
+  #story-scroll img, #overlay-content img { max-width: 100%; break-inside: avoid; }
+  #story-scroll > * { break-inside: avoid-page; }
+  h2, h3 { break-after: avoid; }
+  a { color: #000 !important; text-decoration: none !important; }
+
+  /* a page (passport, stats, packing) open: print it alone */
+  body:has(#overlay:not([hidden])) > :not(#overlay) { display: none !important; }
+  #overlay { position: static !important; inset: auto !important; height: auto !important; overflow: visible !important;
+    background: #fff !important; }
+  #overlay-head { position: static !important; background: none !important; color: #000 !important; }
+  #overlay-content { overflow: visible !important; height: auto !important; max-height: none !important; }
+
+  /* stats bars keep their ink */
+  .ws-bars .bar { background: #1c3652 !important; }
+  .ws-stats-total { border: 1px solid #ccc; background: #fff !important; }
+}
