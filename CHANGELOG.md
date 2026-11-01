@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.13.1 (unreleased)
+## 1.13.1 (2026-11-01)
 
 ### Server
 - Go 1.26.10, golang.org/x/crypto 0.58, modernc SQLite 1.61 (SQLite 3.54): closes the known Go standard-library
