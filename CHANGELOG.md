@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.14.0 (unreleased)
+
+### Frontend
+- Find a trip: once there are 5 or more, the trips list has a search box (name, place or journal; accents don't matter) and year chips. Trips you hide stay hidden after a reload, for each person on the device.
+
 ## 1.13.1 (unreleased)
 
 ### Server

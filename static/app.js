@@ -11,7 +11,9 @@ const state = {
   me: null,
   holidays: [],
   pins: [],
-  hidden: new Set(),      // holiday ids toggled off
+  hidden: new Set(),      // holiday ids toggled off (remembered, see saveHidden)
+  query: "",              // the trips list's search box
+  year: null,             // the trips list's year chip, null = all years
   markers: new Map(),  // pin key -> Leaflet marker, reconciled in renderMarkers
   routes: [],             // one dotted itinerary line per visible trip
   dests: new Map(),       // holiday id -> destination stamp marker
@@ -96,7 +98,8 @@ const QUEUE_KEY = "hm-pin-queue";
 
 function saveSnapshot() {
   try {
-    localStorage.setItem(SNAP_KEY, JSON.stringify({ holidays: state.holidays, pins: state.pins, at: Date.now() }));
+    localStorage.setItem(SNAP_KEY, JSON.stringify({ holidays: state.holidays, pins: state.pins, at: Date.now(),
+      user: state.me ? state.me.username : null }));
   } catch { /* storage full or blocked — the offline view just won't have data */ }
 }
 
@@ -106,6 +109,7 @@ function restoreSnapshot() {
     if (!s || !Array.isArray(s.holidays)) return false;
     state.holidays = s.holidays;
     state.pins = s.pins || [];
+    loadHidden(s.user);
     renderAll(true);
     return true;
   } catch {
@@ -284,6 +288,7 @@ async function loadData(fit) {
   state.me = d.me;
   state.holidays = d.holidays;
   state.pins = d.pins;
+  loadHidden(d.me && d.me.username);
   renderAccount();
   renderAll(fit);
   for (const fn of dataListeners) {
@@ -1309,6 +1314,66 @@ function tripRange(h) {
   return fmtRange(h.start_at, h.end_at);
 }
 
+/* ---------- finding a trip (F1) ---------- */
+
+// Hidden trips stay hidden across reloads, on this device. Per user, so a
+// shared tablet keeps each person's own map. Shares never use it.
+let hiddenFor = null; // whose hidden set state.hidden holds
+const hiddenKey = (who) => `hm-hidden:${who}`;
+function loadHidden(who) {
+  if (SHARE || !who || who === hiddenFor) return;
+  hiddenFor = who;
+  try {
+    const ids = JSON.parse(localStorage.getItem(hiddenKey(who)) || "[]");
+    state.hidden = new Set(Array.isArray(ids) ? ids.filter(Number.isInteger) : []);
+  } catch { state.hidden = new Set(); }
+}
+function saveHidden() {
+  if (SHARE || !hiddenFor) return;
+  try { localStorage.setItem(hiddenKey(hiddenFor), JSON.stringify([...state.hidden])); } catch {}
+}
+
+// The search box and year chips only show once a list is long enough to need them.
+const FIND_FROM = 5;
+
+// Lower case without accents, so "cote" finds "Côte d'Azur".
+const fold = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+// The calendar years a trip touches; a live trip runs to this year.
+function tripYears(h) {
+  const a = calDay(h.start_at).getFullYear();
+  const b = h.end_at ? calDay(h.end_at).getFullYear() : Math.max(a, new Date().getFullYear());
+  const ys = [];
+  for (let y = a; y <= b && ys.length < 50; y++) ys.push(y);
+  return ys;
+}
+
+function tripMatches(h) {
+  if (state.year !== null && !tripYears(h).includes(state.year)) return false;
+  const q = fold(state.query).trim();
+  if (!q) return true;
+  const hay = fold([h.name, h.dest_name, h.journal].join(" "));
+  return q.split(/\s+/).every((w) => hay.includes(w));
+}
+
+function renderFind() {
+  const box = $("trip-find");
+  const on = state.holidays.length >= FIND_FROM;
+  box.hidden = !on;
+  if (!on) { state.query = ""; state.year = null; $("trip-search").value = ""; return; }
+  const years = [...new Set(state.holidays.flatMap(tripYears))].sort((a, b) => b - a);
+  if (state.year !== null && !years.includes(state.year)) state.year = null;
+  const chips = $("year-chips");
+  chips.textContent = "";
+  for (const y of [null, ...years]) {
+    const b = el("button", "chip", y === null ? "All" : String(y));
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(state.year === y));
+    b.onclick = () => { state.year = y; renderSheet(); };
+    chips.appendChild(b);
+  }
+}
+
 function renderSheet() {
   const dots = $("pill-dots");
   dots.textContent = "";
@@ -1329,7 +1394,18 @@ function renderSheet() {
       "Start a holiday as you set off, or add a past trip by giving it both dates."));
     list.appendChild(blank);
   }
-  for (const h of state.holidays) {
+  renderFind();
+  const shown = state.holidays.filter(tripMatches);
+  if (state.holidays.length && !shown.length) {
+    const none = el("div", "sheet-none");
+    none.appendChild(el("p", "form-hint", "No trips match."));
+    const clear = el("button", "", "Show all trips");
+    clear.type = "button";
+    clear.onclick = () => { state.query = ""; state.year = null; $("trip-search").value = ""; renderSheet(); };
+    none.appendChild(clear);
+    list.appendChild(none);
+  }
+  for (const h of shown) {
     const row = el("div", "trip-row"
       + (state.hidden.has(h.id) ? " hidden-trip" : "")
       + (state.focused === h.id ? " focused-trip" : ""));
@@ -1422,6 +1498,7 @@ function renderSheet() {
     eye.onclick = (e) => {
       e.stopPropagation();
       state.hidden.has(h.id) ? state.hidden.delete(h.id) : state.hidden.add(h.id);
+      saveHidden();
       if (state.hidden.has(h.id) && state.focused === h.id) state.focused = null;
       renderMarkers();
       renderSheet();
@@ -2410,6 +2487,8 @@ $("btn-cancel-trip").onclick = () => {
   $("new-trip-form").hidden = true;
   $("btn-new-trip").hidden = false;
 };
+$("trip-search").oninput = (e) => { state.query = e.target.value; renderSheet(); };
+
 $("new-trip-form").onsubmit = async (e) => {
   e.preventDefault();
   await busy(submitter(e), async () => {

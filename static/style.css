@@ -402,6 +402,23 @@ body.placing #fab-pin { background: var(--red); box-shadow: var(--shadow); }
   font-size: 12px; color: var(--muted);
   display: flex; flex-wrap: wrap; gap: 6px;
 }
+/* F1: find a trip. The search box and year chips sit above the list. */
+#trip-find { padding: 8px 14px 4px; display: grid; gap: 8px; }
+#trip-find[hidden] { display: none; }
+#trip-search {
+  width: 100%; min-height: 44px; box-sizing: border-box; padding: 0 12px;
+  font: inherit; font-size: 16px; /* 16px: iOS doesn't zoom in on focus */
+  color: var(--ink); background: var(--paper-2);
+  border: 1px solid var(--line); border-radius: 10px;
+}
+#year-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+#year-chips .chip {
+  flex: none; min-height: 44px; min-width: 44px; padding: 0 14px; border-radius: 22px;
+  font: inherit; font-size: 14px; color: var(--ink);
+  background: transparent; border: 1px solid var(--line);
+}
+#year-chips .chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.sheet-none { padding: 10px 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .trip-row + .trip-row { border-top: 1px dotted var(--line); } /* booklet perforation */
 .trip-row:hover, .trip-row:focus-within { background: rgba(231, 221, 198, .07); }
 .trip-cover {
