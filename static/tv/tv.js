@@ -20,7 +20,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /* ---------- stage ---------- */
 
 function fitStage() {
-  const s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+  const h = document.documentElement;
+  const s = Math.min(h.clientWidth / 1920, h.clientHeight / 1080);
   $("stage").style.transform = `scale(${s})`;
 }
 window.addEventListener("resize", fitStage);

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Frontend
+- The `/tv` page fits the screen in a TV's WebView: it was cropped on the Shield, whose `innerWidth` grows past the screen width to fit the unscaled page.
+
 ## 1.15.1 (2026-11-08)
 
 ### Server

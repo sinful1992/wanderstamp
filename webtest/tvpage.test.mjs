@@ -40,7 +40,7 @@ function fixture() {
 // Opens /tv with the door mocked. st is live: tests flip st.paired / st.pairNow / st.offline.
 async function tvPage(browser, base, opts = {}) {
   const st = { paired: true, pairNow: false, offline: false, codes: 0, polls: 0, me: 0, gone: false, data: fixture(), photoReqs: [], ...opts.state };
-  const ctx = await browser.newContext({ viewport: opts.viewport || { width: 1920, height: 1080 }, locale: "en-GB", timezoneId: "Europe/London", serviceWorkers: "block" });
+  const ctx = await browser.newContext({ viewport: opts.viewport || { width: 1920, height: 1080 }, ...(opts.mobile ? { isMobile: true, deviceScaleFactor: 2 } : {}), locale: "en-GB", timezoneId: "Europe/London", serviceWorkers: "block" });
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -368,6 +368,18 @@ export const tests = [
       assert.ok(r.sw <= viewport.width && r.sh <= viewport.height, "no scrollbars");
       await ctx.close();
     }
+  }],
+
+  // The Shield WebView (dpr 2, a real mobile viewport) grows innerWidth to fit the unscaled stage: 1200 on a 960 screen.
+  ["the stage fits a mobile-viewport WebView like the Shield's, whose innerWidth is wider than the screen", async ({ browser, base }) => {
+    const { ctx, page } = await tvPage(browser, base, { viewport: { width: 960, height: 540 }, mobile: true });
+    await waitScreen(page, "shelf");
+    const r = await page.evaluate(() => {
+      const b = document.getElementById("stage").getBoundingClientRect(), h = document.documentElement;
+      return { w: b.width, h: b.height, l: b.left, t: b.top, iw: innerWidth, cw: h.clientWidth, ch: h.clientHeight };
+    });
+    assert.ok(Math.abs(r.w - r.cw) < 2 && Math.abs(r.h - r.ch) < 2 && Math.abs(r.l) < 2 && Math.abs(r.t) < 2, `stage ${JSON.stringify(r)}`);
+    await ctx.close();
   }],
 
   ["Show on TV: the phone pairs with the typed code and lists, then unpairs, the TV", async ({ browser, base }) => {
