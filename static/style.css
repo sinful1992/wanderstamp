@@ -1363,3 +1363,11 @@ button.primary.gold { background: var(--gold); color: var(--navy-2); }
 @media (pointer: coarse) {
   .leaflet-touch .leaflet-bar a { width: 44px; height: 44px; line-height: 44px; font-size: 22px; }
 }
+
+/* task 133: Show on TV (account page) */
+.tv-pair #tv-code { text-transform: uppercase; letter-spacing: 4px; flex: 0 1 150px; }
+.tv-list { list-style: none; margin: 10px 0 0; padding: 0; }
+.tv-list:empty { display: none; }
+.tv-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 0; border-top: 1px solid var(--line, #dcd1b6); }
+.tv-item .tv-name { font-weight: 600; }
+.tv-item .form-hint { margin: 0; flex: 1 1 auto; }

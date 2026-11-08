@@ -2912,6 +2912,8 @@ function openAccount() {
     box.appendChild(fam);
   }
 
+  box.appendChild(showOnTV());
+
   box.appendChild(el("h3", "day-head", "Your data"));
   box.appendChild(el("p", "form-hint", "Every trip, pin, journal and packing list, as one JSON file."));
   const exp = el("a", "linkish", "Export my data");
@@ -2927,6 +2929,93 @@ function openAccount() {
   box.appendChild(foot);
 
   openOverlay("Your account", box);
+}
+
+// Task 133: pair a TV running the Wanderstamp TV app. The TV shows a 4-letter
+// code; typed here, it lets that TV show every trip (previews only) until
+// it's unpaired below.
+function showOnTV() {
+  const sec = el("section", "tv-pair");
+  sec.id = "tv-pair";
+  sec.appendChild(el("h3", "day-head", "Show on TV"));
+  sec.appendChild(el("p", "form-hint",
+    "Open the Wanderstamp app on the TV and type the code it shows. That TV can then show every trip, previews only, until you unpair it."));
+  const form = el("form", "fm-add");
+  const code = el("input");
+  code.id = "tv-code";
+  code.placeholder = "Code on the TV";
+  code.autocomplete = "off";
+  code.autocapitalize = "characters";
+  code.spellcheck = false;
+  code.maxLength = 8;
+  code.required = true;
+  code.setAttribute("aria-label", "Code on the TV");
+  const name = el("input");
+  name.id = "tv-name";
+  name.placeholder = "Name, e.g. Living room";
+  name.value = "Living room";
+  name.maxLength = 40;
+  name.required = true;
+  name.setAttribute("aria-label", "Name for this TV");
+  const go = el("button", "primary", "Pair TV");
+  go.type = "submit";
+  form.append(code, name, go);
+  const list = el("ul", "tv-list");
+  list.id = "tv-list";
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const c = code.value.replace(/\s+/g, "").toUpperCase();
+    const n = name.value.trim();
+    if (!c || !n) return;
+    if (go.disabled) return;
+    go.disabled = true; // (not busy(): it toasts its own message and hides the 404)
+    try {
+      await api("POST", "/api/tv/pair", { code: c, name: n });
+      code.value = "";
+      toast(`Paired: ${n}`);
+      loadTVs(list);
+    } catch (err) {
+      toast(err.status === 404 ? "That code isn't on any TV right now — check the TV and try again"
+        : err.status === 429 ? "Too many wrong codes — wait a minute and try again"
+        : err.message);
+    } finally {
+      go.disabled = false;
+    }
+  };
+  sec.append(form, list);
+  loadTVs(list);
+  return sec;
+}
+
+async function loadTVs(list) {
+  let tvs;
+  try {
+    tvs = await api("GET", "/api/tv/devices");
+  } catch {
+    return; // an older server without TV pairing: the form says enough
+  }
+  list.textContent = "";
+  for (const d of Array.isArray(tvs) ? tvs : []) {
+    const li = el("li", "tv-item");
+    li.appendChild(el("span", "tv-name", d.name));
+    const seen = d.last_seen ? `last on ${fmtDate(d.last_seen)}` : "not used yet";
+    li.appendChild(el("span", "form-hint", ` · paired by ${d.created_by || "someone"}, ${seen}`));
+    const un = el("button", "linkish", "Unpair");
+    un.type = "button";
+    un.onclick = async () => {
+      if (!confirm(`Unpair ${d.name}? It stops showing your trips straight away.`)) return;
+      un.disabled = true;
+      try {
+        await api("DELETE", `/api/tv/devices/${d.id}`);
+        toast(`${d.name} unpaired`);
+      } catch (err) {
+        toast(err.status === 404 ? `${d.name} was already unpaired` : err.message);
+      }
+      loadTVs(list);
+    };
+    li.appendChild(un);
+    list.appendChild(li);
+  }
 }
 
 async function signOut() {

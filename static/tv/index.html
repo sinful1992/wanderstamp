@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wanderstamp TV</title>
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="stylesheet" href="/leaflet/leaflet.css">
+<link rel="stylesheet" href="/tv/tv.css">
+</head>
+<body>
+<div id="stage">
+  <!-- C: pairing -->
+  <section class="screen" id="pair" hidden>
+    <div class="card">
+      <h1>Show your trips on this TV</h1>
+      <p>Pair this TV once. After that it shows every trip by itself, no phone needed.</p>
+      <ol>
+        <li>Open Wanderstamp on your phone or laptop</li>
+        <li>Tap your initial (top right), then <b>Show on TV</b></li>
+        <li>Type this code</li>
+      </ol>
+      <div class="code" id="pair-code" aria-live="polite"></div>
+      <p class="pair-state" id="pair-state"></p>
+    </div>
+    <p class="foot">The TV sees previews of your trips, never the original files. Unpair it any time from <b>Show on TV</b>.</p>
+  </section>
+
+  <!-- B: trip shelf -->
+  <section class="screen" id="shelf" hidden>
+    <div class="map" id="shelf-map"></div>
+    <div class="fade"></div>
+    <h1 class="shelf-title">Our trips</h1>
+    <div class="tally num" id="shelf-tally"></div>
+    <div class="shelf-row"><div class="shelf-track" id="shelf-track"></div></div>
+    <div class="actions" id="shelf-actions">
+      <span class="btn" data-act="play">Play journey</span>
+      <span class="btn" data-act="photos">All photos</span>
+    </div>
+    <p class="empty" id="shelf-empty" hidden>No trips yet. Start one in Wanderstamp and it shows up here.</p>
+  </section>
+
+  <!-- A: journey -->
+  <section class="screen" id="journey" hidden>
+    <div class="map" id="journey-map"></div>
+    <div class="vignette"></div>
+    <div class="where">
+      <div class="trip" id="j-trip"></div>
+      <div class="stop" id="j-stop"></div>
+      <div class="stopnote" id="j-note"></div>
+    </div>
+    <figure class="postcard" id="j-card">
+      <div class="photo"><img id="j-img" alt=""><span class="vmark" id="j-vmark" hidden>Video</span></div>
+      <div class="count" id="j-count"></div>
+      <div class="inkstamp"><span class="day" id="j-day"></span><span class="date" id="j-date"></span></div>
+    </figure>
+    <div class="route" id="j-route"></div>
+    <div class="paused" id="j-paused" hidden>Paused</div>
+    <div class="theend" id="j-end" hidden>
+      <div class="end-stamp">The end</div>
+      <p id="j-end-sum" class="num"></p>
+      <p class="end-keys"><b>OK</b> play again <b>Back</b> trips</p>
+    </div>
+    <div class="remote"><b>OK</b>pause <b>&#9664; &#9654;</b>photo <b>&#9650; &#9660;</b>stop <b>Back</b>trips</div>
+  </section>
+
+  <!-- all photos of one trip -->
+  <section class="screen" id="photos" hidden>
+    <h1 class="photos-title" id="p-title"></h1>
+    <div class="grid-wrap" id="p-wrap"><div class="grid" id="p-grid"></div></div>
+    <div class="viewer" id="p-viewer" hidden><img id="p-big" alt=""><div class="viewer-cap num" id="p-cap"></div></div>
+  </section>
+
+  <!-- no connection -->
+  <section class="screen" id="offline" hidden>
+    <div class="card small">
+      <h1>Can't reach Wanderstamp</h1>
+      <p>This TV can't reach the home server right now. It tries again by itself.</p>
+    </div>
+  </section>
+</div>
+<script src="/leaflet/leaflet.js"></script>
+<script src="/tv/tv.js"></script>
+</body>
+</html>

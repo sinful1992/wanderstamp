@@ -1,0 +1,125 @@
+/* Wanderstamp TV: a 1920x1080 stage scaled to the screen, read from the sofa (3 m). */
+@font-face { font-family: "Staatliches"; src: url("/staatliches-latin.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: "Staatliches"; src: url("/staatliches-latin-ext.woff2") format("woff2"); font-display: swap;
+  unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+:root {
+  --paper: #f6f1e3; --paper-2: #ede5cf; --navy: #1c3652; --navy-2: #142639; --gold: #c6a45e;
+  --red: #b3372a; --trip: #2a7f62; --ink: #26221c; --muted: #6f6354;
+  --stamp: "Staatliches", "Arial Narrow", sans-serif; --prose: Georgia, "Times New Roman", serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--navy-2); }
+body { font-family: var(--prose); color: var(--paper); cursor: none; }
+#stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; margin: -540px 0 0 -960px;
+  transform-origin: 50% 50%; overflow: hidden; background: var(--navy-2); }
+.screen { position: absolute; inset: 0; }
+.screen[hidden], [hidden] { display: none !important; }
+/* the stamp face draws "1" like "I": numbers always in the body face */
+.num { font-family: var(--prose); font-feature-settings: "lnum"; }
+.map { position: absolute; inset: 0; background: #e8e4d8; }
+.leaflet-control-attribution { font-size: 14px !important; background: rgba(246,241,227,.75) !important; color: var(--ink) !important; }
+.leaflet-control-attribution a { color: var(--ink) !important; }
+
+/* C: pairing + offline */
+#pair, #offline { background: radial-gradient(120% 100% at 50% 0%, var(--navy) 0%, var(--navy-2) 70%); }
+.card { position: absolute; left: 160px; top: 130px; width: 1600px; min-height: 760px; background: var(--paper); color: var(--ink);
+  border-radius: 18px; padding: 80px 100px; box-shadow: 0 40px 80px rgba(0,0,0,.4); }
+.card.small { top: 300px; min-height: 0; }
+.card h1 { margin: 0 0 28px; font-family: var(--stamp); font-weight: 400; font-size: 84px; letter-spacing: 3px; color: var(--navy); line-height: 1; }
+.card p { font-size: 36px; line-height: 1.5; margin: 0 0 34px; max-width: 1300px; }
+.card ol { font-size: 34px; line-height: 1.6; padding-left: 1.2em; margin: 0; }
+.card ol li::marker { font-weight: 700; color: var(--red); }
+.code { display: flex; gap: 22px; margin-top: 44px; min-height: 160px; }
+.code span { font-family: var(--stamp); font-size: 116px; width: 130px; height: 160px; display: grid; place-items: center; color: var(--red);
+  border: 5px solid var(--red); border-radius: 12px; transform: rotate(var(--r, 0deg)); padding-top: 8px; }
+.pair-state { position: absolute; right: 100px; bottom: 70px; margin: 0 !important; font-size: 30px !important; color: var(--muted); }
+#pair .foot { position: absolute; left: 160px; right: 160px; bottom: 50px; margin: 0; font-size: 28px; color: var(--paper-2); }
+
+/* B: trip shelf */
+#shelf { background: radial-gradient(120% 100% at 50% 0%, var(--navy) 0%, var(--navy-2) 70%); }
+#shelf .map { bottom: auto; height: 560px; filter: saturate(.75) brightness(.97); }
+#shelf .fade { position: absolute; left: 0; right: 0; top: 330px; height: 232px; background: linear-gradient(180deg, rgba(20,38,57,0), var(--navy-2)); pointer-events: none; }
+.shelf-title { position: absolute; left: 96px; top: 60px; margin: 0; font-family: var(--stamp); font-weight: 400; font-size: 64px; letter-spacing: 4px;
+  color: var(--navy-2); background: var(--paper); padding: 10px 26px 4px; border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.25); z-index: 500; }
+.tally { position: absolute; left: 96px; top: 166px; font-size: 30px; color: var(--ink); background: rgba(246,241,227,.92); padding: 8px 20px; border-radius: 6px; z-index: 500; }
+.tally:empty { display: none; }
+.shelf-row { position: absolute; left: 0; right: 0; top: 400px; height: 560px; overflow: hidden; z-index: 400; }
+.shelf-track { position: absolute; left: 110px; top: 20px; display: flex; gap: 46px; align-items: flex-start; transition: transform .35s ease; }
+.tripstamp { width: 270px; flex: none; text-align: center; color: var(--paper); }
+.tripstamp .face { position: relative; height: 270px; border-radius: 14px; overflow: hidden; border: 6px solid var(--paper); background: var(--paper-2);
+  transform: rotate(var(--r)); box-shadow: 0 18px 40px rgba(0,0,0,.35); transition: height .25s ease; }
+.tripstamp .face img { width: 100%; height: 100%; object-fit: cover; filter: sepia(.15); display: block; }
+.tripstamp .face .blank { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--stamp); font-size: 90px; color: var(--c); opacity: .5; }
+.tripstamp .face .band { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 10px 8px; background: var(--c); font-family: var(--stamp);
+  font-size: 32px; letter-spacing: 2px; color: var(--paper); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tripstamp .meta { margin-top: 22px; font-size: 26px; color: var(--paper-2); }
+.tripstamp.focus { width: 380px; }
+.tripstamp.focus .face { height: 380px; transform: rotate(0); outline: 6px solid var(--gold); outline-offset: 8px; }
+.tripstamp.focus .face .band { font-size: 42px; }
+.tripstamp.focus .meta { font-size: 30px; color: var(--paper); }
+#shelf.on-actions .tripstamp.focus .face { outline-color: rgba(198,164,94,.45); }
+.actions { position: absolute; left: 110px; bottom: 56px; display: flex; gap: 24px; z-index: 500; }
+.btn { font-family: var(--stamp); font-size: 34px; letter-spacing: 3px; padding: 14px 34px 10px; border-radius: 8px; border: 3px solid var(--paper-2); color: var(--paper); }
+.btn.focus { background: var(--gold); color: var(--navy-2); border-color: var(--gold); outline: 4px solid var(--paper); outline-offset: 6px; }
+.empty { position: absolute; left: 110px; top: 640px; font-size: 40px; color: var(--paper-2); max-width: 1400px; }
+
+/* A: journey */
+#journey .map { filter: saturate(.85); }
+#journey .vignette { position: absolute; inset: 0; pointer-events: none; z-index: 400;
+  background: radial-gradient(ellipse 52% 50% at 18% 22%, rgba(20,38,57,.92) 45%, rgba(20,38,57,0) 100%), linear-gradient(90deg, rgba(20,38,57,.35) 0%, rgba(20,38,57,0) 46%),
+              linear-gradient(0deg, rgba(20,38,57,.55) 0%, rgba(20,38,57,0) 22%); }
+#journey .where, #journey .postcard, #journey .route, #journey .remote, #journey .paused, #journey .theend { z-index: 500; }
+.postcard { position: absolute; right: 120px; top: 110px; width: 1000px; margin: 0; padding: 22px 22px 86px; background: var(--paper);
+  transform: rotate(-1.6deg); box-shadow: 0 30px 60px rgba(10,20,32,.45), 0 4px 10px rgba(10,20,32,.3); transition: opacity .4s ease; }
+.postcard.nophoto { opacity: 0; }
+.postcard .photo { position: relative; height: 640px; overflow: hidden; background: var(--paper-2); }
+.postcard .photo img { width: 100%; height: 100%; object-fit: cover; display: block; animation: drift 7s ease-out both; }
+.postcard .photo img.contain { object-fit: contain; animation: none; }
+@keyframes drift { from { transform: scale(1.02); } to { transform: scale(1.09) translate(-1.5%, -1%); } }
+.vmark { position: absolute; left: 20px; top: 20px; font-family: var(--stamp); font-size: 30px; letter-spacing: 2px; background: rgba(20,38,57,.85); color: var(--paper); padding: 6px 16px 2px; border-radius: 6px; }
+.postcard .count { position: absolute; left: 34px; bottom: 26px; font-size: 28px; color: var(--muted); }
+.inkstamp { position: absolute; right: 70px; top: 70px; transform: rotate(7deg); text-align: center; color: var(--red); border: 5px solid var(--red); border-radius: 10px;
+  padding: 10px 22px 8px; font-family: var(--stamp); letter-spacing: 3px; line-height: 1; mix-blend-mode: multiply; opacity: .92; background: rgba(246,241,227,.15); }
+.inkstamp .day { font-size: 40px; display: block; }
+.inkstamp .day .num { font-weight: 700; }
+.inkstamp .date { font-size: 26px; display: block; margin-top: 6px; }
+.where { position: absolute; left: 96px; top: 110px; width: 640px; }
+.where .trip { font-family: var(--stamp); font-size: 34px; letter-spacing: 4px; color: var(--gold); }
+.where .stop { font-family: var(--stamp); font-size: 112px; line-height: .95; letter-spacing: 2px; margin: 14px 0 22px; color: var(--paper);
+  text-shadow: 0 3px 18px rgba(0,0,0,.35); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.where .stopnote { font-size: 30px; line-height: 1.5; color: var(--paper-2); max-width: 560px; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+  text-shadow: 0 2px 10px rgba(0,0,0,.4); }
+#journey.card-only .where { width: 1200px; }
+#journey.card-only .stopnote { max-width: 1100px; }
+.route { position: absolute; left: 80px; bottom: 60px; display: flex; align-items: center; background: rgba(20,38,57,.88); padding: 14px 18px; border-radius: 40px; }
+.route:empty { display: none; }
+.route .s { width: 44px; height: 44px; border-radius: 50%; border: 3px solid var(--paper); display: grid; place-items: center; font-size: 20px; font-weight: 700;
+  color: var(--paper); background: rgba(20,38,57,.6); flex: none; }
+.route .s.done { background: var(--trip); border-color: var(--trip); }
+.route .s.now { background: var(--red); border-color: var(--paper); width: 60px; height: 60px; font-size: 26px; box-shadow: 0 0 0 6px rgba(179,55,42,.35); }
+.route .leg { width: 40px; border-top: 4px dotted rgba(246,241,227,.7); flex: none; }
+.route .leg.done { border-top: 4px solid var(--trip); }
+.route .more { font-size: 26px; color: var(--paper-2); padding: 0 10px; }
+.remote { position: absolute; right: 120px; bottom: 36px; background: rgba(20,38,57,.88); padding: 12px 24px; border-radius: 10px; font-size: 24px; color: var(--paper-2); opacity: .85; }
+.remote b, .end-keys b { font-family: var(--stamp); letter-spacing: 2px; font-weight: 400; border: 2px solid currentColor; border-radius: 6px; padding: 2px 10px; margin: 0 6px 0 22px; }
+.remote b:first-child, .end-keys b:first-child { margin-left: 0; }
+.paused { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%) rotate(-6deg); font-family: var(--stamp); font-size: 120px; letter-spacing: 8px;
+  color: var(--red); border: 8px solid var(--red); border-radius: 16px; padding: 18px 46px 8px; background: rgba(246,241,227,.85); }
+.theend { position: absolute; inset: 0; background: rgba(20,38,57,.82); display: grid; place-content: center; text-align: center; gap: 10px; }
+.end-stamp { font-family: var(--stamp); font-size: 160px; letter-spacing: 10px; color: var(--gold); transform: rotate(-4deg); border: 8px solid var(--gold); border-radius: 18px; padding: 20px 60px 6px; justify-self: center; }
+.theend p { font-size: 36px; color: var(--paper); margin: 18px 0 0; }
+.theend .end-keys { font-size: 28px; color: var(--paper-2); }
+
+/* all photos */
+#photos { background: var(--navy-2); }
+.photos-title { position: absolute; left: 96px; top: 50px; margin: 0; font-family: var(--stamp); font-weight: 400; font-size: 60px; letter-spacing: 4px; color: var(--gold); }
+.grid-wrap { position: absolute; left: 0; right: 0; top: 150px; bottom: 0; overflow: hidden; }
+.grid { position: absolute; left: 96px; right: 96px; top: 10px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 24px; transition: transform .3s ease; }
+.grid .cell { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--navy); border: 4px solid transparent; }
+.grid .cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.grid .cell.focus { border-color: var(--gold); transform: scale(1.06); box-shadow: 0 16px 40px rgba(0,0,0,.5); z-index: 2; }
+.grid .cell .vmark { font-size: 22px; left: 10px; top: 10px; }
+.viewer { position: absolute; inset: 0; background: #000; z-index: 900; }
+.viewer img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.viewer-cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 20px 60px; font-size: 30px; color: var(--paper); background: linear-gradient(0deg, rgba(0,0,0,.7), rgba(0,0,0,0)); }
