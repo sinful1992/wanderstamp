@@ -481,18 +481,18 @@ export const tests = [
 
   ["the journey map shows the current and the next stop in the open map area, at every stop (USER #9657)", async ({ browser, base }) => {
     // Pins are where the open map lets you see them: inside the map, and not under the
-    // postcard, the route bar or the remote hints (16 px for the marker itself).
+    // postcard, the route bar, the remote hints or the title panel (20 px: half a numbered dot).
     const at = (d, h) => `2026-09-${d}T${String(h).padStart(2, "0")}:00:00Z`;
     const trip = (pinsAt, visits) => {
       const t = H(1, "Shape", { start_at: at(25, 0), end_at: at(28, 23), pin_count: pinsAt.length });
-      const pins = pinsAt.map(([title, lat, lng], k) => P(100 + k, 1, title, lat, lng,
-        visits.filter((v) => v[0] === k).map(([, d, h]) => V(at(d, h), at(d, h + 1)))));
+      const pins = pinsAt.map(([title, lat, lng, note], k) => P(100 + k, 1, title, lat, lng,
+        visits.filter((v) => v[0] === k).map(([, d, h]) => V(at(d, h), at(d, h + 1))), { note: note || "" }));
       const photos = visits.map(([k, d, h], j) => PH("v" + j, 100 + k, at(d, h).replace(":00:00Z", ":10:00Z")));
       return { trips: [t], details: { 1: { holiday: t, pins, photos } } };
     };
     // USER's Warwick trip, coarse: 6 places about 180 km apart, 10 visits (a hotel twice, Legoland twice)
     const warwick = trip(
-      [["Warwick Castle", 52.28, -1.58], ["Hotel", 52.41, -1.51], ["Totton", 50.91, -1.49], ["Legoland", 51.46, -0.65], ["Windsor hotel", 51.48, -0.61], ["Steventon", 51.62, -1.3]],
+      [["Warwick Castle", 52.28, -1.58], ["Hotel", 52.41, -1.51, "Food was bad."], ["Totton", 50.91, -1.49], ["Legoland", 51.46, -0.65], ["Windsor hotel", 51.48, -0.61], ["Steventon", 51.62, -1.3]],
       [[1, 25, 9], [0, 25, 12], [1, 25, 18], [0, 26, 10], [2, 26, 15], [3, 27, 9], [4, 27, 18], [3, 28, 9], [4, 28, 13], [5, 28, 16]]);
     // a 20-stop zigzag across about 120 km
     const zig = trip(Array.from({ length: 20 }, (_, k) => ["Stop " + k, 51.2 + (k % 2) * 0.35, -2.4 + k * 0.09]),
@@ -521,9 +521,9 @@ export const tests = [
         const out = await page.evaluate(([si, lls]) => {
           const m = window.__jm, box = m.getContainer().getBoundingClientRect();
           const rect = (sel) => { const e = document.querySelector(sel); if (!e || e.hidden || e.classList.contains("nophoto")) return null; const b = e.getBoundingClientRect(); return b.width ? b : null; };
-          const blocks = [["postcard", rect("#j-card")], ["route bar", rect("#j-route")], ["remote hints", rect("#journey .remote")]].filter((b) => b[1]);
+          const blocks = [["postcard", rect("#j-card")], ["route bar", rect("#j-route")], ["remote hints", rect("#journey .remote")], ["title panel", rect("#journey .where")]].filter((b) => b[1]);
           const where = (ll) => {
-            const p = m.latLngToContainerPoint(ll), x = box.left + p.x, y = box.top + p.y, R = 16;
+            const p = m.latLngToContainerPoint(ll), x = box.left + p.x, y = box.top + p.y, R = 20; // half a numbered dot
             if (x < box.left + R || x > box.right - R || y < box.top + R || y > box.bottom - R) return "off the map";
             const hit = blocks.find(([, b]) => x > b.left - R && x < b.right + R && y > b.top - R && y < b.bottom + R);
             return hit ? "under the " + hit[0] : "";
