@@ -454,6 +454,31 @@ export const tests = [
     await ctx.close();
   }],
 
+  ["the journey's dots are numbered, the first stop is marked, and only the current stop pulses (USER #9668)", async ({ browser, base }) => {
+    const { ctx, page } = await tvPage(browser, base);
+    await page.waitForSelector(".tripstamp.focus");
+    await key(page, "Enter");
+    await waitScreen(page, "journey");
+    await page.waitForSelector(".jpin.now");
+    const read = () => page.evaluate(() => ({
+      start: document.querySelectorAll(".jpin.start").length,
+      now: [...document.querySelectorAll(".jpin.now")].map((e) => e.textContent),
+      blank: [...document.querySelectorAll(".jpin")].filter((e) => !/^\d+$/.test(e.textContent)).length,
+      pulse: getComputedStyle(document.querySelector(".jpin.now"), "::after").animationName,
+      stop: window.WSTV.journey.stop,
+    }));
+    const first = await read();
+    assert.equal(first.start, 1);
+    assert.deepEqual(first.now, ["1"]);
+    assert.equal(first.blank, 0);
+    assert.equal(first.pulse, "jpulse");
+    await key(page, "ArrowDown");
+    await page.waitForFunction(() => window.WSTV.journey.stop === 1);
+    const next = await read();
+    assert.deepEqual(next.now, ["2"]);
+    await ctx.close();
+  }],
+
   ["the journey map shows the current and the next stop in the open map area, at every stop (USER #9657)", async ({ browser, base }) => {
     // Pins are where the open map lets you see them: inside the map, and not under the
     // postcard, the route bar or the remote hints (16 px for the marker itself).

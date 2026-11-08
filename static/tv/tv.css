@@ -65,6 +65,13 @@ body { font-family: var(--prose); color: var(--paper); cursor: none; }
 .empty { position: absolute; left: 110px; top: 640px; font-size: 40px; color: var(--paper-2); max-width: 1400px; }
 
 /* A: journey */
+.jpin { display: flex; align-items: center; justify-content: center; box-sizing: border-box; border-radius: 50%; border: 4px solid var(--paper);
+  background: var(--navy-2); color: var(--paper); font-size: 22px; font-weight: 700; line-height: 1; }
+.jpin.done { background: #2a7f62; }
+.jpin.start { background: var(--gold); color: var(--navy-2); }
+.jpin.now { background: var(--red); color: var(--paper); }
+.jpin.now::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 5px solid var(--red); animation: jpulse 1.6s ease-out infinite; will-change: transform, opacity; }
+@keyframes jpulse { from { transform: scale(1); opacity: .9; } to { transform: scale(2.2); opacity: 0; } }
 #journey .map { filter: saturate(.85); }
 #journey .vignette { position: absolute; inset: 0; pointer-events: none; z-index: 400;
   background: linear-gradient(0deg, rgba(20,38,57,.55) 0%, rgba(20,38,57,0) 22%); }

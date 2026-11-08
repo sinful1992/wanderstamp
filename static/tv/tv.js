@@ -481,9 +481,11 @@ function drawJourneyRoute() {
   jr.doneLine = L.polyline([], { color: "#2a7f62", weight: 7 }).addTo(journeyLayer);
   jr.restLine = L.polyline(pts, { color: "#f6f1e3", weight: 5, dashArray: "2 12", lineCap: "round" }).addTo(journeyLayer);
   const seen = new Map();
-  jr.stops.forEach((s) => {
+  jr.stops.forEach((s, si) => {
     if (seen.has(s.pin.id)) return;
-    const m = L.circleMarker([s.pin.lat, s.pin.lng], { radius: 10, color: "#f6f1e3", weight: 4, fillColor: "#1c3652", fillOpacity: 1 }).addTo(journeyLayer);
+    const icon = L.divIcon({ className: "jpin" + (si === 0 ? " start" : ""), html: `<span>${si + 1}</span>`, iconSize: [40, 40] });
+    const m = L.marker([s.pin.lat, s.pin.lng], { icon, keyboard: false, interactive: false }).addTo(journeyLayer);
+    m.firstStop = si + 1;
     seen.set(s.pin.id, m);
   });
   jr.pinMarkers = seen;
@@ -543,9 +545,12 @@ function moveToStop(si) {
   const done = new Set(jr.stops.slice(0, si).map((x) => x.pin.id));
   for (const [id, m] of jr.pinMarkers) {
     const now = id === s.pin.id;
-    m.setStyle({ fillColor: now ? "#b3372a" : done.has(id) ? "#2a7f62" : "#1c3652" });
-    m.setRadius(now ? 16 : 10);
-    if (now) m.bringToFront();
+    const dot = m.getElement();
+    dot.classList.toggle("now", now);
+    dot.classList.toggle("done", !now && done.has(id));
+    // a place visited twice shows the bar's number while it is the current stop
+    dot.firstChild.textContent = String(now ? si + 1 : m.firstStop);
+    m.setZIndexOffset(now ? 1000 : 0);
   }
 }
 
