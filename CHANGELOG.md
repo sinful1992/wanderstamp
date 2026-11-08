@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Frontend
-- TV journey: the map shows the whole trip and stays still; only the red dot moves from stop to stop, so it no longer blurs while moving. The photo is bigger, and a dark panel behind the title replaces the shade over the map. The dots on the map carry their stop number, the first stop is gold, and the current stop pulses. A place's note now shows at every visit, not only the first.
+- TV journey: the map shows the whole trip and stays still; only the red dot moves from stop to stop, so it no longer blurs while moving. The photo is bigger, and a dark panel behind the title replaces the shade over the map. The dots on the map carry their stop number, the first stop is gold, and the current stop pulses.
 
 ### Tests
 - TV journey: a check that the current and the next stop sit in the open map area (not off the map, nor under the postcard, the route bar or the remote hints) at every stop of a Warwick-shaped trip and a 20-stop trip. It fails on 1.15.3, which never zooms out past 12.

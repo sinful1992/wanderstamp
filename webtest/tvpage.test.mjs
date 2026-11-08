@@ -243,7 +243,7 @@ export const tests = [
     assert.equal((await J(page)).i, 2, "then to the stop before");
     await key(page, "ArrowDown", 2);
     assert.match((await text(page, "#j-stop")).toLowerCase(), /keswick/);
-    assert.match(await text(page, "#j-note"), /Pencil museum/, "a place's note shows at every visit (USER #9674)");
+    assert.equal(await text(page, "#j-note"), "", "the note is said once, at the first visit");
     assert.match((await text(page, "#j-day")).toLowerCase(), /day 3/);
     assert.ok(!st.photoReqs.includes("original") && !st.photoReqs.includes("video"), "only thumb/preview are asked for");
     assert.ok(st.photoReqs.includes("preview"));

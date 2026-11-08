@@ -501,7 +501,9 @@ function drawSlide() {
   const pin = stop.pin;
   const h = jr.d.holiday || jr.trip;
   $("j-stop").textContent = pin.title || (pin.kind === "photo" ? "Photo stop" : "Pin");
-  $("j-note").textContent = pin.note || "";
+  // the note is about the place: shown at its first visit only, as the app does
+  const firstVisit = jr.stops.findIndex((s) => s.pin === pin) === sl.si;
+  $("j-note").textContent = firstVisit ? (pin.note || "") : "";
   const card = $("j-card");
   $("journey").classList.toggle("card-only", !sl.ph);
   card.classList.toggle("nophoto", !sl.ph);
