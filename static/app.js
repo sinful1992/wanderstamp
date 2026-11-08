@@ -2966,7 +2966,8 @@ function showOnTV() {
     e.preventDefault();
     const c = code.value.replace(/\s+/g, "").toUpperCase();
     const n = name.value.trim();
-    if (!c || !n) return;
+    if (!c) return;
+    if (!n) { toast("Give the TV a name, e.g. Living room"); name.focus(); return; }
     if (go.disabled) return;
     go.disabled = true; // (not busy(): it toasts its own message and hides the 404)
     try {
@@ -2976,7 +2977,7 @@ function showOnTV() {
       loadTVs(list);
     } catch (err) {
       toast(err.status === 404 ? "That code isn't on any TV right now — check the TV and try again"
-        : err.status === 429 ? "Too many wrong codes — wait a minute and try again"
+        : err.status === 429 ? "Too many wrong codes — try again in 15 minutes"
         : err.message);
     } finally {
       go.disabled = false;

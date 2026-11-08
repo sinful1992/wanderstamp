@@ -71,6 +71,11 @@ function tripDay(h, at) {
   return { n, label };
 }
 
+// Text with its numbers in the body face (the stamp face draws "1" like "I").
+function numbered(text) {
+  return String(text).split(/(\d+)/).filter(Boolean).map((part) => (/^\d+$/.test(part) ? el("span", "num", part) : document.createTextNode(part)));
+}
+
 function monthYear(s) {
   const d = calDay(s);
   return isNaN(d) ? "" : d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
@@ -95,6 +100,16 @@ function show(id) {
   tv.screen = id;
   document.body.dataset.screen = id;
   return tv.gen;
+}
+
+// The shelf, or the offline screen (which retries) when it can't load: never a
+// blank shelf after a failed call.
+function shelfOrRetry(reload) {
+  return openShelf(reload).catch((e) => {
+    if (e instanceof NotPaired) return startPair();
+    console.error(e);
+    goOffline();
+  });
 }
 
 // What happens when any call says the TV isn't paired (any more): back to the code.
@@ -124,10 +139,10 @@ document.addEventListener("keydown", (e) => {
 // Back: true when the page used it, false when the TV app should close.
 function back() {
   switch (tv.screen) {
-    case "journey": openShelf().catch(handleError); return true;
+    case "journey": shelfOrRetry(true); return true;
     case "photos":
       if (!$("p-viewer").hidden) { closeViewer(); return true; }
-      openShelf().catch(handleError);
+      shelfOrRetry(true);
       return true;
     case "shelf":
       if (tv.row === 1) { tv.row = 0; drawShelfFocus(); return true; }
@@ -143,12 +158,12 @@ const handlers = {};
 async function start() {
   try {
     await api("/api/tv/me");
-    await openShelf(true);
   } catch (e) {
     if (e instanceof NotPaired || e instanceof Offline) return handleError(e);
     console.error(e);
-    goOffline(); // a server error at start: try again, never a blank screen
+    return goOffline(); // a server error at start: try again, never a blank screen
   }
+  await shelfOrRetry(true);
 }
 
 async function goOffline() {
@@ -161,6 +176,9 @@ async function goOffline() {
 
 async function startPair() {
   const g = show("pair");
+  // another account's trips must not show while (or after) this TV pairs again
+  tv.trips = [];
+  tv.details.clear();
   const codeBox = $("pair-code"), state = $("pair-state");
   while (g === tv.gen) {
     let pair;
@@ -190,7 +208,7 @@ async function startPair() {
       if (r.status === 200) {
         if (g !== tv.gen) return;
         state.textContent = `Paired as ${(r.data && r.data.name) || "this TV"}`;
-        await openShelf(true).catch(handleError);
+        await shelfOrRetry(true);
         return;
       }
       // 202: still waiting; the server held the request, ask again
@@ -230,6 +248,7 @@ async function openShelf(reload) {
   if (!shelfMap) shelfMap = makeMap("shelf-map");
   shelfMap.invalidateSize();
   if (reload || !tv.trips.length) {
+    tv.details.clear(); // a live trip gains stops and photos: fetch them again
     const r = await api("/api/tv/trips");
     if (g !== tv.gen) return;
     const prev = tv.trips[tv.focus];
@@ -288,6 +307,23 @@ function drawShelfFocus() {
   $("shelf").classList.toggle("on-actions", tv.row === 1);
   [...$("shelf-actions").children].forEach((b, i) => b.classList.toggle("focus", tv.row === 1 && i === tv.act));
   scheduleShelfMap();
+}
+
+// A TV left on the shelf picks up a new trip, or new photos on a live one,
+// without moving the focus; nothing redraws when nothing changed.
+async function refreshShelf() {
+  const g = tv.gen;
+  const r = await api("/api/tv/trips");
+  if (g !== tv.gen || tv.screen !== "shelf") return;
+  const fresh = Array.isArray(r.data) ? r.data : [];
+  if (JSON.stringify(fresh) === JSON.stringify(tv.trips)) return;
+  const prev = tv.trips[tv.focus];
+  tv.trips = fresh;
+  tv.details.clear();
+  const keep = prev ? fresh.findIndex((t) => t.id === prev.id) : -1;
+  tv.focus = keep >= 0 ? keep : Math.min(tv.focus, Math.max(0, fresh.length - 1));
+  if (!fresh.length) tv.row = 0;
+  drawShelf();
 }
 
 let shelfMapTimer = 0;
@@ -420,6 +456,11 @@ async function openJourney(t) {
   jr.paused = false;
   jr.ended = false;
   jr.lastStop = -1;
+  // nothing of the last trip played may stay on screen (an empty trip draws no slide)
+  for (const id of ["j-stop", "j-note", "j-count", "j-day", "j-date", "j-route"]) $(id).textContent = "";
+  $("j-card").classList.add("nophoto");
+  $("j-img").removeAttribute("src");
+  $("journey").classList.add("card-only");
   $("j-trip").textContent = t.name || "";
   drawJourneyRoute();
   if (!jr.slides.length) { endJourney(); return; }
@@ -466,7 +507,8 @@ function drawSlide(fly) {
   const day = tripDay(h, sl.ph ? sl.ph.taken_at : stop.at);
   $("j-day").textContent = "";
   $("j-day").append("Day ", el("span", "num", String(day.n)));
-  $("j-date").textContent = day.label;
+  $("j-date").textContent = "";
+  $("j-date").append(...numbered(day.label));
   if (sl.ph) {
     const img = $("j-img");
     const fresh = img.cloneNode(false); // restarts the drift animation
@@ -663,6 +705,7 @@ setInterval(async () => {
   if (!["shelf", "journey", "photos"].includes(tv.screen)) return;
   try {
     await api("/api/tv/me");
+    if (tv.screen === "shelf") await refreshShelf();
   } catch (e) {
     if (e instanceof NotPaired && tv.screen !== "pair") startPair();
     // offline or a server error: keep showing what's on screen

@@ -65,7 +65,11 @@ async function tvPage(browser, base, opts = {}) {
     }
     if (!st.paired) return json(r, 401, { error: "not paired" });
     if (p === "/api/tv/me") { st.me++; return json(r, 200, { name: "Living room" }); }
-    if (p === "/api/tv/trips") return json(r, 200, st.data.trips);
+    if (p === "/api/tv/trips") {
+      st.tripCalls = (st.tripCalls || 0) + 1;
+      if (st.tripsFail > 0) { st.tripsFail--; return json(r, 500, { error: "database error" }); }
+      return json(r, 200, st.data.trips);
+    }
     const t = p.match(/^\/api\/tv\/trips\/(\d+)$/);
     if (t) return st.data.details[t[1]] ? json(r, 200, st.data.details[t[1]]) : json(r, 404, { error: "unknown trip" });
     const ph = p.match(/^\/api\/tv\/photo\/([^/]+)\/([^/]+)$/);
@@ -83,6 +87,82 @@ const J = (page) => page.evaluate(() => window.WSTV.journey);
 const text = (page, sel) => page.locator(sel).innerText();
 
 export const tests = [
+  ["an empty trip after a full one shows nothing of the one before (linus #9577 bug 1)", async ({ browser, base }) => {
+    const { ctx, page } = await tvPage(browser, base);
+    await page.waitForSelector(".tripstamp.focus");
+    await key(page, "Enter");
+    await waitScreen(page, "journey");
+    await page.waitForFunction(() => document.querySelectorAll("#j-route .s").length > 0);
+    await key(page, "Escape");
+    await waitScreen(page, "shelf");
+    await page.waitForSelector(".tripstamp.focus");
+    await key(page, "ArrowRight", 2);
+    await key(page, "Enter");
+    await waitScreen(page, "journey");
+    assert.equal(await page.locator("#j-stop").innerText(), "");
+    assert.equal(await page.locator("#j-note").innerText(), "");
+    assert.equal(await page.locator("#j-count").innerText(), "");
+    assert.equal(await page.locator("#j-route .s").count(), 0);
+    assert.equal(await page.locator("#j-card").evaluate((n) => n.classList.contains("nophoto")), true);
+    assert.equal(await page.locator("#j-img").getAttribute("src"), null);
+    await ctx.close();
+  }],
+
+  ["trips failing right after pairing: offline screen, then the shelf, never a dead blank shelf (linus #9577 bug 2)", async ({ browser, base }) => {
+    const { ctx, page, st } = await tvPage(browser, base, { clock: true, state: { paired: false, tripsFail: 1 } });
+    await waitScreen(page, "pair");
+    st.pairNow = true;
+    await waitScreen(page, "offline");
+    await page.clock.runFor(5100);
+    await waitScreen(page, "shelf");
+    await page.waitForFunction(() => document.querySelectorAll(".tripstamp").length === 3);
+    await ctx.close();
+  }],
+
+  ["a TV left on the shelf picks up a new trip within a minute and keeps its focus (linus #9577 item 3)", async ({ browser, base }) => {
+    const { ctx, page, st } = await tvPage(browser, base, { clock: true });
+    await waitScreen(page, "shelf");
+    await page.waitForFunction(() => document.querySelectorAll(".tripstamp").length === 3);
+    await key(page, "ArrowRight");
+    const calls = st.tripCalls;
+    await page.clock.runFor(61000);
+    for (let i = 0; i < 50 && st.tripCalls <= calls; i++) await new Promise((r) => setTimeout(r, 50));
+    assert.ok(st.tripCalls > calls, "trips asked again");
+    assert.equal(await page.locator(".tripstamp").count(), 3, "unchanged: no redraw needed");
+    st.data.trips = [{ ...st.data.trips[0], id: 9, name: "Brand new" }, ...st.data.trips];
+    st.data.details[9] = { holiday: st.data.trips[0], pins: [], photos: [] };
+    await page.clock.runFor(61000);
+    await page.waitForFunction(() => document.querySelectorAll(".tripstamp").length === 4);
+    assert.equal(await page.locator(".tripstamp.focus").getAttribute("data-id"), "2", "focus stays on the trip it was on");
+    await ctx.close();
+  }],
+
+  ["Back from a journey reloads the trips (new photos on a live trip show up)", async ({ browser, base }) => {
+    const { ctx, page, st } = await tvPage(browser, base);
+    await page.waitForSelector(".tripstamp.focus");
+    await key(page, "Enter");
+    await waitScreen(page, "journey");
+    const d = st.data.details[1];
+    st.data.details[1] = { ...d, photos: [...d.photos, { asset_id: "a9", pin_id: 10, taken_at: "2026-08-04T09:40:00Z", type: "image", duration: 0 }] };
+    await key(page, "Escape");
+    await waitScreen(page, "shelf");
+    await page.waitForSelector(".tripstamp.focus");
+    await key(page, "Enter");
+    await waitScreen(page, "journey");
+    assert.equal((await J(page)).slides, 8, "the new photo is in the journey");
+    await ctx.close();
+  }],
+
+  ["the day stamp's date keeps its numbers in the body face", async ({ browser, base }) => {
+    const { ctx, page } = await tvPage(browser, base);
+    await page.waitForSelector(".tripstamp.focus");
+    await key(page, "Enter");
+    await waitScreen(page, "journey");
+    assert.ok(await page.locator("#j-date .num").count() >= 1);
+    assert.match(await page.locator("#j-date .num").first().innerText(), /^\d+$/);
+    await ctx.close();
+  }],
+
   ["unpaired TV shows a 4-letter code and opens the shelf once the phone pairs it", async ({ browser, base }) => {
     const { ctx, page, st, errors } = await tvPage(browser, base, { state: { paired: false } });
     await waitScreen(page, "pair");
