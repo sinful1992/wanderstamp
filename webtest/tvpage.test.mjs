@@ -53,8 +53,10 @@ async function tvPage(browser, base, opts = {}) {
     const m = r.request().method();
     const p = u.pathname;
     if (m === "POST" && p === "/tv/pair") {
+      if (st.pairStartFail) return json(r, 500, { error: "no" });
       st.codes++;
-      return json(r, 200, { code: st.codes === 1 ? "KXRT" : "MPQW", poll: `poll${st.codes}`, expires_in: 300 });
+      const code = st.codes === 1 ? "KXRT" : "MPQW";
+      return json(r, 200, { code, poll: `poll${st.codes}`, expires_in: 300, ...(st.qr ? { pair_url: `https://x/#pair=${code}`, qr_svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><title>${code}</title><rect width="1" height="1"/></svg>` } : {}) });
     }
     if (p.startsWith("/tv/pair/")) {
       st.polls++;
@@ -87,6 +89,52 @@ const J = (page) => page.evaluate(() => window.WSTV.journey);
 const text = (page, sel) => page.locator(sel).innerText();
 
 export const tests = [
+  ["QR: shown beside the code, redrawn with a new code, clear of the text (USER #9695)", async ({ browser, base }) => {
+    const { ctx, page, st } = await tvPage(browser, base, { state: { paired: false, qr: true } });
+    await waitScreen(page, "pair");
+    await page.waitForFunction(() => document.getElementById("pair-code").textContent === "KXRT");
+    assert.equal(await page.locator("#pair-qr").isVisible(), true);
+    const src1 = await page.locator("#pair-qr-img").getAttribute("src");
+    assert.ok(decodeURIComponent(src1).includes("<title>KXRT</title>"));
+    const hit = await page.evaluate(() => {
+      const q = document.getElementById("pair-qr").getBoundingClientRect();
+      const stage = document.getElementById("stage").getBoundingClientRect();
+      const inside = q.left >= stage.left && q.right <= stage.right && q.top >= stage.top && q.bottom <= stage.bottom;
+      const over = ["#pair h1", "#pair .card > p", "#pair ol", "#pair-code", "#pair-state"].filter((s) => {
+        const range = document.createRange();
+        range.selectNodeContents(document.querySelector(s));
+        return [...range.getClientRects()].some((r) => r.width && r.left < q.right && r.right > q.left && r.top < q.bottom && r.bottom > q.top);
+      });
+      return { inside, over };
+    });
+    assert.deepEqual(hit, { inside: true, over: [] });
+    st.gone = true;
+    await page.waitForFunction(() => document.getElementById("pair-code").textContent === "MPQW");
+    const src2 = await page.locator("#pair-qr-img").getAttribute("src");
+    assert.ok(decodeURIComponent(src2).includes("<title>MPQW</title>"));
+    await ctx.close();
+  }],
+
+  ["QR: with no public address the pairing screen is the plain code", async ({ browser, base }) => {
+    const { ctx, page } = await tvPage(browser, base, { state: { paired: false } });
+    await waitScreen(page, "pair");
+    await page.waitForFunction(() => document.getElementById("pair-code").textContent === "KXRT");
+    assert.equal(await page.locator("#pair-qr").isVisible(), false);
+    assert.equal(await page.locator("#pair.has-qr").count(), 0);
+    await ctx.close();
+  }],
+
+  ["QR: a code that can't be renewed takes its QR with it", async ({ browser, base }) => {
+    const { ctx, page, st } = await tvPage(browser, base, { state: { paired: false, qr: true } });
+    await waitScreen(page, "pair");
+    await page.waitForSelector("#pair-qr:not([hidden])");
+    st.pairStartFail = true;
+    st.gone = true;
+    await page.waitForSelector("#pair-qr", { state: "hidden" });
+    assert.equal(await page.locator("#pair-qr-img").getAttribute("src"), null);
+    await ctx.close();
+  }],
+
   ["an empty trip after a full one shows nothing of the one before (linus #9577 bug 1)", async ({ browser, base }) => {
     const { ctx, page } = await tvPage(browser, base);
     await page.waitForSelector(".tripstamp.focus");

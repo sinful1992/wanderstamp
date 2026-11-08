@@ -180,6 +180,7 @@
 // in this page's own localStorage, never baked into the APK at build time.
 (function () {
   var KEY = 'wanderstamp.server';
+  var pairCode = '';
   var setup = document.getElementById('setup');
   var input = document.getElementById('url');
   var err = document.getElementById('error');
@@ -260,7 +261,7 @@
       // A plain assignment keeps the launcher in history, so Android's back
       // button returns here; the flag stops it bouncing straight out again.
       flag('left', '1');
-      location.href = url;
+      location.href = url + (pairCode ? '/#pair=' + pairCode + '&app=1' : '');
     }, still ? 120 : 520);
   }
 
@@ -301,13 +302,33 @@
     show({ lede: 'Where does your travel record live?' });
   });
 
-  var saved = store(KEY);
-  var cameBack = flag('left') === '1';
-  try { sessionStorage.removeItem('left'); } catch (e) {}
+  function start() {
+    var saved = store(KEY);
+    var cameBack = flag('left') === '1';
+    try { sessionStorage.removeItem('left'); } catch (e) {}
 
-  if (saved && !cameBack) connect(saved);
-  else if (saved) show({ lede: 'Connect again, or point the app somewhere else.', value: saved, canForget: true });
-  else show({ lede: 'Where does your travel record live?' });
+    // A TV's QR code is always a reason to go on, even after Back.
+    if (saved && (!cameBack || pairCode)) connect(saved);
+    else if (saved) show({ lede: 'Connect again, or point the app somewhere else.', value: saved, canForget: true });
+    else show({ lede: 'Where does your travel record live?' });
+  }
+
+  function codeOf(link) {
+    var m = /^wanderstamp:\/\/pair\?code=([A-HJ-NP-Z]{4})$/.exec(link || '');
+    return m ? m[1] : '';
+  }
+
+  // Started by a QR link: Rust passes ?pair= when the app was already open;
+  // a cold start asks the deep-link plugin. Back returns here with the same
+  // link still current, so each link is used once.
+  var fromRust = /[?&]pair=([A-HJ-NP-Z]{4})(?:&|$)/.exec(location.search);
+  pairCode = fromRust ? fromRust[1] : '';
+  var dl = window.__TAURI__ && window.__TAURI__.deepLink;
+  if (pairCode || !dl) { start(); return; }
+  dl.getCurrent().then(function (urls) {
+    var link = urls && urls[0];
+    if (codeOf(link) && flag('pair-used') !== link) { pairCode = codeOf(link); flag('pair-used', link); }
+  }).catch(function () {}).then(start);
 })();
 </script>
 </body>

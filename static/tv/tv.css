@@ -34,6 +34,11 @@ body { font-family: var(--prose); color: var(--paper); cursor: none; }
 .code span { font-family: var(--stamp); font-size: 116px; width: 130px; height: 160px; display: grid; place-items: center; color: var(--red);
   border: 5px solid var(--red); border-radius: 12px; transform: rotate(var(--r, 0deg)); padding-top: 8px; }
 .pair-state { position: absolute; right: 100px; bottom: 70px; margin: 0 !important; font-size: 30px !important; color: var(--muted); }
+.qr { position: absolute; right: 100px; top: 210px; width: 400px; margin: 0; text-align: center; }
+.qr[hidden] { display: none; }
+.qr img { display: block; width: 400px; height: 400px; background: #fff; border-radius: 12px; }
+.qr figcaption { margin-top: 16px; font-size: 30px; color: var(--ink); }
+#pair.has-qr .card p, #pair.has-qr .card ol { max-width: 940px; }
 #pair .foot { position: absolute; left: 160px; right: 160px; bottom: 50px; margin: 0; font-size: 28px; color: var(--paper-2); }
 
 /* B: trip shelf */

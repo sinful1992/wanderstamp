@@ -1371,3 +1371,9 @@ button.primary.gold { background: var(--gold); color: var(--navy-2); }
 .tv-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 0; border-top: 1px solid var(--line, #dcd1b6); }
 .tv-item .tv-name { font-weight: 600; }
 .tv-item .form-hint { margin: 0; flex: 1 1 auto; }
+
+/* TV pairing from a QR code */
+.pair-app { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 100000; display: block; padding: 14px; border-radius: 10px; background: var(--navy, #1b2a41); color: #fff; font-weight: 700; text-align: center; text-decoration: none; }
+.tv-pair-confirm { display: grid; gap: 12px; }
+.tv-pair-confirm p { margin: 0; }
+.tv-pair-code { font-size: 28px; font-weight: 700; letter-spacing: 6px; text-align: center; }

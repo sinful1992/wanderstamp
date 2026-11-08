@@ -188,12 +188,14 @@ async function startPair() {
       pair = r.data;
     } catch (e) {
       codeBox.textContent = "";
+      drawQR(null);
       state.textContent = e instanceof Offline ? "Can't reach Wanderstamp, trying again…" : "Waiting for a new code…";
       await sleep(e.status === 429 ? 15000 : RETRY_MS);
       continue;
     }
     if (g !== tv.gen) return;
     drawCode(pair.code);
+    drawQR(pair.qr_svg);
     state.textContent = "Waiting for your phone…";
     // poll until paired, or the code is gone (410) and a new one is due
     for (;;) {
@@ -227,6 +229,16 @@ function drawCode(code) {
     box.appendChild(s);
   });
   box.setAttribute("aria-label", `Code ${[...String(code || "")].join(" ")}`);
+}
+
+// The server draws the QR, and only when it knows its own public address.
+// Without one the screen is the plain code.
+function drawQR(svg) {
+  const fig = $("pair-qr");
+  fig.hidden = !svg;
+  $("pair").classList.toggle("has-qr", !!svg);
+  if (svg) $("pair-qr-img").src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  else $("pair-qr-img").removeAttribute("src");
 }
 
 /* ---------- maps ---------- */

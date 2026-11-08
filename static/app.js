@@ -3441,6 +3441,75 @@ window.WS = {
   },
 };
 
+// Task 136: the TV's QR code opens /#pair=ABCD. Sign-in keeps the hash (it only
+// reloads the page), and pairing always waits for the Confirm tap: a QR someone
+// else put in front of the camera must not get a TV onto this account.
+function readTVPair() {
+  const m = /^#pair=([A-HJ-NP-Z]{4})(?:&(app|noapp)=1)?$/.exec(location.hash);
+  return m ? { code: m[1], via: m[2] || "" } : null;
+}
+
+function clearTVPair() {
+  history.replaceState(null, "", location.pathname + location.search);
+  const b = $("pair-app");
+  if (b) b.remove();
+}
+
+// A scan lands in the phone's browser. Android's Chrome won't jump to an app by
+// itself, so it's a link; with no app installed it comes back here with noapp=1.
+function offerTVPairApp() {
+  const p = readTVPair();
+  if (!p || p.via || !/Android/i.test(navigator.userAgent) || $("pair-app")) return;
+  const back = `${location.origin}${location.pathname}#pair=${p.code}&noapp=1`;
+  const a = el("a", "pair-app", "Open in the Wanderstamp app");
+  a.id = "pair-app";
+  a.href = `intent://pair?code=${p.code}#Intent;scheme=wanderstamp;package=app.wanderstamp;S.browser_fallback_url=${encodeURIComponent(back)};end`;
+  document.body.appendChild(a);
+}
+
+function offerTVPair() {
+  const p = readTVPair();
+  if (!p) return;
+  clearTVPair();
+  const box = el("div", "tv-pair-confirm");
+  box.appendChild(el("p", null, "This TV can then show every trip, previews only, until you unpair it from Show on TV."));
+  box.appendChild(el("p", "tv-pair-code", p.code));
+  const name = el("input");
+  name.id = "tv-pair-name";
+  name.value = "Living room";
+  name.maxLength = 40;
+  name.setAttribute("aria-label", "Name for this TV");
+  const ok = el("button", "primary", "Confirm");
+  ok.id = "tv-pair-ok";
+  const no = el("button", "linkish", "Cancel");
+  no.onclick = closeOverlay;
+  ok.onclick = async () => {
+    const n = name.value.trim();
+    if (!n) { toast("Give the TV a name, e.g. Living room"); name.focus(); return; }
+    if (ok.disabled) return;
+    ok.disabled = true;
+    try {
+      await api("POST", "/api/tv/pair", { code: p.code, name: n });
+      closeOverlay();
+      toast(`Paired: ${n}`);
+    } catch (err) {
+      toast(err.status === 404 ? "That code has expired. Scan the TV again"
+        : err.status === 429 ? "Too many wrong codes. Try again in 15 minutes"
+        : err.message);
+    } finally {
+      ok.disabled = false;
+    }
+  };
+  box.append(name, ok, no);
+  openOverlay("Pair this TV?", box);
+}
+
+window.addEventListener("hashchange", () => {
+  if (!readTVPair() || !$("login").hidden) return;
+  offerTVPairApp();
+  offerTVPair();
+});
+
 (async function boot() {
   if (SHARE) {
     document.body.classList.add("shared");
@@ -3462,8 +3531,10 @@ window.WS = {
   // Draw the last map this device saw straight away, then bring it up to
   // date: a returning visit shows its trips before the first request is back.
   const hadSnapshot = restoreSnapshot();
+  offerTVPairApp();
   try {
     await loadData(true);
+    offerTVPair();
   } catch (ex) {
     // A dead network (unlike a 401) means mid-holiday with no signal: the
     // snapshot already on screen is the map.
