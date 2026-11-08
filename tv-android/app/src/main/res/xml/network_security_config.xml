@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The door is plain HTTP on the home network (task 133 contract). Only the
+     home server may be reached without TLS; map tiles stay on HTTPS. -->
+<network-security-config>
+	<base-config cleartextTrafficPermitted="false" />
+	<domain-config cleartextTrafficPermitted="true">
+		<domain includeSubdomains="false">192.168.1.15</domain>
+	</domain-config>
+</network-security-config>

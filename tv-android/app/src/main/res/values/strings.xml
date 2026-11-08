@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+	<string name="app_name">Wanderstamp</string>
+	<string name="offline_title">Can\'t reach Wanderstamp</string>
+	<string name="offline_body">This TV can\'t reach the home server. Check the TV is on the home Wi-Fi, then press OK to try again.</string>
+</resources>
