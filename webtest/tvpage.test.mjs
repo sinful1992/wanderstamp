@@ -417,6 +417,20 @@ export const tests = [
     await ctx.close();
   }],
 
+  ["the shelf map rests on a whole zoom, so its tiles are sharp (USER #9626)", async ({ browser, base }) => {
+    const { ctx, page } = await tvPage(browser, base);
+    await page.waitForSelector(".tripstamp.focus");
+    await page.evaluate(() => { const o = L.Map.prototype.fitBounds; L.Map.prototype.fitBounds = function (...a) { window.__m = this; return o.apply(this, a); }; });
+    await key(page, "ArrowRight");
+    await page.waitForTimeout(800);
+    await key(page, "ArrowLeft");
+    await page.waitForFunction(() => window.__m);
+    await page.waitForTimeout(1500);
+    const z = await page.evaluate(() => window.__m.getZoom());
+    assert.equal(z, Math.round(z), "zoom " + z);
+    await ctx.close();
+  }],
+
   ["a short hop slides the map instead of zooming out and back (USER #9626)", async ({ browser, base }) => {
     const { ctx, page } = await tvPage(browser, base);
     await page.waitForSelector(".tripstamp.focus");

@@ -235,7 +235,7 @@ let shelfMap = null, journeyMap = null, shelfLayer = null, journeyLayer = null;
 
 function makeMap(id) {
   const m = L.map(id, { zoomControl: false, attributionControl: true, keyboard: false, dragging: false,
-    scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, touchZoom: false, zoomSnap: 0.25 });
+    scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, touchZoom: false, zoomSnap: 1 });
   m.attributionControl.setPrefix(false);
   L.tileLayer(TILES, { attribution: TILE_ATTR, maxZoom: 17, keepBuffer: 4 }).addTo(m);
   m.setView([50, 5], 4);
