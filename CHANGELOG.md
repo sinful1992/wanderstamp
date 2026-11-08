@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.15.4 (2026-11-08)
 
 ### Frontend
 - TV journey: the map shows the whole trip and stays still; only the red dot moves from stop to stop, so it no longer blurs while moving. The photo is bigger, and a dark panel behind the title replaces the shade over the map. The dots on the map carry their stop number, the first stop is gold, and the current stop pulses.
