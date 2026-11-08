@@ -146,9 +146,16 @@ export const tests = [
     await page.waitForFunction(() => document.querySelectorAll(".tripstamp").length === 3);
     await key(page, "Enter");
     await waitScreen(page, "journey");
-    const seen = await page.evaluate(() => WSTV.journey().stops.map((s) => [s.pin.title, s.note]));
-    assert.deepEqual(seen.filter(([t]) => t === "Keswick").map(([, n]) => n), ["", "Food horrible"]);
-    assert.equal(await page.locator("#j-note").innerText(), "");
+    const seen = new Set();
+    for (let i = 0; i < 12; i++) {
+      seen.add(`${await page.locator("#j-stop").innerText()}|${await page.locator("#j-note").innerText()}`);
+      await key(page, "ArrowRight");
+      await page.waitForTimeout(60);
+    }
+    const notes = [...seen].filter((x) => x.endsWith("Food horrible"));
+    assert.equal(notes.length, 1, [...seen].join(" ; "));
+    assert.ok(notes[0].includes("Keswick"));
+    assert.ok([...seen].some((x) => x.includes("Keswick") && x.endsWith("|")), "the first Keswick visit shows no note");
     await ctx.close();
   }],
 

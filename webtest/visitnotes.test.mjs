@@ -25,7 +25,10 @@ async function edit(page, nth = 0) {
   await page.waitForSelector("form.pop-form textarea");
 }
 const save = (page) => page.click("form.pop-form button[type=submit]");
-const waitSent = (page, sent) => page.waitForFunction(() => document.querySelector("#toast, .toast")).then(() => sent);
+async function waitSent(page, sent) {
+  for (let i = 0; i < 100 && !sent.length; i++) await page.waitForTimeout(50);
+  assert.ok(sent.length, "the PATCH was sent");
+}
 
 export const tests = [
   ["notes: each stop shows its own visit's note", async ({ browser, base }) => {
