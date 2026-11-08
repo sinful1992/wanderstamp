@@ -271,7 +271,8 @@ export const tests = [
     assert.equal(await page.locator("#j-paused").isVisible(), true);
     await page.clock.runFor(30000);
     assert.equal((await J(page)).i, 1, "paused stays put");
-    await key(page, "MediaPlayPause");
+    // a synthetic event: older playwright-core has no "MediaPlayPause" key name
+    await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "MediaPlayPause", bubbles: true })));
     assert.equal((await J(page)).paused, false);
     await page.clock.runFor(6100);
     assert.equal((await J(page)).i, 2);
