@@ -19,9 +19,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -30,6 +33,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"rsc.io/qr"
 )
 
 const (
@@ -228,7 +233,73 @@ func (a *app) handleTVPairStart(w http.ResponseWriter, r *http.Request) {
 	p.byCode[code] = pr
 	p.byPoll[poll] = pr
 	p.asked[peer] = append(p.asked[peer], now)
-	writeJSON(w, http.StatusOK, map[string]any{"code": code, "poll": poll, "expires_in": int(tvCodeTTL.Seconds())})
+	out := map[string]any{"code": code, "poll": poll, "expires_in": int(tvCodeTTL.Seconds())}
+	// task 136: with PUBLIC_URL set, a QR code of the phone link to this
+	// code. It carries only the code the screen shows anyway, and never the
+	// poll token. Pairing still needs a signed-in Confirm on the phone.
+	if a.publicURL != "" {
+		u := pairURL(a.publicURL, code)
+		if svg, err := qrSVG(u); err != nil {
+			log.Printf("tv pair: no QR code: %v", err)
+		} else {
+			out["pair_url"] = u
+			out["qr_svg"] = svg
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// --- task 136: pairing by QR code ---
+
+// cleanPublicURL checks PUBLIC_URL: an absolute http(s) address the phones
+// open, with an optional path prefix and no query or fragment. The trailing
+// slash is dropped, so pairURL can add "/#pair=".
+func cleanPublicURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("%q: want an http:// or https:// address", raw)
+	}
+	if u.Host == "" || u.User != nil || strings.ContainsAny(raw, "?#") {
+		return "", fmt.Errorf("%q: want just the address, like https://wanderstamp.example.com", raw)
+	}
+	return strings.TrimRight(u.String(), "/"), nil
+}
+
+// pairURL is what the QR code holds: the main app with the code in the hash,
+// so it never reaches a server log or a proxy.
+func pairURL(base, code string) string { return base + "/#pair=" + code }
+
+// qrSVG draws text as a QR code: black modules on white with the 4-module
+// quiet zone scanners need, one path, no script or text. The TV scales it.
+func qrSVG(text string) (string, error) {
+	c, err := qr.Encode(text, qr.M)
+	if err != nil {
+		return "", err
+	}
+	const quiet = 4
+	n := c.Size + 2*quiet
+	var b strings.Builder
+	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" shape-rendering="crispEdges">`, n, n)
+	fmt.Fprintf(&b, `<rect width="%d" height="%d" fill="#fff"/><path fill="#000" d="`, n, n)
+	for y := 0; y < c.Size; y++ {
+		for x := 0; x < c.Size; x++ {
+			if !c.Black(x, y) {
+				continue
+			}
+			run := 1
+			for x+run < c.Size && c.Black(x+run, y) {
+				run++
+			}
+			fmt.Fprintf(&b, "M%d %dh%dv1h-%dz", x+quiet, y+quiet, run, run)
+			x += run - 1
+		}
+	}
+	b.WriteString(`"/></svg>`)
+	return b.String(), nil
 }
 
 // collect hands out a bound pairing's token exactly once; the caller holds mu.

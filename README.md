@@ -74,6 +74,7 @@ environment on first boot only; after that, manage users inside the app
 |----------|---------|---------|
 | `LISTEN_ADDR` | `:8095` | listen address |
 | `TV_LISTEN_ADDR` | unset (off) | the read-only TV door (`/tv` page, pairing, TV reads), e.g. `:8097`; it answers home-network devices only (Tailscale and public addresses get 404); never forward it from your router |
+| `PUBLIC_URL` | unset | the address your phones open the app at, e.g. `https://wanderstamp.example.com`; with it set, the TV pairing screen also shows a QR code that opens the app at that TV's code (one Confirm tap still pairs). Unset, the screen shows only the 4-letter code |
 | `DB_PATH` | `./holidaymap.db` | SQLite database path |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | — | first-boot admin account (only read while the users table is empty) |
 | `COOKIE_SECURE` | `true` | mark session cookies HTTPS-only; set `false` only for plain-HTTP use |

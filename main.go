@@ -42,6 +42,7 @@ type app struct {
 	undo         undoStore            // F2: what the last deletes removed, for 30 s
 	tv           *tvPairs             // task 133: open TV pairing codes, see pairs()
 	doorRefuse   []net.IP             // task 134: the container's own gateways, see lanOnly
+	publicURL    string               // task 136: the app's address phones open (PUBLIC_URL), "" = no pairing QR
 }
 
 // version is stamped by release builds via -ldflags "-X main.version=v1.x.x";
@@ -71,6 +72,14 @@ func main() {
 		ipLimiter:    newIPLimiter(),
 		cookieSecure: env("COOKIE_SECURE", "true") == "true",
 		lastSync:     make(map[int64]time.Time),
+	}
+	if raw := os.Getenv("PUBLIC_URL"); raw != "" {
+		if u, err := cleanPublicURL(raw); err != nil {
+			log.Printf("WARNING: PUBLIC_URL ignored, the TV pairing screen shows no QR code: %v", err)
+		} else {
+			a.publicURL = u
+			log.Printf("TV pairing QR codes open %s", u)
+		}
 	}
 
 	if rdb, err := openReadDB(env("DB_PATH", "./holidaymap.db")); err != nil {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.16.0 (unreleased)
+
+### Server
+- TV pairing by QR code: with the new `PUBLIC_URL` setting (the address phones open the app at), `POST /tv/pair` also returns `pair_url` (`<PUBLIC_URL>/#pair=CODE`) and `qr_svg`, a QR code of it. The QR carries only the code the screen already shows, never the poll token, and pairing still needs a signed-in Confirm on the phone. Without `PUBLIC_URL` nothing changes. A `PUBLIC_URL` that isn't a plain http(s) address is ignored with a warning.
+
+### Tests
+- The QR code is read back with an independent decoder (gozxing) for every new code and for a long address; the response is unchanged when `PUBLIC_URL` is unset; the typed code still pairs.
+
 ## 1.15.4 (2026-11-08)
 
 ### Frontend
