@@ -382,6 +382,42 @@ export const tests = [
     await ctx.close();
   }],
 
+  ["the route bar says its numbers are stops, and the stamp has a solid background (USER #9626)", async ({ browser, base }) => {
+    const { ctx, page } = await tvPage(browser, base);
+    await page.waitForSelector(".tripstamp.focus");
+    await key(page, "Enter");
+    await waitScreen(page, "journey");
+    await page.waitForFunction(() => document.querySelectorAll("#j-route .s").length > 0);
+    const r = await page.evaluate(() => ({
+      labels: [...document.querySelectorAll("#j-route .s")].map((s) => s.textContent),
+      bg: getComputedStyle(document.querySelector(".inkstamp")).backgroundColor,
+      blend: getComputedStyle(document.querySelector(".inkstamp")).mixBlendMode,
+    }));
+    assert.deepEqual(r.labels, ["1", "2", "3", "4"]);
+    assert.equal(await page.locator("#j-route .rlabel").innerText(), "Stops");
+    assert.ok(parseFloat(r.bg.split(",").pop()) >= 0.9, r.bg);
+    assert.equal(r.blend, "normal");
+    await ctx.close();
+  }],
+
+  ["a short hop slides the map instead of zooming out and back (USER #9626)", async ({ browser, base }) => {
+    const { ctx, page } = await tvPage(browser, base);
+    await page.waitForSelector(".tripstamp.focus");
+    await page.evaluate(() => {
+      window.__moves = [];
+      for (const k of ["flyTo", "panTo"]) { const o = L.Map.prototype[k]; L.Map.prototype[k] = function (...a) { window.__moves.push(k); return o.apply(this, a); }; }
+    });
+    await key(page, "Enter");
+    await waitScreen(page, "journey");
+    await page.waitForFunction(() => document.querySelectorAll("#j-route .s").length > 0);
+    await page.waitForTimeout(3000); // the opening move has landed
+    await page.evaluate(() => { window.__moves.length = 0; });
+    await key(page, "ArrowDown");
+    await page.waitForFunction(() => window.__moves.length > 0);
+    assert.deepEqual(await page.evaluate(() => window.__moves), ["panTo"]);
+    await ctx.close();
+  }],
+
   ["Show on TV: the phone pairs with the typed code and lists, then unpairs, the TV", async ({ browser, base }) => {
     const { ctx, page } = await signedIn(browser, base);
     const st = { devices: [], posts: [], deletes: 0 };

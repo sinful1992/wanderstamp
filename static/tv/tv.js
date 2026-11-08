@@ -237,7 +237,7 @@ function makeMap(id) {
   const m = L.map(id, { zoomControl: false, attributionControl: true, keyboard: false, dragging: false,
     scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, touchZoom: false, zoomSnap: 0.25 });
   m.attributionControl.setPrefix(false);
-  L.tileLayer(TILES, { attribution: TILE_ATTR, maxZoom: 17 }).addTo(m);
+  L.tileLayer(TILES, { attribution: TILE_ATTR, maxZoom: 17, keepBuffer: 4 }).addTo(m);
   m.setView([50, 5], 4);
   return m;
 }
@@ -548,11 +548,15 @@ function moveToStop(si, fly) {
     if (now) m.bringToFront();
   }
   // the stop sits in the open area left of the postcard, under its name
-  const z = Math.max(journeyMap.getZoom(), 12);
+  // a whole zoom draws the tiles 1:1, so the map rests sharp
+  const z = Math.round(Math.max(journeyMap.getZoom(), 12));
   const target = L.latLng(s.pin.lat, s.pin.lng);
   const p = journeyMap.project(target, z).add([520, -60]);
   const center = journeyMap.unproject(p, z);
-  if (fly) journeyMap.flyTo(center, z, { duration: 2.2 });
+  // a short hop slides the sharp tiles; flyTo zooms out and back, stretching them
+  const hop = journeyMap.project(journeyMap.getCenter(), z).distanceTo(journeyMap.project(center, z));
+  if (fly && journeyMap.getZoom() === z && hop < 1920) journeyMap.panTo(center, { animate: true, duration: 1.6, easeLinearity: 0.25 });
+  else if (fly) journeyMap.flyTo(center, z, { duration: 2.2 });
   else journeyMap.setView(center, z, { animate: false });
 }
 
@@ -561,6 +565,7 @@ function drawRouteBar(si) {
   bar.textContent = "";
   const n = jr.stops.length;
   if (n < 2) return;
+  bar.appendChild(el("span", "rlabel", "Stops"));
   let from = Math.max(0, si - Math.floor(ROUTE_MAX / 2));
   const to = Math.min(n, from + ROUTE_MAX);
   from = Math.max(0, to - ROUTE_MAX);

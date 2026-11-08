@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Frontend
+- TV journey: the numbered bar at the bottom is labelled Stops, so it doesn't read as days. The day stamp has a solid background, so it stays readable on any photo. Short hops slide the map at a whole zoom instead of zooming out and back, so it stays sharp.
+
 ## 1.15.2 (2026-11-08)
 
 ### Frontend
