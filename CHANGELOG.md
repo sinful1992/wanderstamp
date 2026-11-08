@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.15.0 (unreleased)
+## 1.15.0 (2026-11-08)
 
 ### Server
 - Wanderstamp on the TV: a second, read-only listener for the home network (`TV_LISTEN_ADDR`, off unless set). It serves only the `/tv` page, its shared files, pairing and the TV reads: no sign-in, no admin, no other `/api/`, never an original photo or a video.
