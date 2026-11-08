@@ -400,6 +400,23 @@ export const tests = [
     await ctx.close();
   }],
 
+  ["the route bar stays clear of the remote hints at every stop of a long trip (linus #9632)", async ({ browser, base }) => {
+    const trip = H(1, "Long trip", { pin_count: 20, photo_count: 0 });
+    const pins = Array.from({ length: 20 }, (_, i) => P(100 + i, 1, "Stop " + i, 54.5 + i * 0.005, -3.1, [V("2026-08-02T" + String(i + 1).padStart(2, "0") + ":00:00Z", "2026-08-02T" + String(i + 1).padStart(2, "0") + ":30:00Z")]));
+    const { ctx, page } = await tvPage(browser, base, { state: { data: { trips: [trip], details: { 1: { holiday: trip, pins, photos: [] } } } } });
+    await page.waitForSelector(".tripstamp.focus");
+    await key(page, "Enter");
+    await waitScreen(page, "journey");
+    await page.waitForFunction(() => document.querySelectorAll("#j-route .s").length > 0);
+    for (let i = 0; i < 20; i++) {
+      const r = await page.evaluate(() => ({ bar: document.querySelector("#j-route").getBoundingClientRect().right, hints: document.querySelector("#journey .remote").getBoundingClientRect().left }));
+      assert.ok(r.bar < r.hints, "stop " + i + ": " + JSON.stringify(r));
+      await key(page, "ArrowDown");
+      await page.waitForTimeout(30);
+    }
+    await ctx.close();
+  }],
+
   ["a short hop slides the map instead of zooming out and back (USER #9626)", async ({ browser, base }) => {
     const { ctx, page } = await tvPage(browser, base);
     await page.waitForSelector(".tripstamp.focus");

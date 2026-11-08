@@ -6,7 +6,7 @@
 const PHOTO_MS = 6000, CARD_MS = 5000, POLL_GAP_MS = 1500, RETRY_MS = 5000;
 const TILES = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}";
 const TILE_ATTR = "Tiles &copy; Esri";
-const ROUTE_MAX = 11; // stop dots shown at once in the journey's route bar
+const ROUTE_MAX = 10; // stop dots shown at once in the journey's route bar
 
 const $ = (id) => document.getElementById(id);
 function el(tag, cls, text) {
