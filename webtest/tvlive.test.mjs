@@ -39,7 +39,7 @@ async function seed(phone) {
   const trip = (await api(phone, "POST", "/api/holidays", { name: "TV Lakes <b>bold</b>", color: "#2a7f62", start_at: "2025-08-02", end_at: "2025-08-04" })).body;
   await api(phone, "POST", "/api/pins", { holiday_id: trip.id, lat: 54.6013, lng: -3.1347, title: "Keswick", note: "Pencil museum", created_at: "2025-08-02T10:00:00Z" });
   await api(phone, "POST", "/api/pins", { holiday_id: trip.id, lat: 54.5413, lng: -3.2766, title: "Buttermere", note: "", created_at: "2025-08-03T11:00:00Z" });
-  const planned = (await api(phone, "POST", "/api/holidays", { name: "TV Future trip", color: "#b3372a", start_at: "2030-05-01", end_at: "2030-05-03" })).body;
+  const planned = (await api(phone, "POST", "/api/holidays", { name: "TV Future trip", color: "#b3372a", start_at: "2030-05-01" })).body;
   seeded = { trip, planned };
   return seeded;
 }
