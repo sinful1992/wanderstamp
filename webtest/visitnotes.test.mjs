@@ -1,4 +1,4 @@
-// Task 136: a note belongs to one visit. /api/pins is mocked with visits, so
+// Task 136: a note belongs to one visit. /api/map is mocked with visits, so
 // these run against the fields the server contract promises.
 import assert from "node:assert/strict";
 import { signedIn, api } from "./harness.mjs";
@@ -10,7 +10,10 @@ async function setup(browser, base, visits, extra = {}) {
   let h = (await api(page, "GET", "/api/holidays")).body.find((x) => x.name === "Notes trip");
   if (!h) h = (await api(page, "POST", "/api/holidays", { name: "Notes trip", color: "#1d6fb8", start_at: "2026-09-25", end_at: "2026-09-27" })).body;
   const pin = { id: 900, holiday_id: h.id, kind: "manual", lat: 52.4, lng: -1.5, title: "Premier", note: "", photo_count: 0, cover_asset: "", created_at: "2026-09-25T10:00:00Z", visited_at: "2026-09-25T10:00:00Z", visits, ...extra };
-  await page.route("**/api/pins", (r) => r.request().method() === "GET" ? r.fulfill({ json: [pin] }) : r.continue());
+  await page.route("**/api/map*", async (r) => {
+    const res = await r.fetch();
+    return r.fulfill({ response: res, json: { ...(await res.json()), pins: [pin] } });
+  });
   const sent = [];
   await page.route("**/api/pins/900", (r) => { sent.push(r.request().postDataJSON()); return r.fulfill({ json: {} }); });
   await page.reload({ waitUntil: "networkidle" });
