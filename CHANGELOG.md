@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.15.1 (2026-11-08)
 
 ### Server
 - The TV door also refuses its own container gateway(s), read from `/proc/net/route` at start. In Docker bridge mode a LAN device keeps its address, but traffic the host masquerades on the way in arrives from the bridge gateway, a private address. On 1.15.0 that let tailnet devices in through a Tailscale subnet router (`NoSNAT` off, the default). Now they get 404, and the start log names the refused gateway.
