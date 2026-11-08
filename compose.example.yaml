@@ -21,6 +21,7 @@ services:
       ADMIN_PASSWORD: change-me
       COOKIE_SECURE: "false" # set "true" once you serve it over HTTPS
       # TV_LISTEN_ADDR: ":8097" # the TV door (see ports above)
+      # PUBLIC_URL: "https://wanderstamp.example.com" # adds a QR code to the TV pairing screen
       # Optional Immich integration — photos auto-cluster into pins:
       # IMMICH_URL: http://immich-server:2283
       # IMMICH_API_KEY: your-immich-api-key
