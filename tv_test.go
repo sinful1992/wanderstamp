@@ -794,3 +794,54 @@ func TestTVBoundCodeGraceEnds(t *testing.T) {
 		t.Errorf("second phone on a typed-in code: %d, want 404", r.code)
 	}
 }
+
+// The door answers the home network only: tailnet and public peers get 404,
+// even with a valid token, so it can be published on 0.0.0.0.
+func TestTVDoorHomeNetworkOnly(t *testing.T) {
+	f := newTVFix(t)
+	tok := f.pair(t, "Den")
+	door := f.a.tvDoor(newStaticServer())
+	cases := []struct {
+		peer string
+		ok   bool
+	}{
+		{"192.168.1.27:40000", true}, {"10.0.0.5:1", true}, {"172.16.0.1:1", true}, {"172.31.255.254:1", true},
+		{"127.0.0.1:1", true}, {"[::1]:1", true}, {"[fe80::1]:1", true}, {"[fd00::5]:1", true},
+		{"[::ffff:192.168.1.27]:1", true},
+		{"100.122.101.74:1", false}, {"100.64.0.1:1", false}, {"100.127.255.255:1", false},
+		{"[fd7a:115c:a1e0::1]:1", false}, {"8.8.8.8:1", false}, {"172.32.0.1:1", false},
+		{"[2a00:23c5::1]:1", false}, {"[::ffff:8.8.8.8]:1", false}, {"garbage", false}, {"", false},
+	}
+	for _, c := range cases {
+		for _, p := range []string{"/api/tv/me", "/tv/tv.js", "/leaflet/leaflet.js"} {
+			req := httptest.NewRequest("GET", p, nil)
+			req.RemoteAddr = c.peer
+			req.Header.Set("Authorization", "Bearer "+tok)
+			rec := httptest.NewRecorder()
+			door.ServeHTTP(rec, req)
+			if c.ok && rec.Code != 200 {
+				t.Errorf("home peer %s %s: %d, want 200", c.peer, p, rec.Code)
+			}
+			if !c.ok && rec.Code != 404 {
+				t.Errorf("outside peer %s %s: %d, want 404", c.peer, p, rec.Code)
+			}
+		}
+		req := httptest.NewRequest("POST", "/tv/pair", nil)
+		req.RemoteAddr = c.peer
+		rec := httptest.NewRecorder()
+		door.ServeHTTP(rec, req)
+		if !c.ok && rec.Code != 404 {
+			t.Errorf("outside peer %s POST /tv/pair: %d, want 404", c.peer, rec.Code)
+		}
+	}
+	// a tailnet peer typing X-Forwarded-For with a LAN address is still outside
+	req := httptest.NewRequest("GET", "/api/tv/me", nil)
+	req.RemoteAddr = "100.122.101.74:1"
+	req.Header.Set("X-Forwarded-For", "192.168.1.27")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	door.ServeHTTP(rec, req)
+	if rec.Code != 404 {
+		t.Errorf("tailnet peer with LAN XFF: %d, want 404", rec.Code)
+	}
+}

@@ -13,8 +13,8 @@ services:
     ports:
       - "8095:8095"
       # Optional: the read-only TV door for a TV app on your home network.
-      # Publish it on your LAN address only, never to the internet.
-      # - "192.168.1.10:8097:8097"
+      # It answers home-network devices only; never forward it from your router.
+      # - "0.0.0.0:8097:8097"
     environment:
       DB_PATH: /data/wanderstamp.db
       ADMIN_USERNAME: admin

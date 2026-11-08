@@ -1,7 +1,8 @@
 package main
 
 // Wanderstamp on the TV (task 133): a second, read-only listener for the home
-// LAN ("the door"), so a TV that isn't on the tailnet can show the trips.
+// LAN ("the door"), so a TV that isn't on the tailnet can show the trips. It
+// answers home-network peers only (lanOnly): never the tailnet or the internet.
 //
 // The door serves only the /tv page, the static files it shares with the app
 // (Leaflet, the stamp font, icons), pairing and the TV reads below. No login,
@@ -665,7 +666,62 @@ func (a *app) tvDoor(static http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/tv/trips/{id}", a.tvAuth(a.handleTVTrip))
 	mux.HandleFunc("GET /api/tv/photo/{asset}/{kind}", a.tvAuth(a.handleTVPhoto))
 	mux.HandleFunc("/", http.NotFound)
-	return requestLog(securityHeaders(gzipJSON(strictPath(mux))))
+	return requestLog(securityHeaders(gzipJSON(lanOnly(strictPath(mux)))))
+}
+
+// homeNets are the peers the door answers: the home LAN (private IPv4,
+// IPv6 link-local and unique-local), loopback for the container's own
+// checks. Tailscale's ranges are left out on purpose, so the door can be
+// published on 0.0.0.0 (it must start even when the LAN address comes late
+// after a power cut) and still never answer a tailnet device.
+var (
+	homeNets    = mustCIDRs("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "::1/128", "fe80::/10", "fc00::/7")
+	tailnetNets = mustCIDRs("100.64.0.0/10", "fd7a:115c:a1e0::/48")
+)
+
+func mustCIDRs(cidrs ...string) []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range cidrs {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			panic(err)
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func inNets(ip net.IP, nets []*net.IPNet) bool {
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// homePeer is true for a device on the home network.
+func homePeer(addr string) bool {
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	return inNets(ip, homeNets) && !inNets(ip, tailnetNets)
+}
+
+// lanOnly answers 404 to anyone not on the home network: the tailnet and
+// the internet see no door at all.
+func lanOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !homePeer(doorPeer(r)) {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // strictPath answers 404 for any path that isn't already clean ("..", ".",
