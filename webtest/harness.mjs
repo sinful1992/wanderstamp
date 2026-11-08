@@ -38,10 +38,11 @@ export async function startServer() {
     execFileSync("go", ["build", "-o", bin, "."], { cwd: join(here, ".."), stdio: "inherit" });
   }
   const port = await freePort();
+  const tvPort = await freePort(); // task 133: the TV door (TV_LISTEN_ADDR)
   const proc = spawn(bin, [], {
     env: {
       ...process.env,
-      LISTEN_ADDR: `127.0.0.1:${port}`, DB_PATH: join(dir, "t.db"), COOKIE_SECURE: "false",
+      LISTEN_ADDR: `127.0.0.1:${port}`, TV_LISTEN_ADDR: `127.0.0.1:${tvPort}`, DB_PATH: join(dir, "t.db"), COOKIE_SECURE: "false",
       ADMIN_USERNAME: USER, ADMIN_PASSWORD: PASS, IMMICH_URL: "http://127.0.0.1:1", IMMICH_API_KEY: "",
     },
     stdio: ["ignore", "ignore", "pipe"],
@@ -56,6 +57,7 @@ export async function startServer() {
   }
   return {
     base,
+    tvBase: `http://127.0.0.1:${tvPort}`,
     async stop() {
       proc.kill();
       await new Promise((r) => proc.once("exit", r));

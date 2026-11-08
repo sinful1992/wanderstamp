@@ -15,7 +15,7 @@ try {
     const { tests } = await import(pathToFileURL(join(here, f)).href);
     for (const [name, fn] of tests) {
       try {
-        await fn({ browser, base: server.base });
+        await fn({ browser, base: server.base, tvBase: server.tvBase });
         pass++; console.log(`ok    ${f}: ${name}`);
       } catch (e) {
         fail++; console.log(`FAIL  ${f}: ${name}\n      ${String(e && e.stack || e).split("\n").slice(0, 4).join("\n      ")}`);
