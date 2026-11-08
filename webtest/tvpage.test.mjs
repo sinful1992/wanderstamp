@@ -135,6 +135,23 @@ export const tests = [
     await ctx.close();
   }],
 
+  ["notes: each visit shows its own note, and only there (USER #9686)", async ({ browser, base }) => {
+    const data = fixture();
+    const keswick = data.details[1].pins[0];
+    keswick.note = "";
+    keswick.visits[0].note = "";
+    keswick.visits[1].note = "Food horrible";
+    const { ctx, page } = await tvPage(browser, base, { state: { data } });
+    await waitScreen(page, "shelf");
+    await page.waitForFunction(() => document.querySelectorAll(".tripstamp").length === 3);
+    await key(page, "Enter");
+    await waitScreen(page, "journey");
+    const seen = await page.evaluate(() => WSTV.journey().stops.map((s) => [s.pin.title, s.note]));
+    assert.deepEqual(seen.filter(([t]) => t === "Keswick").map(([, n]) => n), ["", "Food horrible"]);
+    assert.equal(await page.locator("#j-note").innerText(), "");
+    await ctx.close();
+  }],
+
   ["an empty trip after a full one shows nothing of the one before (linus #9577 bug 1)", async ({ browser, base }) => {
     const { ctx, page } = await tvPage(browser, base);
     await page.waitForSelector(".tripstamp.focus");

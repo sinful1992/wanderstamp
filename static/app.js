@@ -477,7 +477,7 @@ function tripStops(pins) {
   for (const pin of pins) {
     const vs = pin.visits && pin.visits.length ? pin.visits
       : [{ at: pin.visited_at, until: pin.visited_at, n: pin.photo_count, whole: true }];
-    for (const v of vs) stops.push({ pin, at: v.at, until: v.until, n: v.n, whole: !!v.whole, key: `${pin.id}@${v.at}` });
+    for (const v of vs) stops.push({ pin, at: v.at, until: v.until, n: v.n, whole: !!v.whole, day: v.day, note: v.note, key: `${pin.id}@${v.at}` });
   }
   stops.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.pin.id - b.pin.id));
   // "again": back after being somewhere else, not the next morning at the hotel
@@ -1093,9 +1093,11 @@ function openStory(h, pinId) {
     // D1: the same number the pin wears on the map
     place.append(el("span", "stop-num", String(stops.indexOf(stop) + 1)), pin.title || (pin.kind === "photo" ? "Photo stop" : "Pin"));
     sec.appendChild(place);
-    // the note is about the place: said once, at its first stop
     const first = stops.find((s) => s.pin === pin) === stop;
-    if (pin.note && first) sec.appendChild(el("p", "story-note", pin.note));
+    // a note belongs to its visit; a pin with no visits (or an old snapshot)
+    // has only the pin's own note, said once
+    const stopNote = stop.note !== undefined ? stop.note : first ? pin.note : "";
+    if (stopNote) sec.appendChild(el("p", "story-note", stopNote));
     // F6: who dropped the pin, once, at its first stop
     if (pin.created_by && first) sec.appendChild(el("p", "story-by", `Added by ${pin.created_by}`));
     if (stop.n > 0) {
@@ -1125,7 +1127,7 @@ function openStory(h, pinId) {
     ed.onclick = (e) => {
       e.stopPropagation();
       sec.textContent = "";
-      sec.appendChild(editForm(pin));
+      sec.appendChild(editForm(pin, stop));
       const cancel = el("button", "linkish", "Cancel");
       cancel.onclick = (ev) => { ev.stopPropagation(); refreshStory(); };
       sec.appendChild(cancel);
@@ -1348,7 +1350,25 @@ function coverPick(photosPromise, current, onPick) {
   return frag;
 }
 
-function editForm(pin) {
+// The days a pin's note can belong to, oldest first: one entry per local day
+// (two visits on one day share a note), then notes left on a day with no visit.
+function noteDays(pin) {
+  const days = new Map();
+  for (const v of pin.visits || []) {
+    if (v.day && !days.has(v.day)) days.set(v.day, { day: v.day, note: v.note || "", gone: false });
+  }
+  for (const o of pin.other_notes || []) {
+    if (!days.has(o.day)) days.set(o.day, { day: o.day, note: o.note, gone: true });
+  }
+  return [...days.values()];
+}
+
+function noteDayLabel(d) {
+  const s = new Date(`${d.day}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  return d.gone ? `${s} (no photos there now)` : s;
+}
+
+function editForm(pin, stop) {
   const form = el("form", "pop-form");
   const title = el("input");
   title.type = "text"; title.placeholder = "Title"; title.value = pin.title; title.maxLength = 80;
@@ -1357,14 +1377,55 @@ function editForm(pin) {
   const save = el("button", "primary", "Save");
   save.type = "submit";
   let cover = pin.cover_asset;
-  form.append(title, note);
+  const days = noteDays(pin);
+  const start = days.find((d) => stop && d.day === stop.day) || days[0];
+  // the day the text in the box came from; saving under another day moves it
+  let fromDay = start ? start.day : "";
+  let loaded = start ? start.note : pin.note;
+  note.value = loaded;
+  const which = el("select", "note-day");
+  which.setAttribute("aria-label", "Which visit is this note about?");
+  for (const d of days) {
+    const o = el("option", null, noteDayLabel(d));
+    o.value = d.day;
+    which.appendChild(o);
+  }
+  if (start) which.value = start.day;
+  which.onchange = () => {
+    const d = days.find((x) => x.day === which.value);
+    if (d.note) {
+      if (note.value !== loaded && !confirm("That day already has a note. Show it instead of what you typed?")) {
+        which.value = fromDay;
+        return;
+      }
+      note.value = d.note;
+      loaded = d.note;
+      fromDay = d.day;
+    }
+    // a day with no note: the text stays and moves there on Save
+  };
+  form.append(title);
+  if (days.length > 1) {
+    const lab = el("label", "note-day-label", "Which visit?");
+    lab.appendChild(which);
+    form.appendChild(lab);
+  }
+  form.append(note);
   if (pin.photo_count > 0) {
     form.appendChild(coverPick(api("GET", `/api/pins/${pin.id}/photos`), pin.cover_asset, (a) => { cover = a; }));
   }
   form.appendChild(save);
   form.onsubmit = async (e) => {
     e.preventDefault();
-    const body = { title: title.value, note: note.value };
+    const body = { title: title.value };
+    const day = days.length ? which.value : "";
+    if (!day) {
+      if (note.value !== pin.note) body.note = note.value;
+    } else if (note.value !== loaded || day !== fromDay) {
+      body.note = note.value;
+      body.note_day = day;
+      if (day !== fromDay && loaded) body.from_day = fromDay;
+    }
     if (cover && cover !== pin.cover_asset) body.cover_asset = cover;
     await busy(submitter(e), async () => {
       await api("PATCH", `/api/pins/${pin.id}`, body);

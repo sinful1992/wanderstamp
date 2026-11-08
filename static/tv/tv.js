@@ -422,7 +422,7 @@ function buildStops(d) {
   for (const pin of d.pins) {
     const vs = pin.visits && pin.visits.length ? pin.visits
       : [{ at: pin.visited_at, until: pin.visited_at, whole: true }];
-    for (const v of vs) stops.push({ pin, at: v.at, until: v.until, whole: !!v.whole, photos: [] });
+    for (const v of vs) stops.push({ pin, at: v.at, until: v.until, whole: !!v.whole, note: v.note, photos: [] });
   }
   stops.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.pin.id - b.pin.id));
   const byPin = new Map();
@@ -515,7 +515,7 @@ function drawSlide() {
   $("j-stop").textContent = pin.title || (pin.kind === "photo" ? "Photo stop" : "Pin");
   // the note is about the place: shown at its first visit only, as the app does
   const firstVisit = jr.stops.findIndex((s) => s.pin === pin) === sl.si;
-  $("j-note").textContent = firstVisit ? (pin.note || "") : "";
+  $("j-note").textContent = stop.note !== undefined ? stop.note : firstVisit ? (pin.note || "") : "";
   const card = $("j-card");
   $("journey").classList.toggle("card-only", !sl.ph);
   card.classList.toggle("nophoto", !sl.ph);
