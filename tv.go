@@ -21,6 +21,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,7 @@ const (
 	tvNameMax      = 40
 	tvSeenEvery    = time.Minute
 	tvOrphanAfter  = 15 * time.Minute // a device row whose token was never collected
+	tvCollectGrace = time.Minute      // a code typed in just before it ran out can still be collected
 )
 
 // tvPollWait is how long GET /tv/pair/{poll} holds the request open; a var so
@@ -52,6 +54,16 @@ type tvPairing struct {
 	expires          time.Time
 	bound            chan struct{} // closed once a signed-in phone typed the code
 	token, name      string        // set when bound
+	collectBy        time.Time     // once bound: the TV must collect by then, even past expires
+}
+
+// gone is true once a pairing can no longer be collected: an untyped code
+// past its 5 minutes, or a typed-in one whose TV didn't come for it in time.
+func (pr *tvPairing) gone(now time.Time) bool {
+	if pr.token != "" {
+		return !now.Before(pr.collectBy)
+	}
+	return !now.Before(pr.expires)
 }
 
 type tvPairs struct {
@@ -97,7 +109,7 @@ func within(ts []time.Time, d time.Duration, now time.Time) []time.Time {
 // gc drops expired codes and old counters; the caller holds mu.
 func (p *tvPairs) gc(now time.Time) {
 	for c, pr := range p.byCode {
-		if !now.Before(pr.expires) {
+		if pr.gone(now) {
 			delete(p.byCode, c)
 			delete(p.byPoll, pr.poll)
 		}
@@ -220,7 +232,7 @@ func (a *app) handleTVPairStart(w http.ResponseWriter, r *http.Request) {
 // ok false means the poll is unknown, expired or already used.
 func (p *tvPairs) collect(poll string, now time.Time) (pr *tvPairing, ready, ok bool) {
 	pr = p.byPoll[poll]
-	if pr == nil || !now.Before(pr.expires) {
+	if pr == nil || pr.gone(now) {
 		return nil, false, false
 	}
 	if pr.token == "" {
@@ -346,6 +358,11 @@ func (a *app) handleTVPair(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := res.LastInsertId()
 	pr.token, pr.name = token, name
+	// typed in at 4:59, the TV's next poll may land after 5:00: it still collects
+	pr.collectBy = now.Add(tvCollectGrace)
+	if pr.expires.After(pr.collectBy) {
+		pr.collectBy = pr.expires
+	}
 	close(pr.bound)
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": name})
 }
@@ -648,5 +665,23 @@ func (a *app) tvDoor(static http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/tv/trips/{id}", a.tvAuth(a.handleTVTrip))
 	mux.HandleFunc("GET /api/tv/photo/{asset}/{kind}", a.tvAuth(a.handleTVPhoto))
 	mux.HandleFunc("/", http.NotFound)
-	return requestLog(securityHeaders(gzipJSON(mux)))
+	return requestLog(securityHeaders(gzipJSON(strictPath(mux))))
+}
+
+// strictPath answers 404 for any path that isn't already clean ("..", ".",
+// "//"), instead of the mux's redirect to the cleaned path: the door has
+// nothing at those addresses, so it says so (contract: everything else 404).
+func strictPath(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		clean := path.Clean(p)
+		if strings.HasSuffix(p, "/") && clean != "/" {
+			clean += "/"
+		}
+		if p == "" || clean != p {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

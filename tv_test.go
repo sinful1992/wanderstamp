@@ -433,7 +433,7 @@ func TestTVDoorServesNothingElse(t *testing.T) {
 	for _, p := range paths {
 		for _, h := range []map[string]string{nil, bearer(tok), f.signedIn()} {
 			r := tvDo(t, f.door.URL, p.method, p.path, "", h)
-			if r.code != 404 && r.code != 405 && !(r.code >= 300 && r.code < 400) {
+			if r.code != 404 && r.code != 405 {
 				t.Errorf("door %s %s: %d %.80s, want 404", p.method, p.path, r.code, r.body)
 			}
 			if r.code >= 300 && r.code < 400 {
@@ -620,6 +620,7 @@ func TestTVCodeLimits(t *testing.T) {
 	dp.mu.Lock()
 	for _, pr := range dp.byCode {
 		pr.token = "t" // all three typed in, none collected yet
+		pr.collectBy = time.Now().Add(time.Minute)
 	}
 	dp.mu.Unlock()
 	if rec := doorReq(d, "POST", "/tv/pair", "192.168.1.51:4000", nil); rec.Code != 429 {
@@ -764,5 +765,32 @@ func TestTVLastSeenThrottled(t *testing.T) {
 	f.a.db.QueryRow(`SELECT last_seen FROM tv_devices`).Scan(&seen)
 	if seen != recent {
 		t.Errorf("last_seen rewritten within a minute: %s", seen)
+	}
+}
+
+// A typed-in code the TV never comes for is gone once the grace has passed.
+func TestTVBoundCodeGraceEnds(t *testing.T) {
+	f := newTVFix(t)
+	code, poll := f.startCode(t)
+	if r := tvDo(t, f.main.URL, "POST", "/api/tv/pair", `{"code":"`+code+`","name":"Den"}`, f.signedIn()); r.code != 201 {
+		t.Fatal(r.code)
+	}
+	p := f.a.pairs()
+	p.mu.Lock()
+	pr := p.byPoll[poll]
+	if d := time.Until(pr.collectBy); d < 4*time.Minute {
+		t.Errorf("typed in at once: collectable for %v, want the code's own 5 minutes", d)
+	}
+	pr.expires = time.Now().Add(-time.Second)
+	pr.collectBy = time.Now().Add(-time.Millisecond)
+	p.mu.Unlock()
+	if r := tvDo(t, f.door.URL, "GET", "/tv/pair/"+poll, "", nil); r.code != 410 {
+		t.Errorf("poll after the grace: %d, want 410", r.code)
+	}
+	// and a typed-in code is never typed in twice, even inside the grace
+	code2, _ := f.startCode(t)
+	tvDo(t, f.main.URL, "POST", "/api/tv/pair", `{"code":"`+code2+`","name":"A"}`, f.signedIn())
+	if r := tvDo(t, f.main.URL, "POST", "/api/tv/pair", `{"code":"`+code2+`","name":"B"}`, f.signedIn()); r.code != 404 {
+		t.Errorf("second phone on a typed-in code: %d, want 404", r.code)
 	}
 }
