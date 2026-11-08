@@ -12,8 +12,10 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 import android.webkit.CookieManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -38,16 +40,7 @@ class MainActivity : Activity() {
 		super.onCreate(savedInstanceState)
 		window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-		web = WebView(this).apply {
-			setBackgroundColor(NAVY)
-			settings.javaScriptEnabled = true
-			settings.domStorageEnabled = true
-			settings.mediaPlaybackRequiresUserGesture = false
-			settings.userAgentString = settings.userAgentString + " WanderstampTV/" + BuildConfig.VERSION_NAME
-			isFocusable = true
-			isFocusableInTouchMode = true
-			webViewClient = Client()
-		}
+		web = newWebView()
 		CookieManager.getInstance().setAcceptCookie(true)
 
 		offline = offlineView()
@@ -61,6 +54,18 @@ class MainActivity : Activity() {
 
 		if (savedInstanceState == null || !restore(savedInstanceState)) web.loadUrl(BuildConfig.TV_URL)
 		web.requestFocus()
+	}
+
+	@SuppressLint("SetJavaScriptEnabled")
+	private fun newWebView(): WebView = WebView(this).apply {
+		setBackgroundColor(NAVY)
+		settings.javaScriptEnabled = true
+		settings.domStorageEnabled = true
+		settings.mediaPlaybackRequiresUserGesture = false
+		settings.userAgentString = settings.userAgentString + " WanderstampTV/" + BuildConfig.VERSION_NAME
+		isFocusable = true
+		isFocusableInTouchMode = true
+		webViewClient = Client()
 	}
 
 	private fun restore(state: Bundle): Boolean = web.restoreState(state) != null
@@ -116,6 +121,16 @@ class MainActivity : Activity() {
 		return true
 	}
 
+	@SuppressLint("SetJavaScriptEnabled")
+	private fun recreateWeb() {
+		val root = web.parent as FrameLayout
+		root.removeView(web)
+		web.destroy()
+		web = newWebView()
+		root.addView(web, 0, FrameLayout.LayoutParams(-1, -1))
+		reload()
+	}
+
 	private fun reload() {
 		main.removeCallbacks(retry)
 		failed = false
@@ -141,6 +156,19 @@ class MainActivity : Activity() {
 
 		override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
 			if (request.isForMainFrame) showOffline()
+		}
+
+		// a 502/503 while the server restarts (a deploy) would leave Chromium's
+		// error page up for good: show ours, which retries
+		override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+			if (request.isForMainFrame && response.statusCode >= 500) showOffline()
+		}
+
+		// the page's renderer died (low memory on a TV): start a new WebView
+		// instead of letting the whole app close
+		override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+			recreateWeb()
+			return true
 		}
 	}
 

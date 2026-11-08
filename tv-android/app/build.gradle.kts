@@ -13,7 +13,7 @@ android {
 
 	defaultConfig {
 		applicationId = "com.wanderstamp.tv"
-		minSdk = 23
+		minSdk = 26 // onRenderProcessGone; the Shield runs Android 11, the Bravia 9+
 		targetSdk = 36
 		versionCode = 1
 		versionName = "1.0.0"
