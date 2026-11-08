@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Tests
+- TV journey: a check that the current and the next stop sit in the open map area (not off the map, nor under the postcard, the route bar or the remote hints) at every stop of a Warwick-shaped trip and a 20-stop trip. It fails on 1.15.3, which never zooms out past 12.
+
 ## 1.15.3 (2026-11-08)
 
 ### Frontend
