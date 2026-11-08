@@ -1403,12 +1403,22 @@ function editForm(pin, stop) {
       fromDay = d.day;
     }
     // a day with no note: the text stays and moves there on Save
+    moveHint();
   };
+  const hint = el("p", "form-hint note-move");
+  const moveHint = () => {
+    const d = days.find((x) => x.day === fromDay);
+    const moving = d && which.value !== fromDay && loaded && note.value === loaded;
+    hint.textContent = moving ? `Moves the note from ${noteDayLabel(d)}` : "";
+    hint.hidden = !moving;
+  };
+  note.addEventListener("input", moveHint);
+  hint.hidden = true;
   form.append(title);
   if (days.length > 1) {
     const lab = el("label", "note-day-label", "Which visit?");
     lab.appendChild(which);
-    form.appendChild(lab);
+    form.append(lab, hint);
   }
   form.append(note);
   if (pin.photo_count > 0) {
@@ -1424,7 +1434,8 @@ function editForm(pin, stop) {
     } else if (note.value !== loaded || day !== fromDay) {
       body.note = note.value;
       body.note_day = day;
-      if (day !== fromDay && loaded) body.from_day = fromDay;
+      // moved only if it is still the same words; new words are a new note
+      if (day !== fromDay && loaded && note.value === loaded) body.from_day = fromDay;
     }
     if (cover && cover !== pin.cover_asset) body.cover_asset = cover;
     await busy(submitter(e), async () => {

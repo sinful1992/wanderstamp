@@ -64,6 +64,19 @@ export const tests = [
     await ctx.close();
   }],
 
+  ["notes: new words on another day are a new note and leave the first one (linus #9744)", async ({ browser, base }) => {
+    const { ctx, page, sent } = await setup(browser, base, [V("2026-09-25", "X"), V("2026-09-26", "")]);
+    await edit(page, 0);
+    await page.selectOption("select.note-day", "2026-09-26");
+    assert.equal(await page.locator(".note-move").innerText(), "Moves the note from Fri 25 Sept");
+    await page.fill("form.pop-form textarea", "Breakfast ok");
+    assert.equal(await page.locator(".note-move").isVisible(), false);
+    await save(page);
+    await waitSent(page, sent);
+    assert.deepEqual(sent[0], { title: "Premier", note: "Breakfast ok", note_day: "2026-09-26" });
+    await ctx.close();
+  }],
+
   ["notes: picking a day with a note shows it, and asks before dropping typed text", async ({ browser, base }) => {
     const { ctx, page } = await setup(browser, base, [V("2026-09-25", "first"), V("2026-09-26", "second")]);
     await edit(page, 0);
