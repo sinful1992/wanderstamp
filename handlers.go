@@ -768,19 +768,20 @@ func parseWhen(s string, endOfDay bool) (time.Time, bool) {
 // --- pins ---
 
 type pinOut struct {
-	ID         int64   `json:"id"`
-	HolidayID  int64   `json:"holiday_id"`
-	Kind       string  `json:"kind"`
-	Lat        float64 `json:"lat"`
-	Lng        float64 `json:"lng"`
-	Title      string  `json:"title"`
-	Note       string  `json:"note"`
-	CreatedAt  string  `json:"created_at"`
-	VisitedAt  string  `json:"visited_at"`
-	PhotoCount int     `json:"photo_count"`
-	CoverAsset string  `json:"cover_asset"`
-	Visits     []visit `json:"visits"`
-	CreatedBy  string  `json:"created_by"` // F6; '' = unknown, and always '' on a share
+	ID         int64     `json:"id"`
+	HolidayID  int64     `json:"holiday_id"`
+	Kind       string    `json:"kind"`
+	Lat        float64   `json:"lat"`
+	Lng        float64   `json:"lng"`
+	Title      string    `json:"title"`
+	Note       string    `json:"note"`
+	CreatedAt  string    `json:"created_at"`
+	VisitedAt  string    `json:"visited_at"`
+	PhotoCount int       `json:"photo_count"`
+	CoverAsset string    `json:"cover_asset"`
+	Visits     []visit   `json:"visits"`
+	CreatedBy  string    `json:"created_by"`  // F6; '' = unknown, and always '' on a share
+	OtherNotes []dayNote `json:"other_notes"` // task 136: notes on a day with no visit now
 }
 
 // queryPins returns pins for one holiday, or every pin when holidayID is 0.
@@ -831,7 +832,93 @@ func (a *app) queryPins(holidayID int64) ([]pinOut, error) {
 		return nil, err
 	}
 	fillVisits(out, shots)
+	notes, err := a.queryVisitNotes(holidayID)
+	if err != nil {
+		return nil, err
+	}
+	applyVisitNotes(out, notes)
 	return out, nil
+}
+
+// queryVisitNotes is visit_notes by pin and day, for one holiday or all (0).
+func (a *app) queryVisitNotes(holidayID int64) (map[int64]map[string]string, error) {
+	rows, err := a.reader().Query(`
+		SELECT vn.pin_id, vn.day, vn.note FROM visit_notes vn JOIN pins p ON p.id = vn.pin_id
+		WHERE ? = 0 OR p.holiday_id = ?`, holidayID, holidayID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]map[string]string{}
+	for rows.Next() {
+		var pin int64
+		var day, note string
+		if err := rows.Scan(&pin, &day, &note); err != nil {
+			return nil, err
+		}
+		if out[pin] == nil {
+			out[pin] = map[string]string{}
+		}
+		out[pin][day] = note
+	}
+	return out, rows.Err()
+}
+
+// writeVisitNote (task 136) sets the note of one visit day of a pin, in one
+// transaction: from_day's note goes first (a note moved to another visit),
+// and a pin's old single note (pins.note, shown on its first visit while the
+// pin has no rows) moves to a row on that first visit's day, so it is neither
+// lost nor shown twice. An empty note deletes the day's row.
+func (a *app) writeVisitNote(pinID int64, day string, fromDay *string, note string) error {
+	var hid int64
+	if err := a.db.QueryRow(`SELECT holiday_id FROM pins WHERE id = ?`, pinID).Scan(&hid); err != nil {
+		return err
+	}
+	firstDay := ""
+	if pins, err := a.queryPins(hid); err != nil {
+		return err
+	} else {
+		for _, p := range pins {
+			if p.ID == pinID && len(p.Visits) > 0 {
+				firstDay = p.Visits[0].Day
+			}
+		}
+	}
+	tx, err := a.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var legacy string
+	var rows int
+	if err := tx.QueryRow(`SELECT note, (SELECT COUNT(*) FROM visit_notes WHERE pin_id = pins.id) FROM pins WHERE id = ?`, pinID).Scan(&legacy, &rows); err != nil {
+		return err
+	}
+	if legacy != "" && rows == 0 && firstDay != "" {
+		if fromDay == nil || *fromDay != firstDay {
+			if _, err := tx.Exec(`INSERT INTO visit_notes (pin_id, day, note) VALUES (?, ?, ?)`, pinID, firstDay, legacy); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`UPDATE pins SET note = '' WHERE id = ?`, pinID); err != nil {
+			return err
+		}
+	}
+	if fromDay != nil && *fromDay != day {
+		if _, err := tx.Exec(`DELETE FROM visit_notes WHERE pin_id = ? AND day = ?`, pinID, *fromDay); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(note) == "" {
+		_, err = tx.Exec(`DELETE FROM visit_notes WHERE pin_id = ? AND day = ?`, pinID, day)
+	} else {
+		_, err = tx.Exec(`INSERT INTO visit_notes (pin_id, day, note) VALUES (?, ?, ?)
+			ON CONFLICT (pin_id, day) DO UPDATE SET note = excluded.note`, pinID, day, note)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (a *app) handleListPins(w http.ResponseWriter, r *http.Request) {
@@ -906,9 +993,33 @@ func (a *app) handleUpdatePin(w http.ResponseWriter, r *http.Request) {
 		Lat        *float64 `json:"lat"`
 		Lng        *float64 `json:"lng"`
 		CoverAsset *string  `json:"cover_asset"`
+		NoteDay    *string  `json:"note_day"` // task 136: the note is this visit day's
+		FromDay    *string  `json:"from_day"` // task 136: the visit day the note moves from
 	}
 	if !readJSON(w, r, &req) {
 		return
+	}
+	if req.FromDay != nil && req.NoteDay == nil {
+		httpError(w, http.StatusBadRequest, "from_day needs note_day")
+		return
+	}
+	if req.NoteDay != nil {
+		if req.Note == nil {
+			httpError(w, http.StatusBadRequest, "note_day needs note")
+			return
+		}
+		if !validDay(*req.NoteDay) || req.FromDay != nil && !validDay(*req.FromDay) {
+			httpError(w, http.StatusBadRequest, "day must be YYYY-MM-DD")
+			return
+		}
+		if err := a.writeVisitNote(id, *req.NoteDay, req.FromDay, *req.Note); err == sql.ErrNoRows {
+			httpError(w, http.StatusNotFound, "no such pin")
+			return
+		} else if err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		req.Note = nil // written to the visit, not to pins.note
 	}
 	if req.Title != nil {
 		a.db.Exec(`UPDATE pins SET title = ? WHERE id = ?`, strings.TrimSpace(*req.Title), id)
@@ -1038,6 +1149,7 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		CoverAsset string     `json:"cover_asset"`
 		CreatedAt  string     `json:"created_at"`
 		Photos     []photoExp `json:"photos"`
+		VisitNotes []dayNote  `json:"visit_notes,omitempty"` // task 136
 	}
 	type packingExp struct {
 		Label   string `json:"label"`
@@ -1116,6 +1228,24 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 		if p := byPin[pid]; p != nil {
 			p.Photos = append(p.Photos, ph)
+		}
+	}
+
+	vnRows, err := a.db.Query(`SELECT pin_id, day, note FROM visit_notes ORDER BY pin_id, day`)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer vnRows.Close()
+	for vnRows.Next() {
+		var pid int64
+		var vn dayNote
+		if err := vnRows.Scan(&pid, &vn.Day, &vn.Note); err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		if p := byPin[pid]; p != nil {
+			p.VisitNotes = append(p.VisitNotes, vn)
 		}
 	}
 

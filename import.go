@@ -39,6 +39,7 @@ type importPin struct {
 	CoverAsset string        `json:"cover_asset"`
 	CreatedAt  string        `json:"created_at"`
 	Photos     []importPhoto `json:"photos"`
+	VisitNotes []dayNote     `json:"visit_notes"` // task 136; absent in older exports
 }
 
 type importHoliday struct {
@@ -258,6 +259,15 @@ func importHolidayTx(tx *sql.Tx, h importHoliday, res *importResult) error {
 		}
 		pid, _ := r.LastInsertId()
 		res.Pins++
+		for _, vn := range p.VisitNotes {
+			if !validDay(vn.Day) || strings.TrimSpace(vn.Note) == "" {
+				continue
+			}
+			if _, err := tx.Exec(`INSERT INTO visit_notes (pin_id, day, note) VALUES (?, ?, ?)
+				ON CONFLICT (pin_id, day) DO UPDATE SET note = excluded.note`, pid, vn.Day, vn.Note); err != nil {
+				return err
+			}
+		}
 		for _, ph := range p.Photos {
 			typ := ph.Type
 			if typ == "" {

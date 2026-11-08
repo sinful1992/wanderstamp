@@ -20,6 +20,14 @@ type visit struct {
 	At    string `json:"at"`
 	Until string `json:"until"`
 	N     int    `json:"n"`
+	Day   string `json:"day"`  // task 136: localDay of At, the key of the visit's note
+	Note  string `json:"note"` // task 136: this visit's own note, see applyVisitNotes
+}
+
+// dayNote is one row of visit_notes as the API shows it.
+type dayNote struct {
+	Day  string `json:"day"`
+	Note string `json:"note"`
 }
 
 // shot is a photo's pin and time, all that visits are made of.
@@ -111,4 +119,44 @@ func fillVisits(pins []pinOut, shots []shot) {
 			pins[i].VisitedAt = pins[i].Visits[0].At
 		}
 	}
+}
+
+// applyVisitNotes (task 136) gives each visit its day and its note. A note
+// belongs to a place on a local day (visit_notes, keyed pin + day): it shows
+// on the first visit of that day, and later visits that day show none. A pin
+// with no rows yet keeps its one old note (pins.note) on its first visit, as
+// before notes were per visit. A row whose day has no visit any more (photos
+// moved off the pin) is never dropped: it goes to other_notes, oldest first.
+func applyVisitNotes(pins []pinOut, notes map[int64]map[string]string) {
+	for i := range pins {
+		p := &pins[i]
+		p.OtherNotes = []dayNote{}
+		rows := notes[p.ID]
+		seen := map[string]bool{}
+		for j := range p.Visits {
+			v := &p.Visits[j]
+			v.Day = localDay(v.At, p.Lng)
+			if seen[v.Day] {
+				continue
+			}
+			seen[v.Day] = true
+			if len(rows) > 0 {
+				v.Note = rows[v.Day]
+			} else if j == 0 {
+				v.Note = p.Note
+			}
+		}
+		for day, n := range rows {
+			if !seen[day] {
+				p.OtherNotes = append(p.OtherNotes, dayNote{day, n})
+			}
+		}
+		sort.Slice(p.OtherNotes, func(a, b int) bool { return p.OtherNotes[a].Day < p.OtherNotes[b].Day })
+	}
+}
+
+// validDay is a visit_notes day: YYYY-MM-DD, a real date.
+func validDay(s string) bool {
+	t, err := time.Parse("2006-01-02", s)
+	return err == nil && t.Format("2006-01-02") == s
 }

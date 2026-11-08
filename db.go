@@ -137,6 +137,16 @@ CREATE TABLE IF NOT EXISTS tv_devices (
   last_seen  TEXT NOT NULL DEFAULT ''
 );
 
+-- task 136: a note per visit, i.e. per place and local day (localDay in
+-- visits.go). A pin with no rows still shows its old pins.note on its first
+-- visit; the first per-visit write moves that note here (handleUpdatePin).
+CREATE TABLE IF NOT EXISTS visit_notes (
+  pin_id INTEGER NOT NULL REFERENCES pins(id) ON DELETE CASCADE,
+  day    TEXT NOT NULL,
+  note   TEXT NOT NULL,
+  PRIMARY KEY (pin_id, day)
+);
+
 CREATE INDEX IF NOT EXISTS idx_pins_holiday ON pins(holiday_id);
 CREATE INDEX IF NOT EXISTS idx_tracks_holiday ON tracks(holiday_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
