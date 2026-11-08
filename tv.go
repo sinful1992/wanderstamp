@@ -263,7 +263,7 @@ func cleanPublicURL(raw string) (string, error) {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return "", fmt.Errorf("%q: want an http:// or https:// address", raw)
 	}
-	if u.Host == "" || u.User != nil || strings.ContainsAny(raw, "?#") {
+	if u.Hostname() == "" || u.User != nil || strings.ContainsAny(raw, "?#") {
 		return "", fmt.Errorf("%q: want just the address, like https://wanderstamp.example.com", raw)
 	}
 	return strings.TrimRight(u.String(), "/"), nil
