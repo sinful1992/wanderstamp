@@ -2,6 +2,9 @@
 
 ## 1.16.0 (unreleased)
 
+### Frontend
+- TV pairing: the TV shows a QR code beside its 4-letter code. Scan it, tap Confirm, and the TV is paired, in the phone's browser or the Wanderstamp app (app 1.2.0). The code still works.
+
 ### Server
 - TV pairing by QR code: with the new `PUBLIC_URL` setting (the address phones open the app at), `POST /tv/pair` also returns `pair_url` (`<PUBLIC_URL>/#pair=CODE`) and `qr_svg`, a QR code of it. The QR carries only the code the screen already shows, never the poll token, and pairing still needs a signed-in Confirm on the phone. Without `PUBLIC_URL` nothing changes. A `PUBLIC_URL` that isn't a plain http(s) address is ignored with a warning.
 
