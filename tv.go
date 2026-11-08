@@ -168,11 +168,24 @@ func (a *app) handleTVPairStart(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusTooManyRequests, "too many codes, wait a minute")
 		return
 	}
+	// A device asking again (the TV app relaunched, the page reloaded) has no
+	// use for its older codes: its oldest one not yet typed in makes room, so
+	// a TV restarted a few times never waits minutes for a code.
 	mine := 0
+	var oldest *tvPairing
 	for _, pr := range p.byCode {
-		if pr.peer == peer {
-			mine++
+		if pr.peer != peer {
+			continue
 		}
+		mine++
+		if pr.token == "" && (oldest == nil || pr.expires.Before(oldest.expires)) {
+			oldest = pr
+		}
+	}
+	if mine >= tvMaxOpenPeer && oldest != nil {
+		delete(p.byCode, oldest.code)
+		delete(p.byPoll, oldest.poll)
+		mine--
 	}
 	if mine >= tvMaxOpenPeer || len(p.byCode) >= tvMaxOpen {
 		w.Header().Set("Retry-After", "60")

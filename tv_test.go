@@ -578,16 +578,62 @@ func doorReq(a *app, method, path, peer string, hdr map[string]string) *httptest
 
 func TestTVCodeLimits(t *testing.T) {
 	a := newTestApp(t)
-	// one device holds at most 3 open codes, whatever X-Forwarded-For it types
+	// one device holds at most 3 open codes, whatever X-Forwarded-For it types:
+	// asking again replaces its oldest code, so a relaunched TV never waits
+	var polls []string
 	for i := 0; i < 5; i++ {
 		rec := doorReq(a, "POST", "/tv/pair", "192.168.1.50:4000", map[string]string{"X-Forwarded-For": fmt.Sprintf("10.0.0.%d", i)})
-		want := 200
-		if i >= tvMaxOpenPeer {
-			want = 429
+		if rec.Code != 200 {
+			t.Fatalf("code %d from one device: %d, want 200", i, rec.Code)
 		}
-		if rec.Code != want {
-			t.Errorf("code %d from one device: %d, want %d", i, rec.Code, want)
+		var out map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		polls = append(polls, out["poll"].(string))
+		time.Sleep(2 * time.Millisecond) // distinct expiry times
+	}
+	p := a.pairs()
+	p.mu.Lock()
+	mine := len(p.byCode)
+	_, firstLeft := p.byPoll[polls[0]]
+	_, secondLeft := p.byPoll[polls[1]]
+	_, lastLeft := p.byPoll[polls[4]]
+	p.mu.Unlock()
+	if mine != tvMaxOpenPeer || firstLeft || secondLeft || !lastLeft {
+		t.Errorf("one device: %d open (want %d), first %v second %v last %v", mine, tvMaxOpenPeer, firstLeft, secondLeft, lastLeft)
+	}
+	if rec := doorReq(a, "GET", "/tv/pair/"+polls[0], "192.168.1.50:4000", nil); rec.Code != 410 {
+		t.Errorf("replaced code's poll: %d, want 410", rec.Code)
+	}
+	// a code someone already typed is never the one replaced
+	d := newTestApp(t)
+	var bound string
+	for i := 0; i < tvMaxOpenPeer; i++ {
+		rec := doorReq(d, "POST", "/tv/pair", "192.168.1.51:4000", nil)
+		var out map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		if i == 0 {
+			bound = out["poll"].(string)
 		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	dp := d.pairs()
+	dp.mu.Lock()
+	for _, pr := range dp.byCode {
+		pr.token = "t" // all three typed in, none collected yet
+	}
+	dp.mu.Unlock()
+	if rec := doorReq(d, "POST", "/tv/pair", "192.168.1.51:4000", nil); rec.Code != 429 {
+		t.Errorf("4th code with 3 typed-in ones: %d, want 429", rec.Code)
+	}
+	dp.mu.Lock()
+	_, ok := dp.byPoll[bound]
+	dp.mu.Unlock()
+	if !ok {
+		t.Error("a typed-in code was replaced")
+	}
+	a = newTestApp(t)
+	for i := 0; i < tvMaxOpenPeer; i++ {
+		doorReq(a, "POST", "/tv/pair", "192.168.1.50:4000", nil)
 	}
 	// all devices together hold at most 20
 	got := 0
