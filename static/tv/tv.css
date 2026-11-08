@@ -67,13 +67,12 @@ body { font-family: var(--prose); color: var(--paper); cursor: none; }
 /* A: journey */
 #journey .map { filter: saturate(.85); }
 #journey .vignette { position: absolute; inset: 0; pointer-events: none; z-index: 400;
-  background: radial-gradient(ellipse 52% 50% at 18% 22%, rgba(20,38,57,.92) 45%, rgba(20,38,57,0) 100%), linear-gradient(90deg, rgba(20,38,57,.35) 0%, rgba(20,38,57,0) 46%),
-              linear-gradient(0deg, rgba(20,38,57,.55) 0%, rgba(20,38,57,0) 22%); }
+  background: linear-gradient(0deg, rgba(20,38,57,.55) 0%, rgba(20,38,57,0) 22%); }
 #journey .where, #journey .postcard, #journey .route, #journey .remote, #journey .paused, #journey .theend { z-index: 500; }
-.postcard { position: absolute; right: 120px; top: 110px; width: 1000px; margin: 0; padding: 22px 22px 86px; background: var(--paper);
+.postcard { position: absolute; right: 40px; top: 60px; width: 1060px; margin: 0; padding: 22px 22px 70px; background: var(--paper);
   transform: rotate(-1.6deg); box-shadow: 0 30px 60px rgba(10,20,32,.45), 0 4px 10px rgba(10,20,32,.3); transition: opacity .4s ease; }
 .postcard.nophoto { opacity: 0; }
-.postcard .photo { position: relative; height: 640px; overflow: hidden; background: var(--paper-2); }
+.postcard .photo { position: relative; height: 760px; overflow: hidden; background: var(--paper-2); }
 .postcard .photo img { width: 100%; height: 100%; object-fit: cover; display: block; animation: drift 7s ease-out both; }
 .postcard .photo img.contain { object-fit: contain; animation: none; }
 @keyframes drift { from { transform: scale(1.02); } to { transform: scale(1.09) translate(-1.5%, -1%); } }
@@ -84,7 +83,7 @@ body { font-family: var(--prose); color: var(--paper); cursor: none; }
 .inkstamp .day { font-size: 40px; display: block; }
 .inkstamp .day .num { font-weight: 700; }
 .inkstamp .date { font-size: 26px; display: block; margin-top: 6px; }
-.where { position: absolute; left: 96px; top: 110px; width: 640px; }
+.where { position: absolute; left: 60px; top: 74px; width: 640px; box-sizing: content-box; padding: 36px; border-radius: 14px; background: rgba(20,38,57,.86); }
 .where .trip { font-family: var(--stamp); font-size: 34px; letter-spacing: 4px; color: var(--gold); }
 .where .stop { font-family: var(--stamp); font-size: 112px; line-height: .95; letter-spacing: 2px; margin: 14px 0 22px; color: var(--paper);
   text-shadow: 0 3px 18px rgba(0,0,0,.35); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

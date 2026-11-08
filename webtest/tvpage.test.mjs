@@ -431,21 +431,26 @@ export const tests = [
     await ctx.close();
   }],
 
-  ["a short hop slides the map instead of zooming out and back (USER #9626)", async ({ browser, base }) => {
+  ["the journey map shows the whole trip and stays still from stop to stop (USER #9664)", async ({ browser, base }) => {
     const { ctx, page } = await tvPage(browser, base);
     await page.waitForSelector(".tripstamp.focus");
     await page.evaluate(() => {
       window.__moves = [];
-      for (const k of ["flyTo", "panTo"]) { const o = L.Map.prototype[k]; L.Map.prototype[k] = function (...a) { window.__moves.push(k); return o.apply(this, a); }; }
+      for (const k of ["flyTo", "panTo", "setView"]) { const o = L.Map.prototype[k]; L.Map.prototype[k] = function (...a) { window.__moves.push(k); return o.apply(this, a); }; }
+      const init = L.Map.prototype.initialize;
+      L.Map.prototype.initialize = function (...a) { init.apply(this, a); window.__jm = this; };
     });
     await key(page, "Enter");
     await waitScreen(page, "journey");
     await page.waitForFunction(() => document.querySelectorAll("#j-route .s").length > 0);
-    await page.waitForTimeout(3000); // the opening move has landed
+    await page.waitForTimeout(800);
+    const view = () => page.evaluate(() => { const c = window.__jm.getCenter(); return [c.lat.toFixed(6), c.lng.toFixed(6), window.__jm.getZoom()].join(); });
+    const before = await view();
     await page.evaluate(() => { window.__moves.length = 0; });
     await key(page, "ArrowDown");
-    await page.waitForFunction(() => window.__moves.length > 0);
-    assert.deepEqual(await page.evaluate(() => window.__moves), ["panTo"]);
+    await page.waitForTimeout(800);
+    assert.deepEqual(await page.evaluate(() => window.__moves), []);
+    assert.equal(await view(), before);
     await ctx.close();
   }],
 

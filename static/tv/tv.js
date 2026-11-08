@@ -465,7 +465,7 @@ async function openJourney(t) {
   $("j-trip").textContent = t.name || "";
   drawJourneyRoute();
   if (!jr.slides.length) { endJourney(); return; }
-  drawSlide(true);
+  drawSlide();
 }
 
 function stopJourney() {
@@ -487,10 +487,10 @@ function drawJourneyRoute() {
     seen.set(s.pin.id, m);
   });
   jr.pinMarkers = seen;
-  if (pts.length) journeyMap.fitBounds(pts, { paddingTopLeft: [180, 520], paddingBottomRight: [1180, 190], maxZoom: 13, animate: false });
+  if (pts.length) journeyMap.fitBounds(pts, { paddingTopLeft: [90, 430], paddingBottomRight: [1150, 190], maxZoom: 13, animate: false });
 }
 
-function drawSlide(fly) {
+function drawSlide() {
   stopJourney();
   $("j-end").hidden = true;
   jr.ended = false;
@@ -523,7 +523,7 @@ function drawSlide(fly) {
     preloadNext();
   }
   if (sl.si !== jr.lastStop) {
-    moveToStop(sl.si, fly);
+    moveToStop(sl.si);
     jr.lastStop = sl.si;
   }
   drawRouteBar(sl.si);
@@ -536,7 +536,7 @@ function preloadNext() {
   if (nx && nx.ph) { const im = new Image(); im.src = photoURL(nx.ph.asset_id, "preview"); }
 }
 
-function moveToStop(si, fly) {
+function moveToStop(si) {
   const s = jr.stops[si];
   const pts = jr.stops.slice(0, si + 1).map((x) => [x.pin.lat, x.pin.lng]);
   jr.doneLine.setLatLngs(pts);
@@ -547,17 +547,6 @@ function moveToStop(si, fly) {
     m.setRadius(now ? 16 : 10);
     if (now) m.bringToFront();
   }
-  // the stop sits in the open area left of the postcard, under its name
-  // a whole zoom draws the tiles 1:1, so the map rests sharp
-  const z = Math.round(Math.max(journeyMap.getZoom(), 12));
-  const target = L.latLng(s.pin.lat, s.pin.lng);
-  const p = journeyMap.project(target, z).add([520, -60]);
-  const center = journeyMap.unproject(p, z);
-  // a short hop slides the sharp tiles; flyTo zooms out and back, stretching them
-  const hop = journeyMap.project(journeyMap.getCenter(), z).distanceTo(journeyMap.project(center, z));
-  if (fly && journeyMap.getZoom() === z && hop < 1920) journeyMap.panTo(center, { animate: true, duration: 1.6, easeLinearity: 0.25 });
-  else if (fly) journeyMap.flyTo(center, z, { duration: 2.2 });
-  else journeyMap.setView(center, z, { animate: false });
 }
 
 function drawRouteBar(si) {
@@ -578,7 +567,7 @@ function drawRouteBar(si) {
 }
 
 function nextSlide() {
-  if (jr.i < jr.slides.length - 1) { jr.i++; drawSlide(true); }
+  if (jr.i < jr.slides.length - 1) { jr.i++; drawSlide(); }
   else endJourney();
 }
 
@@ -602,25 +591,25 @@ handlers.journey = (k) => {
   if (jr.ended) {
     if (k === "ok" || k === "playpause") {
       if (!jr.slides.length) return;
-      jr.i = 0; jr.paused = false; jr.lastStop = -1; drawSlide(true);
-    } else if (k === "left" && jr.slides.length) { jr.i = jr.slides.length - 1; jr.lastStop = -1; drawSlide(false); }
+      jr.i = 0; jr.paused = false; jr.lastStop = -1; drawSlide();
+    } else if (k === "left" && jr.slides.length) { jr.i = jr.slides.length - 1; jr.lastStop = -1; drawSlide(); }
     return;
   }
   const sl = jr.slides[jr.i];
   if (k === "ok" || k === "playpause") {
     jr.paused = !jr.paused;
-    drawSlide(false);
+    drawSlide();
   } else if (k === "right") {
-    if (jr.i < jr.slides.length - 1) { jr.i++; drawSlide(true); } else endJourney();
+    if (jr.i < jr.slides.length - 1) { jr.i++; drawSlide(); } else endJourney();
   } else if (k === "left") {
-    if (jr.i > 0) { jr.i--; drawSlide(true); }
+    if (jr.i > 0) { jr.i--; drawSlide(); }
   } else if (k === "down") {
-    if (sl.si < jr.stops.length - 1) { jr.i = stopStart(sl.si + 1); drawSlide(true); } else endJourney();
+    if (sl.si < jr.stops.length - 1) { jr.i = stopStart(sl.si + 1); drawSlide(); } else endJourney();
   } else if (k === "up") {
     // to the start of this stop, or the one before when already there
     const here = stopStart(sl.si);
     jr.i = jr.i > here || sl.si === 0 ? here : stopStart(sl.si - 1);
-    drawSlide(true);
+    drawSlide();
   }
 };
 
