@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
 	id("com.android.application")
 }
@@ -5,7 +7,7 @@ plugins {
 // The /tv page this app opens. Override for staging: ./gradlew assembleDebug -PtvUrl=http://192.168.1.15:8099/tv
 val tvUrl = (findProperty("tvUrl") as String?) ?: "http://192.168.1.15:8097/tv"
 // res/xml/network_security_config.xml allows plain HTTP to the home server only
-check(java.net.URI(tvUrl).host == "192.168.1.15") { "tvUrl must be on 192.168.1.15 (network_security_config): $tvUrl" }
+check(URI(tvUrl).host == "192.168.1.15") { "tvUrl must be on 192.168.1.15 (network_security_config): $tvUrl" }
 
 android {
 	namespace = "com.wanderstamp.tv"

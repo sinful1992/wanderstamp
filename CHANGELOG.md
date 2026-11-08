@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### TV app
+- The TV app's Gradle script compiles: `java.net.URI` resolved to Gradle's `java` extension, so the APK could not be built.
+
 ## 1.15.0 (2026-11-08)
 
 ### Server
