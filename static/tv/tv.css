@@ -90,11 +90,11 @@ body { font-family: var(--prose); color: var(--paper); cursor: none; }
 .inkstamp .day { font-size: 40px; display: block; }
 .inkstamp .day .num { font-weight: 700; }
 .inkstamp .date { font-size: 26px; display: block; margin-top: 6px; }
-.where { position: absolute; left: 60px; top: 74px; width: 640px; box-sizing: content-box; padding: 36px; border-radius: 14px; background: rgba(20,38,57,.86); }
-.where .trip { font-family: var(--stamp); font-size: 34px; letter-spacing: 4px; color: var(--gold); }
-.where .stop { font-family: var(--stamp); font-size: 112px; line-height: .95; letter-spacing: 2px; margin: 14px 0 22px; color: var(--paper);
-  text-shadow: 0 3px 18px rgba(0,0,0,.35); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.where .stopnote { font-size: 30px; line-height: 1.5; color: var(--paper-2); max-width: 560px; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+.where { position: absolute; left: 60px; top: 40px; width: 640px; box-sizing: content-box; padding: 24px 36px; border-radius: 14px; background: rgba(20,38,57,.86); }
+.where .trip { font-family: var(--stamp); font-size: 34px; letter-spacing: 4px; color: var(--gold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.where .stop { font-family: var(--stamp); font-size: 84px; line-height: .95; letter-spacing: 2px; margin: 10px 0 14px; color: var(--paper);
+  text-shadow: 0 3px 18px rgba(0,0,0,.35); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.where .stopnote { font-size: 28px; line-height: 1.5; color: var(--paper-2); max-width: 560px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
   text-shadow: 0 2px 10px rgba(0,0,0,.4); }
 #journey.card-only .where { width: 1200px; }
 #journey.card-only .stopnote { max-width: 1100px; }

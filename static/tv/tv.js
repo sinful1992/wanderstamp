@@ -489,7 +489,7 @@ function drawJourneyRoute() {
     seen.set(s.pin.id, m);
   });
   jr.pinMarkers = seen;
-  if (pts.length) journeyMap.fitBounds(pts, { paddingTopLeft: [90, 430], paddingBottomRight: [1150, 190], maxZoom: 13, animate: false });
+  if (pts.length) journeyMap.fitBounds(pts, { paddingTopLeft: [90, 470], paddingBottomRight: [1150, 190], maxZoom: 13, animate: false });
 }
 
 function drawSlide() {
