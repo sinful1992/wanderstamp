@@ -8,6 +8,13 @@
 - A paired TV reads every trip that isn't planned, in the share shape (no way-there photo pins, no names): `GET /api/tv/trips`, `GET /api/tv/trips/{id}` with all the trip's photos, and `GET /api/tv/photo/{id}/thumb|preview`.
 - Limits: a code lives 5 minutes; one device may hold 3 open codes and ask for 10 a minute, 20 open codes in all; 10 wrong codes in 15 minutes stop an account typing more. A TV whose token was never collected is removed after 15 minutes. Poll ids never reach the log.
 
+### Frontend
+- The `/tv` page, made for a TV seen from the sofa and driven by the remote: a pairing screen with the 4-letter code; **Our trips**, every trip as a photo stamp with its route on the map above; **Play journey**, where the map flies from stop to stop and each photo appears as a postcard with its day stamp (6 seconds each, OK pauses, ◀ ▶ photo, ▲ ▼ stop, Back to the trips); and **All photos** in a grid with a full-screen viewer. An unpaired TV is back on the code screen within a minute; without the server it says so and tries again.
+- **Show on TV** in the account page: type the code the TV shows and a name for it, see the paired TVs, and unpair one.
+
+### TV app
+- `tv-android/`: a small Android TV app (Shield, Bravia) that opens the `/tv` page full screen, keeps the screen on, keeps the pairing, and sends Back to the page first.
+
 ## 1.14.0 (2026-11-01)
 
 ### Server
