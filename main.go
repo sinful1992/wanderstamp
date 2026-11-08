@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -40,6 +41,7 @@ type app struct {
 	areas        map[int64]cachedArea // parsed destination outlines, by holiday id
 	undo         undoStore            // F2: what the last deletes removed, for 30 s
 	tv           *tvPairs             // task 133: open TV pairing codes, see pairs()
+	doorRefuse   []net.IP             // task 134: the container's own gateways, see lanOnly
 }
 
 // version is stamped by release builds via -ldflags "-X main.version=v1.x.x";
@@ -94,6 +96,8 @@ func main() {
 
 	// task 133: the read-only TV door on the home LAN; off unless set
 	if addr := os.Getenv("TV_LISTEN_ADDR"); addr != "" {
+		a.doorRefuse = defaultGateways("/proc/net/route")
+		log.Printf("TV door refuses its gateway(s) %v: traffic NATed through them (tailnet, proxies) isn't on the home network", a.doorRefuse)
 		door := &http.Server{
 			Addr:              addr,
 			Handler:           a.tvDoor(static),

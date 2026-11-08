@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Server
+- The TV door also refuses its own container gateway(s), read from `/proc/net/route` at start. In Docker bridge mode a LAN device keeps its address, but traffic the host masquerades on the way in arrives from the bridge gateway, a private address. On 1.15.0 that let tailnet devices in through a Tailscale subnet router (`NoSNAT` off, the default). Now they get 404, and the start log names the refused gateway.
+
 ### TV app
 - The TV app's Gradle script compiles: `java.net.URI` resolved to Gradle's `java` extension, so the APK could not be built.
 

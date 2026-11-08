@@ -22,7 +22,9 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -666,7 +668,7 @@ func (a *app) tvDoor(static http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/tv/trips/{id}", a.tvAuth(a.handleTVTrip))
 	mux.HandleFunc("GET /api/tv/photo/{asset}/{kind}", a.tvAuth(a.handleTVPhoto))
 	mux.HandleFunc("/", http.NotFound)
-	return requestLog(securityHeaders(gzipJSON(lanOnly(strictPath(mux)))))
+	return requestLog(securityHeaders(gzipJSON(a.lanOnly(strictPath(mux)))))
 }
 
 // homeNets are the peers the door answers: the home LAN (private IPv4,
@@ -713,15 +715,62 @@ func homePeer(addr string) bool {
 }
 
 // lanOnly answers 404 to anyone not on the home network: the tailnet and
-// the internet see no door at all.
-func lanOnly(next http.Handler) http.Handler {
+// the internet see no door at all. A peer that is one of the container's
+// own gateways is refused too (task 134): in Docker bridge mode a LAN device
+// keeps its own address (DNAT), but traffic that the host masquerades on the
+// way in -- a Tailscale subnet router forwarding tailnet packets, the
+// docker-proxy -- arrives from the bridge gateway, a private address that
+// says nothing about who is really calling.
+func (a *app) lanOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !homePeer(doorPeer(r)) {
+		peer := doorPeer(r)
+		if !homePeer(peer) || refusedPeer(peer, a.doorRefuse) {
 			http.NotFound(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func refusedPeer(addr string, refuse []net.IP) bool {
+	ip := net.ParseIP(addr)
+	for _, g := range refuse {
+		if ip != nil && g.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// defaultGateways reads the IPv4 default gateways from a /proc/net/route
+// table (one per network the container is on). An unreadable table gives
+// none: then only the private-address check applies.
+func defaultGateways(path string) []net.IP {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var out []net.IP
+	for _, line := range strings.Split(string(b), "\n")[1:] {
+		f := strings.Fields(line)
+		if len(f) < 4 || f[1] != "00000000" {
+			continue
+		}
+		flags, err1 := strconv.ParseUint(f[3], 16, 32)
+		gw, err2 := strconv.ParseUint(f[2], 16, 32)
+		if err1 != nil || err2 != nil || flags&0x2 == 0 || gw == 0 {
+			continue
+		}
+		ip := net.IPv4(byte(gw), byte(gw>>8), byte(gw>>16), byte(gw>>24)).To4()
+		dup := false
+		for _, o := range out {
+			dup = dup || o.Equal(ip)
+		}
+		if !dup {
+			out = append(out, ip)
+		}
+	}
+	return out
 }
 
 // strictPath answers 404 for any path that isn't already clean ("..", ".",
