@@ -12,11 +12,15 @@ services:
     container_name: wanderstamp
     ports:
       - "8095:8095"
+      # Optional: the read-only TV door for a TV app on your home network.
+      # Publish it on your LAN address only, never to the internet.
+      # - "192.168.1.10:8097:8097"
     environment:
       DB_PATH: /data/wanderstamp.db
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: change-me
       COOKIE_SECURE: "false" # set "true" once you serve it over HTTPS
+      # TV_LISTEN_ADDR: ":8097" # the TV door (see ports above)
       # Optional Immich integration — photos auto-cluster into pins:
       # IMMICH_URL: http://immich-server:2283
       # IMMICH_API_KEY: your-immich-api-key

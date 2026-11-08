@@ -73,6 +73,7 @@ environment on first boot only; after that, manage users inside the app
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `LISTEN_ADDR` | `:8095` | listen address |
+| `TV_LISTEN_ADDR` | unset (off) | the read-only TV door (`/tv` page, pairing, TV reads), e.g. `:8097`; publish it on your home LAN only |
 | `DB_PATH` | `./holidaymap.db` | SQLite database path |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | — | first-boot admin account (only read while the users table is empty) |
 | `COOKIE_SECURE` | `true` | mark session cookies HTTPS-only; set `false` only for plain-HTTP use |

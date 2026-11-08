@@ -19,7 +19,7 @@ const gzipMinBytes = 1024
 // isStream is a response that must flow as it is written: photo and video
 // bytes from Immich, and the sync long-poll.
 func isStream(p string) bool {
-	return strings.Contains(p, "/photo/") || p == "/api/sync/wait"
+	return strings.Contains(p, "/photo/") || p == "/api/sync/wait" || strings.HasPrefix(p, "/tv/pair/")
 }
 
 // gzipJSON compresses API JSON for clients that accept it (P1): /api/map is
@@ -121,9 +121,10 @@ func (s *statusRecorder) Flush() {
 	}
 }
 
-var shareTokenRe = regexp.MustCompile(`(/share/)[^/]+`)
+var shareTokenRe = regexp.MustCompile(`(/share/|/tv/pair/)[^/]+`)
 
-// logPath never writes a share token to the log: the token is the link.
+// logPath never writes a share token or a TV pairing poll id to the log:
+// the token is the link, and whoever holds the poll id collects the TV token.
 func logPath(p string) string {
 	return shareTokenRe.ReplaceAllString(p, "${1}…")
 }

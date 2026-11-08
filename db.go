@@ -125,6 +125,18 @@ CREATE TABLE IF NOT EXISTS tracks (
   points     TEXT NOT NULL
 );
 
+-- task 133: paired TVs; each holds a device token (stored hashed) that reads
+-- every trip that isn't planned, previews only, until it is unpaired.
+-- created_by is the username at the time, plain text like F6's fields.
+CREATE TABLE IF NOT EXISTS tv_devices (
+  id         INTEGER PRIMARY KEY,
+  name       TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  last_seen  TEXT NOT NULL DEFAULT ''
+);
+
 CREATE INDEX IF NOT EXISTS idx_pins_holiday ON pins(holiday_id);
 CREATE INDEX IF NOT EXISTS idx_tracks_holiday ON tracks(holiday_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);

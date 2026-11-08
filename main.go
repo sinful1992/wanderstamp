@@ -39,6 +39,7 @@ type app struct {
 	areaMu       sync.Mutex
 	areas        map[int64]cachedArea // parsed destination outlines, by holiday id
 	undo         undoStore            // F2: what the last deletes removed, for 30 s
+	tv           *tvPairs             // task 133: open TV pairing codes, see pairs()
 }
 
 // version is stamped by release builds via -ldflags "-X main.version=v1.x.x";
@@ -88,8 +89,42 @@ func main() {
 
 	go a.housekeeping()
 
+	static := newStaticServer()
+	mux := a.mainMux(static)
+
+	// task 133: the read-only TV door on the home LAN; off unless set
+	if addr := os.Getenv("TV_LISTEN_ADDR"); addr != "" {
+		door := &http.Server{
+			Addr:              addr,
+			Handler:           a.tvDoor(static),
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      2 * time.Minute, // above the 30 s pairing long-poll
+			IdleTimeout:       2 * time.Minute,
+		}
+		go func() {
+			log.Printf("TV door listening on %s", addr)
+			log.Fatalf("TV door: %v", door.ListenAndServe())
+		}()
+	}
+
+	srv := &http.Server{
+		Addr:              env("LISTEN_ADDR", ":8095"),
+		Handler:           requestLog(securityHeaders(gzipJSON(mux))),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      2 * time.Minute, // generous: original-size photos stream through here
+		IdleTimeout:       2 * time.Minute,
+	}
+	log.Printf("holiday-map listening on %s", srv.Addr)
+	log.Fatal(srv.ListenAndServe())
+}
+
+// mainMux is every route of the main listener (tailnet, signed in).
+func (a *app) mainMux(static http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	a.accountRoutes(mux)
+	a.tvRoutes(mux)
 
 	mux.HandleFunc("GET /api/map", a.auth(a.handleMap))
 	mux.HandleFunc("GET /api/holidays", a.auth(a.handleListHolidays))
@@ -158,24 +193,13 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
-	static := newStaticServer()
 	mux.Handle("GET /", static)
 	// share links serve the same SPA; app.js reads the token from the path
 	mux.HandleFunc("GET /share/{token}", func(w http.ResponseWriter, r *http.Request) {
 		r.URL.Path = "/"
 		static.ServeHTTP(w, r)
 	})
-
-	srv := &http.Server{
-		Addr:              env("LISTEN_ADDR", ":8095"),
-		Handler:           requestLog(securityHeaders(gzipJSON(mux))),
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      2 * time.Minute, // generous: original-size photos stream through here
-		IdleTimeout:       2 * time.Minute,
-	}
-	log.Printf("holiday-map listening on %s", srv.Addr)
-	log.Fatal(srv.ListenAndServe())
+	return mux
 }
 
 // reader is where pure reads go: the read-only pool when there is one (WAL
@@ -195,6 +219,7 @@ func (a *app) housekeeping() {
 		a.limiter.gc()
 		a.ipLimiter.gc()
 		a.promotePlanned()
+		a.tvHousekeeping()
 		if err := checkpoint(a.db); err != nil {
 			log.Printf("wal checkpoint: %v", err)
 		}

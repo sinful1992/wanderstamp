@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.15.0 (unreleased)
+
+### Server
+- Wanderstamp on the TV: a second, read-only listener for the home network (`TV_LISTEN_ADDR`, off unless set). It serves only the `/tv` page, its shared files, pairing and the TV reads: no sign-in, no admin, no other `/api/`, never an original photo or a video.
+- Pairing: the TV shows a 4-letter code (`POST /tv/pair`), someone signed in types it (`POST /api/tv/pair` with a name), and the TV's waiting request (`GET /tv/pair/{poll}`) gets its own device token once, as a cookie. A TV token is not a share link: pairing never changes a trip's link. Paired TVs are listed (`GET /api/tv/devices`) and unpaired (`DELETE /api/tv/devices/{id}`); an unpaired TV is back on the code screen at its next request.
+- A paired TV reads every trip that isn't planned, in the share shape (no way-there photo pins, no names): `GET /api/tv/trips`, `GET /api/tv/trips/{id}` with all the trip's photos, and `GET /api/tv/photo/{id}/thumb|preview`.
+- Limits: a code lives 5 minutes; one device may hold 3 open codes and ask for 10 a minute, 20 open codes in all; 10 wrong codes in 15 minutes stop an account typing more. A TV whose token was never collected is removed after 15 minutes. Poll ids never reach the log.
+
 ## 1.14.0 (2026-11-01)
 
 ### Server
