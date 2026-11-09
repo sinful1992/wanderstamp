@@ -323,6 +323,11 @@
   // link still current, so each link is used once.
   var fromRust = /[?&]pair=([A-HJ-NP-Z]{4})(?:&|$)/.exec(location.search);
   pairCode = fromRust ? fromRust[1] : '';
+  // so Back lands on a plain launcher, not on this code again
+  if (fromRust) {
+    flag('pair-used', 'wanderstamp://pair?code=' + pairCode);
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  }
   var dl = window.__TAURI__ && window.__TAURI__.deepLink;
   if (pairCode || !dl) { start(); return; }
   dl.getCurrent().then(function (urls) {
