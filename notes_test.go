@@ -5,6 +5,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -329,5 +332,551 @@ func TestNotesExportImport(t *testing.T) {
 	f3.a.db.Exec(`DELETE FROM holidays WHERE id = 1`)
 	if im := tvDo(t, f3.main.URL, "POST", "/api/import", b, f3.signedIn()); im.code != 200 {
 		t.Fatalf("old import %d %s", im.code, im.body)
+	}
+}
+
+// ada #9788: after the first per-visit write pins.note is '', so the note
+// lives only in visit_notes. The empty-photo-pin cleanups must still treat
+// that pin as annotated and keep it, with the note moved to other_notes.
+const tvA7 = "a7000000-0000-0000-0000-000000000001"
+
+func noteOnPin7(t *testing.T, f *tvFix) {
+	t.Helper()
+	if r := f.patchNote(t, 7, `{"note_day":"2026-07-07","note":"Ice cream"}`); r.code != 200 {
+		t.Fatalf("%d %s", r.code, r.body)
+	}
+	if got := f.rows(t, 7); got != "2026-07-07=Ice cream | pins.note=" {
+		t.Fatalf("setup: %s", got)
+	}
+}
+
+func keptInOtherNotes(t *testing.T, f *tvFix, pin int64) {
+	t.Helper()
+	p, ok := f.notePins(t)[pin]
+	if !ok {
+		t.Fatalf("pin %d with a visit note was deleted (rows now: %s)", pin, f.rows(t, pin))
+	}
+	if len(p.OtherNotes) != 1 || p.OtherNotes[0] != (dayNote{"2026-07-07", "Ice cream"}) {
+		t.Fatalf("pin %d other_notes %v visits %v", pin, p.OtherNotes, visitNotes(p))
+	}
+}
+
+func TestNotesSetAsideLastPhotoKeepsNotedPin(t *testing.T) {
+	f := newNotesFix(t)
+	noteOnPin7(t, f)
+	if r := tvDo(t, f.main.URL, "POST", "/api/photos/"+tvA7+"/aside", "", f.signedIn()); r.code/100 != 2 {
+		t.Fatalf("aside %d %s", r.code, r.body)
+	}
+	keptInOtherNotes(t, f, 7)
+}
+
+func TestNotesSyncEmptyAlbumKeepsNotedPin(t *testing.T) {
+	f := newNotesFix(t)
+	noteOnPin7(t, f)
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// a7 left the album; another of the trip's photos is still there
+		w.Write([]byte(`{"assets":{"items":[{"id":"` + tvA2 + `","type":"IMAGE","fileCreatedAt":"2026-07-02T08:00:00Z","exifInfo":{"latitude":54.6,"longitude":-3.13}}],"nextPage":null}}`))
+	}))
+	defer empty.Close()
+	f.a.immich = newImmichClient(empty.URL, "key")
+	if _, _, err := f.a.syncHoliday(1); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	f.a.db.QueryRow(`SELECT COUNT(*) FROM pin_photos WHERE pin_id = 7`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("sync left %d photos on pin 7; test needs an emptied pin", n)
+	}
+	keptInOtherNotes(t, f, 7)
+}
+
+func undoToken(t *testing.T, f *tvFix, path string) string {
+	t.Helper()
+	r := tvDo(t, f.main.URL, "DELETE", path, "", f.signedIn())
+	var del struct {
+		Undo string `json:"undo"`
+	}
+	r.json(t, &del)
+	if del.Undo == "" {
+		t.Fatalf("no undo token: %d %s", r.code, r.body)
+	}
+	return del.Undo
+}
+
+// Undo of a noted pin whose photo has since gone to a titled pin: the pin
+// comes back empty but with its note, not refused and dropped.
+func TestNotesUndoEmptyRestoreKeepsNotedPin(t *testing.T) {
+	f := newNotesFix(t)
+	noteOnPin7(t, f)
+	tok := undoToken(t, f, "/api/pins/7")
+	for _, q := range []string{
+		`INSERT INTO pins (id, holiday_id, kind, lat, lng, title, created_at) VALUES (8, 1, 'manual', 52.28, -1.58, 'Kiosk', '2026-07-07T10:00:00Z')`,
+		`INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng) VALUES (8, '` + tvA7 + `', '2026-07-07T10:00:00Z', 52.28, -1.58)`,
+	} {
+		if _, err := f.a.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if u := tvDo(t, f.main.URL, "POST", "/api/undo/"+tok, "", f.signedIn()); u.code != 200 {
+		t.Fatalf("undo %d %s (rows: %s)", u.code, u.body, f.rows(t, 7))
+	}
+	keptInOtherNotes(t, f, 7)
+}
+
+// A twin pin the resync made, which then got a visit note, is someone's
+// work: the undo is a conflict and the twin keeps its note.
+func TestNotesUndoKeepsNotedTwin(t *testing.T) {
+	f := newNotesFix(t)
+	tok := undoToken(t, f, "/api/pins/7")
+	for _, q := range []string{
+		`INSERT INTO pins (id, holiday_id, kind, cluster_key, lat, lng, created_at) VALUES (9, 1, 'photo', 'c7', 52.28, -1.58, '2026-07-07T10:00:00Z')`,
+		`INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng) VALUES (9, '` + tvA7 + `', '2026-07-07T10:00:00Z', 52.28, -1.58)`,
+	} {
+		if _, err := f.a.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r := f.patchNote(t, 9, `{"note_day":"2026-07-07","note":"Ice cream"}`); r.code != 200 {
+		t.Fatalf("%d %s", r.code, r.body)
+	}
+	u := tvDo(t, f.main.URL, "POST", "/api/undo/"+tok, "", f.signedIn())
+	if u.code != 409 {
+		t.Fatalf("undo over a noted twin: %d %s", u.code, u.body)
+	}
+	if got := f.rows(t, 9); got != "2026-07-07=Ice cream | pins.note=" {
+		t.Fatalf("twin note: %s", got)
+	}
+}
+
+// ada #9791: a note whose day has no visit is shown to nobody on a share link
+// or a TV, so it isn't sent there either; the family's own map still has it.
+func TestNotesOtherNotesStayOffShareAndTV(t *testing.T) {
+	f := newNotesFix(t)
+	if r := f.patchNote(t, 2, `{"note_day":"2026-01-01","note":"secret orphan"}`); r.code != 200 {
+		t.Fatalf("%d %s", r.code, r.body)
+	}
+	if len(f.notePins(t)[2].OtherNotes) != 1 {
+		t.Fatal("family map lost the orphan note")
+	}
+	tok := f.pair(t, "Den")
+	tv := tvDo(t, f.door.URL, "GET", "/api/tv/trips/1", "", bearer(tok))
+	sh := tvDo(t, f.main.URL, "GET", "/api/share/old-share", "", nil)
+	for name, r := range map[string]tvResp{"tv": tv, "share": sh} {
+		if r.code != 200 {
+			t.Fatalf("%s %d %s", name, r.code, r.body)
+		}
+		if strings.Contains(string(r.body), "secret orphan") {
+			t.Errorf("%s carries the orphan note: %s", name, r.body)
+		}
+	}
+}
+
+// --- ada's break tests (#9791, fresh subagent on contract + diff) ---
+
+func (f *tvFix) rowCount(t *testing.T, pin int64) int {
+	t.Helper()
+	var n int
+	if err := f.a.db.QueryRow(`SELECT COUNT(*) FROM visit_notes WHERE pin_id = ?`, pin).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func (f *tvFix) mustExec(t *testing.T, q string) {
+	t.Helper()
+	if _, err := f.a.db.Exec(q); err != nil {
+		t.Fatalf("%v\n%s", err, q)
+	}
+}
+
+func (f *tvFix) deletePin(t *testing.T, pin int64) string {
+	t.Helper()
+	r := tvDo(t, f.main.URL, "DELETE", fmt.Sprintf("/api/pins/%d", pin), "", f.signedIn())
+	var del struct {
+		Undo string `json:"undo"`
+	}
+	r.json(t, &del)
+	if del.Undo == "" {
+		t.Fatalf("no undo token: %d %s", r.code, r.body)
+	}
+	return del.Undo
+}
+
+// --- pruning: "a row whose day matches no current visit is never dropped" ---
+
+// Setting aside a photo pin's last photo must not delete a pin that holds a
+// visit note. A pin with the same text in pins.note survives this path.
+func TestBreakSetAsideKeepsPinWithVisitNote(t *testing.T) {
+	f := newNotesFix(t)
+	if r := f.patchNote(t, 1, `{"note_day":"2026-07-01","note":"keep me"}`); r.code != 200 {
+		t.Fatalf("%d %s", r.code, r.body)
+	}
+	if r := tvDo(t, f.main.URL, "POST", "/api/photos/"+tvA1+"/aside", "", f.signedIn()); r.code != 200 {
+		t.Fatalf("aside %d %s", r.code, r.body)
+	}
+	if n := f.rowCount(t, 1); n != 1 {
+		t.Fatalf("set aside dropped the visit note: %d rows", n)
+	}
+}
+
+// Control for the test above: the same flow with the old single note.
+func TestBreakSetAsideKeepsPinWithLegacyNoteControl(t *testing.T) {
+	f := newNotesFix(t)
+	f.mustExec(t, `UPDATE pins SET note = 'keep me' WHERE id = 1`)
+	if r := tvDo(t, f.main.URL, "POST", "/api/photos/"+tvA1+"/aside", "", f.signedIn()); r.code != 200 {
+		t.Fatalf("aside %d %s", r.code, r.body)
+	}
+	var n int
+	f.a.db.QueryRow(`SELECT COUNT(*) FROM pins WHERE id = 1`).Scan(&n)
+	if n != 1 {
+		t.Fatal("control: a pin with pins.note should survive")
+	}
+}
+
+// Undo brings a photo pin back empty when its photo was filed elsewhere; the
+// clean-up after the restore must not treat a pin with visit notes as bare.
+func TestBreakUndoEmptyPhotoPinKeepsVisitNote(t *testing.T) {
+	f := newNotesFix(t)
+	f.patchNote(t, 1, `{"note_day":"2026-07-01","note":"keep me"}`)
+	tok := f.deletePin(t, 1)
+	f.mustExec(t, `INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng) VALUES (2, '`+tvA1+`', '2026-07-01T08:00:00Z', 52.0, -1.0)`)
+	u := tvDo(t, f.main.URL, "POST", "/api/undo/"+tok, "", f.signedIn())
+	if u.code != 200 || f.rowCount(t, 1) != 1 {
+		t.Fatalf("undo %d %s, rows %d", u.code, u.body, f.rowCount(t, 1))
+	}
+}
+
+// A twin pin holding a visit note is someone's work, as one with pins.note is.
+func TestBreakUndoKeepsTwinWithVisitNote(t *testing.T) {
+	f := newNotesFix(t)
+	tok := f.deletePin(t, 1)
+	f.mustExec(t, `INSERT INTO pins (id, holiday_id, kind, cluster_key, lat, lng, created_at) VALUES (9, 1, 'photo', 'a', 52.0, -1.0, '2026-07-01T08:00:00Z')`)
+	f.mustExec(t, `INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng) VALUES (9, '`+tvA1+`', '2026-07-01T08:00:00Z', 52.0, -1.0)`)
+	if r := f.patchNote(t, 9, `{"note_day":"2026-07-01","note":"written on the twin"}`); r.code != 200 {
+		t.Fatalf("%d %s", r.code, r.body)
+	}
+	u := tvDo(t, f.main.URL, "POST", "/api/undo/"+tok, "", f.signedIn())
+	if f.rowCount(t, 9) != 1 {
+		t.Fatalf("undo %d dropped the note on the twin", u.code)
+	}
+}
+
+// --- writes that split a note between pins.note and rows ---
+
+// A plain note on a pin that has rows is accepted, shown on no visit, and
+// comes back on the first visit once the rows are gone.
+func TestBreakPlainNoteOnPinWithRows(t *testing.T) {
+	for name, body := range map[string]string{
+		"absent": `{"note":"stale client"}`,
+		"null":   `{"note_day":null,"from_day":null,"note":"stale client"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newNotesFix(t)
+			f.patchNote(t, 5, `{"note_day":"2026-07-06","from_day":"2026-07-05","note":"Food horrible"}`)
+			r := f.patchNote(t, 5, body)
+			if r.code == 400 || r.code == 409 {
+				if got := f.rows(t, 5); got != "2026-07-06=Food horrible | pins.note=" {
+					t.Fatalf("refused %d but changed: %s", r.code, got)
+				}
+				return
+			}
+			if got := strings.Join(visitNotes(f.notePins(t)[5]), ","); !strings.Contains(got, "stale client") {
+				t.Errorf("accepted %d but shown on no visit: %s", r.code, got)
+			}
+			f.patchNote(t, 5, `{"note_day":"2026-07-06","note":""}`)
+			if got := strings.Join(visitNotes(f.notePins(t)[5]), ","); strings.Contains(got, "2026-07-05=stale client") {
+				t.Errorf("a hidden note came back on the first visit: %s", got)
+			}
+		})
+	}
+}
+
+// A photo pin with an old note and no visits: the note must stay reachable
+// when a per-visit write came first and a visit appears later.
+func TestBreakLegacyNoteOnPinWithoutVisits(t *testing.T) {
+	f := newNotesFix(t)
+	f.mustExec(t, `INSERT INTO pins (id, holiday_id, kind, cluster_key, lat, lng, note, created_at) VALUES (8, 1, 'photo', 'c8', 52.1, -1.1, 'old text', '2026-07-05T09:00:00Z')`)
+	// linus: refused (409) and unchanged, since there is no visit to keep the old note on
+	if r := f.patchNote(t, 8, `{"note_day":"2026-07-07","note":"new text"}`); r.code != 409 {
+		t.Fatalf("%d %s", r.code, r.body)
+	}
+	if got := f.rows(t, 8); got != " | pins.note=old text" {
+		t.Fatalf("refused but changed: %s", got)
+	}
+	f.mustExec(t, `INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng) VALUES (8, 'a8000000-0000-0000-0000-000000000001', '2026-07-05T09:00:00Z', 52.1, -1.1)`)
+	p := f.notePins(t)[8]
+	seen := false
+	for _, v := range p.Visits {
+		seen = seen || v.Note == "old text"
+	}
+	for _, o := range p.OtherNotes {
+		seen = seen || o.Note == "old text"
+	}
+	if !seen {
+		t.Fatalf("old note on no visit: visits %v, other %v", p.Visits, p.OtherNotes)
+	}
+}
+
+// Moving a note onto a visit that has its own note must not erase that note
+// silently: both kept, or the call refused.
+func TestBreakMoveOntoOccupiedDay(t *testing.T) {
+	f := newNotesFix(t)
+	f.patchNote(t, 5, `{"note_day":"2026-07-06","note":"second"}`)
+	r := f.patchNote(t, 5, `{"note_day":"2026-07-06","from_day":"2026-07-05","note":"Food horrible"}`)
+	if r.code != 200 && r.code != 409 {
+		t.Fatalf("%d %s", r.code, r.body)
+	}
+	if got := f.rows(t, 5); !strings.Contains(got, "second") {
+		t.Fatalf("destination note lost: %s", got)
+	}
+}
+
+// --- PATCH edge cases expected to hold ---
+
+func TestBreakPatchEdges(t *testing.T) {
+	f := newNotesFix(t)
+	for _, b := range []string{
+		`{"note_day":"2026-07-06","from_day":"","note":"x"}`,
+		`{"note_day":"2026-13-01","note":"x"}`,
+		`{"note_day":"0000-00-00","note":"x"}`,
+		`{"note_day":7,"note":"x"}`,
+	} {
+		if r := f.patchNote(t, 5, b); r.code != 400 {
+			t.Errorf("%s: %d %s", b, r.code, r.body)
+		}
+	}
+	if got := f.rows(t, 5); got != " | pins.note=Food horrible" {
+		t.Fatalf("a refused write changed %s", got)
+	}
+
+	// day outside every visit: kept as other_notes, the first visit keeps its note
+	if r := f.patchNote(t, 5, `{"note_day":"2030-01-01","note":"far"}`); r.code != 200 {
+		t.Fatalf("%d %s", r.code, r.body)
+	}
+	ps := f.notePins(t)
+	if got := strings.Join(visitNotes(ps[5]), ","); got != "2026-07-05=Food horrible,2026-07-06=" {
+		t.Fatalf("got %s", got)
+	}
+	if len(ps[5].OtherNotes) != 1 || ps[5].OtherNotes[0].Day != "2030-01-01" {
+		t.Fatalf("other_notes %v", ps[5].OtherNotes)
+	}
+
+	// from_day with no such row changes nothing else
+	f.patchNote(t, 5, `{"note_day":"2026-07-06","from_day":"2026-01-01","note":"y"}`)
+	if got := f.rows(t, 5); got != "2026-07-05=Food horrible,2026-07-06=y,2030-01-01=far | pins.note=" {
+		t.Fatalf("rows: %s", got)
+	}
+}
+
+// One visit: an empty write on it, then the note must not return.
+func TestBreakOneDayVisitDelete(t *testing.T) {
+	f := newNotesFix(t)
+	if r := f.patchNote(t, 3, `{"note_day":"2026-07-04","note":""}`); r.code != 200 {
+		t.Fatalf("%d %s", r.code, r.body)
+	}
+	if got := f.rows(t, 3); got != " | pins.note=" {
+		t.Fatalf("rows: %s", got)
+	}
+	if got := strings.Join(visitNotes(f.notePins(t)[3]), ","); got != "2026-07-04=" {
+		t.Fatalf("got %s", got)
+	}
+}
+
+// A move across a visit of another pin leaves the two same-day visits as the
+// read rule says: first of the day only.
+func TestBreakMoveAcrossOtherVisits(t *testing.T) {
+	f := newNotesFix(t)
+	f.patchNote(t, 6, `{"note_day":"2026-07-01","note":"misfiled"}`)
+	f.patchNote(t, 6, `{"note_day":"2026-07-07","from_day":"2026-07-01","note":"castle"}`)
+	ps := f.notePins(t)
+	if got := strings.Join(visitNotes(ps[6]), ","); got != "2026-07-07=castle,2026-07-07=" {
+		t.Fatalf("got %s", got)
+	}
+	if len(ps[6].OtherNotes) != 0 || f.rowCount(t, 7) != 0 {
+		t.Fatalf("other %v, pin 7 rows %d", ps[6].OtherNotes, f.rowCount(t, 7))
+	}
+}
+
+// --- share and TV payloads ---
+
+// other_notes holds notes for days whose photos were removed; an anonymous
+// share link must not carry them.
+func TestBreakShareDoesNotCarryOtherNotes(t *testing.T) {
+	f := newNotesFix(t)
+	f.patchNote(t, 5, `{"note_day":"2026-01-01","note":"SECRET-ORPHAN"}`)
+	r := tvDo(t, f.main.URL, "GET", "/api/share/old-share", "", nil)
+	if r.code != 200 {
+		t.Fatalf("%d %s", r.code, r.body)
+	}
+	if strings.Contains(string(r.body), "SECRET-ORPHAN") {
+		t.Fatal("share payload carries a note of a day with no visit")
+	}
+}
+
+func TestBreakTVNoteOnlyAtItsVisit(t *testing.T) {
+	f := newNotesFix(t)
+	f.patchNote(t, 5, `{"note_day":"2026-07-06","from_day":"2026-07-05","note":"Food horrible"}`)
+	tok := f.pair(t, "Den")
+	var trip struct {
+		Pins []notePin `json:"pins"`
+	}
+	tvDo(t, f.door.URL, "GET", "/api/tv/trips/1", "", bearer(tok)).json(t, &trip)
+	for _, p := range trip.Pins {
+		if p.ID == 5 && p.Note != "" {
+			t.Fatalf("pin-level note still set: %q", p.Note)
+		}
+	}
+}
+
+// --- export and import ---
+
+func exportWith(t *testing.T, f *tvFix, list string) string {
+	t.Helper()
+	f.patchNote(t, 5, `{"note_day":"2026-07-06","from_day":"2026-07-05","note":"Food horrible"}`)
+	ex := tvDo(t, f.main.URL, "GET", "/api/export", "", f.signedIn())
+	const was = `"visit_notes":[{"day":"2026-07-06","note":"Food horrible"}]`
+	if !strings.Contains(string(ex.body), was) {
+		t.Fatalf("export has no visit_notes: %s", ex.body)
+	}
+	return strings.ReplaceAll(string(ex.body), was, `"visit_notes":`+list)
+}
+
+func TestBreakImportDirtyVisitNotes(t *testing.T) {
+	f := newNotesFix(t)
+	body := exportWith(t, f, `[{"day":"2026-07-06","note":"one"},{"day":"2026-07-06","note":"two"},{"day":"bad","note":"x"},{"day":"2026-07-05","note":"  "}]`)
+	f2 := newNotesFix(t)
+	f2.mustExec(t, `DELETE FROM holidays WHERE id = 1`)
+	if im := tvDo(t, f2.main.URL, "POST", "/api/import", body, f2.signedIn()); im.code != 200 {
+		t.Fatalf("import %d %s", im.code, im.body)
+	}
+	var id int64
+	f2.a.db.QueryRow(`SELECT id FROM pins WHERE title = 'Premier Inn'`).Scan(&id)
+	if got := f2.rows(t, id); got != "2026-07-06=two | pins.note=" {
+		t.Fatalf("imported: %s", got)
+	}
+}
+
+func TestBreakImportOldFormatKeepsLegacyNote(t *testing.T) {
+	f := newNotesFix(t)
+	ex := tvDo(t, f.main.URL, "GET", "/api/export", "", f.signedIn())
+	if strings.Contains(string(ex.body), `"visit_notes"`) {
+		t.Fatal("no rows: the field should be left out")
+	}
+	f2 := newNotesFix(t)
+	f2.mustExec(t, `DELETE FROM holidays WHERE id = 1`)
+	if im := tvDo(t, f2.main.URL, "POST", "/api/import", string(ex.body), f2.signedIn()); im.code != 200 {
+		t.Fatalf("import %d %s", im.code, im.body)
+	}
+	var id int64
+	f2.a.db.QueryRow(`SELECT id FROM pins WHERE title = 'Premier Inn'`).Scan(&id)
+	if got := f2.rows(t, id); got != " | pins.note=Food horrible" {
+		t.Fatalf("imported: %s", got)
+	}
+}
+
+// --- undo of a whole trip ---
+
+func TestBreakUndoHolidayDeleteRestoresNotes(t *testing.T) {
+	f := newNotesFix(t)
+	f.patchNote(t, 5, `{"note_day":"2026-07-06","note":"Breakfast ok"}`)
+	r := tvDo(t, f.main.URL, "DELETE", "/api/holidays/1", "", f.signedIn())
+	var del struct {
+		Undo string `json:"undo"`
+	}
+	r.json(t, &del)
+	if f.rowCount(t, 5) != 0 {
+		t.Fatal("rows should cascade")
+	}
+	if u := tvDo(t, f.main.URL, "POST", "/api/undo/"+del.Undo, "", f.signedIn()); u.code != 200 {
+		t.Fatalf("undo %d %s", u.code, u.body)
+	}
+	if got := f.rows(t, 5); got != "2026-07-05=Food horrible,2026-07-06=Breakfast ok | pins.note=" {
+		t.Fatalf("after undo: %s", got)
+	}
+}
+
+// --- migration ---
+
+func TestBreakBootTwiceKeepsRowsAndLegacyNotes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "boot.db")
+	db, err := openDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO holidays (id, name, color, start_at) VALUES (1, 'T', '#000000', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO pins (id, holiday_id, kind, lat, lng, note, created_at) VALUES (1, 1, 'manual', 1, 1, 'old', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO pins (id, holiday_id, kind, lat, lng, created_at) VALUES (2, 1, 'manual', 1, 1, '2026-01-01T00:00:00Z')`,
+		`INSERT INTO visit_notes (pin_id, day, note) VALUES (2, '2026-01-01', 'row')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%v\n%s", err, q)
+		}
+	}
+	db.Close()
+	db, err = openDB(path)
+	if err != nil {
+		t.Fatalf("second boot: %v", err)
+	}
+	defer db.Close()
+	var note, row string
+	var n int
+	db.QueryRow(`SELECT note FROM pins WHERE id = 1`).Scan(&note)
+	db.QueryRow(`SELECT note FROM visit_notes WHERE pin_id = 2`).Scan(&row)
+	db.QueryRow(`SELECT COUNT(*) FROM visit_notes`).Scan(&n)
+	if note != "old" || row != "row" || n != 1 {
+		t.Fatalf("note %q row %q count %d", note, row, n)
+	}
+}
+
+// --- concurrency ---
+
+func TestBreakConcurrentMovesKeepLegacyOnce(t *testing.T) {
+	f := newNotesFix(t)
+	var wg sync.WaitGroup
+	codes := make([]int, 10)
+	for i := range codes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			codes[i] = f.patchNote(t, 5, `{"note_day":"2026-07-06","from_day":"2026-07-05","note":"Food horrible"}`).code
+		}(i)
+	}
+	wg.Wait()
+	for i, c := range codes {
+		if c != 200 {
+			t.Fatalf("move %d: %d", i, c)
+		}
+	}
+	if got := f.rows(t, 5); got != "2026-07-06=Food horrible | pins.note=" {
+		t.Fatalf("rows: %s", got)
+	}
+}
+
+func TestBreakConcurrentWriteAndDelete(t *testing.T) {
+	f := newNotesFix(t)
+	var wg sync.WaitGroup
+	codes := make([]int, 8)
+	for i := range codes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			codes[i] = f.patchNote(t, 5, fmt.Sprintf(`{"note_day":"2026-07-06","note":"n%d"}`, i)).code
+		}(i)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tvDo(t, f.main.URL, "DELETE", "/api/pins/5", "", f.signedIn())
+	}()
+	wg.Wait()
+	for i, c := range codes {
+		if c != 200 && c != 404 {
+			t.Errorf("write %d: %d", i, c)
+		}
+	}
+	if n := f.rowCount(t, 5); n != 0 {
+		t.Fatalf("rows left after the pin went: %d", n)
 	}
 }

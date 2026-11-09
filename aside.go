@@ -61,6 +61,7 @@ func (a *app) handleSetAside(w http.ResponseWriter, r *http.Request) {
 	// remove it, rather than lingering as an empty print until then.
 	if _, err := tx.Exec(`
 		DELETE FROM pins WHERE id = ? AND kind = 'photo' AND note = ''
+		  AND NOT EXISTS (SELECT 1 FROM visit_notes WHERE pin_id = pins.id)
 		  AND NOT EXISTS (SELECT 1 FROM pin_photos WHERE pin_id = pins.id)`, pinID); err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return

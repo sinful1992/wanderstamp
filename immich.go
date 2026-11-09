@@ -643,6 +643,7 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 	}
 	if _, err := tx.Exec(`
 		DELETE FROM pins WHERE holiday_id = ? AND kind = 'photo' AND note = ''
+		  AND NOT EXISTS (SELECT 1 FROM visit_notes WHERE pin_id = pins.id)
 		  AND NOT EXISTS (SELECT 1 FROM pin_photos WHERE pin_id = pins.id)`, holidayID); err != nil {
 		return 0, 0, err
 	}

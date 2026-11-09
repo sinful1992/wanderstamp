@@ -151,6 +151,7 @@ func (a *app) loadSharedTrip(hid int64) (*sharedTrip, error) {
 	for _, p := range all {
 		if !drop[p.ID] {
 			p.CreatedBy = "" // a share never says who in the family added what
+			p.OtherNotes = []dayNote{} // shown at no stop, so not sent to a link or TV
 			t.pins = append(t.pins, p)
 		}
 	}

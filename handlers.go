@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"log"
 	"math"
@@ -869,6 +870,9 @@ func (a *app) queryVisitNotes(holidayID int64) (map[int64]map[string]string, err
 // and a pin's old single note (pins.note, shown on its first visit while the
 // pin has no rows) moves to a row on that first visit's day, so it is neither
 // lost nor shown twice. An empty note deletes the day's row.
+// errNoteConflict: a per-visit note write that would hide or erase a note.
+var errNoteConflict = errors.New("note conflict")
+
 func (a *app) writeVisitNote(pinID int64, day string, fromDay *string, note string) error {
 	var hid int64
 	if err := a.db.QueryRow(`SELECT holiday_id FROM pins WHERE id = ?`, pinID).Scan(&hid); err != nil {
@@ -893,6 +897,19 @@ func (a *app) writeVisitNote(pinID int64, day string, fromDay *string, note stri
 	var rows int
 	if err := tx.QueryRow(`SELECT note, (SELECT COUNT(*) FROM visit_notes WHERE pin_id = pins.id) FROM pins WHERE id = ?`, pinID).Scan(&legacy, &rows); err != nil {
 		return err
+	}
+	// ada #9791: an old note with no visit to sit on would be hidden by the
+	// first row, so that write is refused (the phone sends a plain note there).
+	if legacy != "" && rows == 0 && firstDay == "" {
+		return errNoteConflict
+	}
+	// Moving a note onto a day that holds other words would erase them.
+	if fromDay != nil && *fromDay != day {
+		var there string
+		tx.QueryRow(`SELECT note FROM visit_notes WHERE pin_id = ? AND day = ?`, pinID, day).Scan(&there)
+		if there != "" && there != note {
+			return errNoteConflict
+		}
 	}
 	if legacy != "" && rows == 0 && firstDay != "" {
 		if fromDay == nil || *fromDay != firstDay {
@@ -1003,6 +1020,16 @@ func (a *app) handleUpdatePin(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "from_day needs note_day")
 		return
 	}
+	if req.NoteDay == nil && req.Note != nil {
+		// ada #9791: once a pin has per-visit notes, a plain note would be
+		// shown at no visit. Only a page from before 1.17.0 sends it.
+		var rows int
+		a.db.QueryRow(`SELECT COUNT(*) FROM visit_notes WHERE pin_id = ?`, id).Scan(&rows)
+		if rows > 0 {
+			httpError(w, http.StatusConflict, "notes are per visit now: reload the page")
+			return
+		}
+	}
 	if req.NoteDay != nil {
 		if req.Note == nil {
 			httpError(w, http.StatusBadRequest, "note_day needs note")
@@ -1014,6 +1041,9 @@ func (a *app) handleUpdatePin(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := a.writeVisitNote(id, *req.NoteDay, req.FromDay, *req.Note); err == sql.ErrNoRows {
 			httpError(w, http.StatusNotFound, "no such pin")
+			return
+		} else if err == errNoteConflict {
+			httpError(w, http.StatusConflict, "that visit already has a note, or the old note has no visit: reload the page")
 			return
 		} else if err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")

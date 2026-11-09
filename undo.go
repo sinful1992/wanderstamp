@@ -288,6 +288,7 @@ func (a *app) restore(s undoSnap) error {
 		ic := colIndex(t.cols, "id")
 		for _, r := range t.rows {
 			res, err := tx.Exec(`DELETE FROM pins WHERE id = ? AND kind = 'photo' AND note = ''
+				AND NOT EXISTS (SELECT 1 FROM visit_notes WHERE pin_id = pins.id)
 				AND NOT EXISTS (SELECT 1 FROM pin_photos WHERE pin_id = pins.id)`, r[ic])
 			if err != nil {
 				return err
@@ -312,7 +313,7 @@ func colIndex(cols []string, name string) int {
 // dropBareTwin: after a photo pin is deleted, the resync files its photos
 // again on a fresh photo pin in the same cell. Undo puts the old pin back in
 // its place, but only while that twin is untouched: no title of its own, no
-// note, no cover, no added-by, and no photo the old pin didn't hold. Anything
+// note (old or per visit), no cover, no added-by, and no photo the old pin didn't hold. Anything
 // else is someone's work, so it stays and the undo is a conflict.
 func dropBareTwin(tx *sql.Tx, cols []string, r []any, heldAssets map[string]bool) error {
 	kc, hc, cc, tc := colIndex(cols, "kind"), colIndex(cols, "holiday_id"), colIndex(cols, "cluster_key"), colIndex(cols, "title")
@@ -325,7 +326,8 @@ func dropBareTwin(tx *sql.Tx, cols []string, r []any, heldAssets map[string]bool
 	}
 	var twin int64
 	err := tx.QueryRow(`SELECT id FROM pins WHERE holiday_id = ? AND cluster_key = ? AND kind = 'photo'
-		AND note = '' AND cover_asset = '' AND created_by = '' AND (title = '' OR title = ?)`,
+		AND note = '' AND cover_asset = '' AND created_by = '' AND (title = '' OR title = ?)
+		AND NOT EXISTS (SELECT 1 FROM visit_notes WHERE pin_id = pins.id)`,
 		r[hc], r[cc], title).Scan(&twin)
 	if err == sql.ErrNoRows {
 		return nil
