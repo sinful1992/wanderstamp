@@ -108,6 +108,9 @@ export const tests = [
       return { inside, over };
     });
     assert.deepEqual(hit, { inside: true, over: [] });
+    // Shield fonts are wider than headless ones: the caption must stay on one line above the state text
+    const cap = await page.evaluate(() => { const f = document.querySelector("#pair-qr figcaption"); return { wrap: getComputedStyle(f).whiteSpace, fits: f.scrollWidth <= document.getElementById("pair-qr").clientWidth, text: f.textContent }; });
+    assert.deepEqual(cap, { wrap: "nowrap", fits: true, text: "Or scan with your phone" });
     st.gone = true;
     await page.waitForFunction(() => document.getElementById("pair-code").textContent === "MPQW");
     const src2 = await page.locator("#pair-qr-img").getAttribute("src");

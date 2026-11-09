@@ -37,7 +37,7 @@ body { font-family: var(--prose); color: var(--paper); cursor: none; }
 .qr { position: absolute; right: 100px; top: 210px; width: 400px; margin: 0; text-align: center; }
 .qr[hidden] { display: none; }
 .qr img { display: block; width: 400px; height: 400px; background: #fff; border-radius: 12px; }
-.qr figcaption { margin-top: 16px; font-size: 30px; color: var(--ink); }
+.qr figcaption { margin-top: 16px; font-size: 30px; color: var(--ink); white-space: nowrap; }
 #pair.has-qr .card p, #pair.has-qr .card ol { max-width: 940px; }
 #pair .foot { position: absolute; left: 160px; right: 160px; bottom: 50px; margin: 0; font-size: 28px; color: var(--paper-2); }
 
