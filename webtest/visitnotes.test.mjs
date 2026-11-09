@@ -122,4 +122,22 @@ export const tests = [
     assert.deepEqual(sent[0], { title: "Premier", note: "plain 2" });
     await ctx.close();
   }],
+
+  // USER #9792: the two branches V8 showed never ran (linus #9797).
+  ["notes: visits with no note field show the pin's note once, at the first stop", async ({ browser, base }) => {
+    const { ctx, page } = await setup(browser, base, [V("2026-09-25"), V("2026-09-26")], { note: "old" });
+    assert.deepEqual(await notes(page), ["old"]);
+    await ctx.close();
+  }],
+
+  ["notes: a pin with no visits field edits as a plain note", async ({ browser, base }) => {
+    const { ctx, page, sent } = await setup(browser, base, undefined, { note: "plain" });
+    await edit(page, 0);
+    assert.equal(await page.locator("select.note-day").count(), 0);
+    await page.fill("form.pop-form textarea", "plain 2");
+    await save(page);
+    await waitSent(page, sent);
+    assert.deepEqual(sent[0], { title: "Premier", note: "plain 2" });
+    await ctx.close();
+  }],
 ];
