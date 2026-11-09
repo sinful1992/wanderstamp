@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.17.0 (unreleased)
+
+### Frontend
+- Notes per visit: a note belongs to one visit (a place on one day). The phone's note editor asks which visit, and the TV journey shows the note only at that visit. Moving a note to another day says so before Save; typing new words on an empty day leaves the old note where it is.
+
+### Server
+- Notes per visit: new table `visit_notes` (pin + local day). Every visit in `/api/map`, the trips and the TV carries its `day` and `note`; a note whose day has no visit any more stays in the pin's `other_notes`. `PATCH /api/pins/{id}` takes `note_day` (and `from_day` to move a note) in one transaction. A pin's old note keeps showing on its first visit until it is written once. Export and import carry the notes; older exports still import.
+
+### Tests
+- Old note on the first visit only and reads change nothing; moving a note (the Premier Inn case); two visits on one day; orphan days; bad days and missing fields; 12 writes at once; TV and share links; undo of a pin delete brings its notes back; export/import round trip. A copy of the live database boots unchanged.
+
 ## 1.16.0 (2026-11-09)
 
 ### Frontend
