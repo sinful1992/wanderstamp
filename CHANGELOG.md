@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.17.0 (unreleased)
+## 1.17.0 (2026-11-09)
 
 ### Frontend
 - Notes per visit: a note belongs to one visit (a place on one day). The phone's note editor asks which visit, and the TV journey shows the note only at that visit. Moving a note to another day says so before Save; typing new words on an empty day leaves the old note where it is.
