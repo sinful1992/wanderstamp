@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.16.0 (unreleased)
+## 1.16.0 (2026-11-09)
 
 ### Frontend
 - TV pairing: the TV shows a QR code beside its 4-letter code. Scan it, tap Confirm, and the TV is paired, in the phone's browser or the Wanderstamp app (app 1.2.0). The code still works.
