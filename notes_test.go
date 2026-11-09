@@ -974,3 +974,23 @@ func TestNotesDatabaseFaults(t *testing.T) {
 		}
 	})
 }
+
+// ada #9798: a move onto the first visit of a pin whose old note still sits
+// there (no rows yet) must not overwrite that old note.
+func TestNotesMoveOntoLegacyFirstDayRefused(t *testing.T) {
+	f := newNotesFix(t)
+	r := f.patchNote(t, 5, `{"note_day":"2026-07-05","from_day":"2026-07-06","note":"other words"}`)
+	if r.code != 409 {
+		t.Fatalf("%d %s", r.code, r.body)
+	}
+	if got := f.rows(t, 5); got != " | pins.note=Food horrible" {
+		t.Fatalf("refused but changed: %s", got)
+	}
+	// the same words are no conflict
+	if r := f.patchNote(t, 5, `{"note_day":"2026-07-05","from_day":"2026-07-06","note":"Food horrible"}`); r.code != 200 {
+		t.Fatalf("same words: %d %s", r.code, r.body)
+	}
+	if got := f.rows(t, 5); got != "2026-07-05=Food horrible | pins.note=" {
+		t.Fatalf("same words: %s", got)
+	}
+}

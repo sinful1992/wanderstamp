@@ -907,6 +907,9 @@ func (a *app) writeVisitNote(pinID int64, day string, fromDay *string, note stri
 	if fromDay != nil && *fromDay != day {
 		var there string
 		tx.QueryRow(`SELECT note FROM visit_notes WHERE pin_id = ? AND day = ?`, pinID, day).Scan(&there)
+		if there == "" && rows == 0 && day == firstDay {
+			there = legacy // ada #9798: the old note still sits on the first visit
+		}
 		if there != "" && there != note {
 			return errNoteConflict
 		}
