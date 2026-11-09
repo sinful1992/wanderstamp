@@ -880,3 +880,97 @@ func TestBreakConcurrentWriteAndDelete(t *testing.T) {
 		t.Fatalf("rows left after the pin went: %d", n)
 	}
 }
+
+// USER #9792 (a test for every line): two notes on days with no visit come
+// back oldest first.
+func TestNotesOtherNotesOldestFirst(t *testing.T) {
+	f := newNotesFix(t)
+	for _, d := range []string{"2026-03-03", "2026-01-01", "2026-02-02"} {
+		if r := f.patchNote(t, 1, `{"note_day":"`+d+`","note":"n`+d+`"}`); r.code != 200 {
+			t.Fatalf("%d %s", r.code, r.body)
+		}
+	}
+	got := f.notePins(t)[1].OtherNotes
+	if len(got) != 3 || got[0].Day != "2026-01-01" || got[1].Day != "2026-02-02" || got[2].Day != "2026-03-03" {
+		t.Fatalf("other_notes order %v", got)
+	}
+}
+
+// USER #9792: every database-error branch of the notes code answers 500 (or
+// fails the import) and leaves the data as it was. Faults come from SQLite
+// triggers, a dropped table, or a NULL where a note must be.
+func TestNotesDatabaseFaults(t *testing.T) {
+	boom := func(table, when string) string {
+		return `CREATE TRIGGER boom_` + table + `_` + strings.Fields(when)[0] + ` BEFORE ` + when + ` ON ` + table +
+			` BEGIN SELECT RAISE(ABORT, 'injected fault'); END`
+	}
+	nullNotes := []string{
+		`DROP TABLE visit_notes`,
+		`CREATE TABLE visit_notes (pin_id INTEGER, day TEXT, note TEXT, PRIMARY KEY (pin_id, day))`,
+		`INSERT INTO visit_notes VALUES (2, '2026-07-02', NULL)`,
+	}
+	cases := []struct {
+		name   string
+		faults []string
+		method string
+		path   string
+		body   string
+		want   int
+	}{
+		// the legacy note's copy to the first visit fails (handlers.go writeVisitNote)
+		{"legacy copy insert", []string{boom("visit_notes", "INSERT")}, "PATCH", "/api/pins/5", `{"note_day":"2026-07-06","note":"x"}`, 500},
+		// clearing pins.note fails
+		{"legacy clear", []string{boom("pins", "UPDATE")}, "PATCH", "/api/pins/5", `{"note_day":"2026-07-06","from_day":"2026-07-05","note":"x"}`, 500},
+		// deleting the from_day row fails (pin 2 has no legacy note)
+		{"move delete", []string{`INSERT INTO visit_notes VALUES (2, '2026-07-02', 'a')`, boom("visit_notes", "DELETE")}, "PATCH", "/api/pins/2", `{"note_day":"2026-07-03","from_day":"2026-07-02","note":"a"}`, 500},
+		// the write of the note itself fails
+		{"note insert", []string{boom("visit_notes", "INSERT")}, "PATCH", "/api/pins/2", `{"note_day":"2026-07-03","note":"a"}`, 500},
+		// reading pins for the first visit day fails (no table)
+		{"write, no table", []string{`DROP TABLE visit_notes`}, "PATCH", "/api/pins/2", `{"note_day":"2026-07-03","note":"a"}`, 500},
+		// map read: query fails, then a row that can't be read
+		{"map, no table", []string{`DROP TABLE visit_notes`}, "GET", "/api/pins", "", 500},
+		{"map, NULL note", nullNotes, "GET", "/api/pins", "", 500},
+		// export: query fails, then a row that can't be read
+		{"export, no table", []string{`DROP TABLE visit_notes`}, "GET", "/api/export", "", 500},
+		{"export, NULL note", nullNotes, "GET", "/api/export", "", 500},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newNotesFix(t)
+			var before string
+			f.a.db.QueryRow(`SELECT group_concat(id || ':' || note, ',') FROM pins`).Scan(&before)
+			for _, q := range c.faults {
+				if _, err := f.a.db.Exec(q); err != nil {
+					t.Fatalf("%v\n%s", err, q)
+				}
+			}
+			r := tvDo(t, f.main.URL, c.method, c.path, c.body, f.signedIn())
+			if r.code != c.want {
+				t.Fatalf("%s %s: %d %s, want %d", c.method, c.path, r.code, r.body, c.want)
+			}
+			var after string
+			f.a.db.QueryRow(`SELECT group_concat(id || ':' || note, ',') FROM pins`).Scan(&after)
+			if before != after {
+				t.Fatalf("pins changed on a failed call:\n%s\n%s", before, after)
+			}
+		})
+	}
+	// import: inserting a pin's visit notes fails, so the whole import fails
+	t.Run("import insert", func(t *testing.T) {
+		f := newNotesFix(t)
+		f.patchNote(t, 5, `{"note_day":"2026-07-06","from_day":"2026-07-05","note":"Food horrible"}`)
+		ex := tvDo(t, f.main.URL, "GET", "/api/export", "", f.signedIn())
+		f2 := newNotesFix(t)
+		f2.a.db.Exec(`DELETE FROM holidays WHERE id = 1`)
+		f2.a.db.Exec(boom("visit_notes", "INSERT"))
+		im := tvDo(t, f2.main.URL, "POST", "/api/import", string(ex.body), f2.signedIn())
+		if im.code/100 == 2 {
+			t.Fatalf("import with a failing note insert: %d %s", im.code, im.body)
+		}
+		var n int
+		f2.a.db.QueryRow(`SELECT COUNT(*) FROM pins WHERE title = 'Premier Inn'`).Scan(&n)
+		if n != 0 {
+			t.Fatalf("failed import left %d pins behind", n)
+		}
+	})
+}
