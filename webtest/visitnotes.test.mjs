@@ -140,4 +140,41 @@ export const tests = [
     assert.deepEqual(sent[0], { title: "Premier", note: "plain 2" });
     await ctx.close();
   }],
+  // WA-1 (audit 137): Cancel on the question goes back to the day the words were typed for.
+  ["WA-1: Cancel returns the picker to the day picked before, and Save leaves the first day's note alone", async ({ browser, base }) => {
+    const { ctx, page, sent } = await setup(browser, base, [V("2026-09-25", "first"), V("2026-09-26", ""), V("2026-09-27", "third")]);
+    await edit(page, 0);
+    await page.selectOption("select.note-day", "2026-09-26");
+    await page.fill("form.pop-form textarea", "for the 26th");
+    page.once("dialog", (d) => d.dismiss());
+    await page.selectOption("select.note-day", "2026-09-27");
+    assert.equal(await page.inputValue("select.note-day"), "2026-09-26");
+    assert.equal(await page.inputValue("form.pop-form textarea"), "for the 26th");
+    await save(page);
+    await waitSent(page, sent);
+    assert.deepEqual(sent[0], { title: "Premier", note: "for the 26th", note_day: "2026-09-26" });
+    await ctx.close();
+  }],
+
+  ["WA-1: Cancel twice, then OK: the picker follows every step", async ({ browser, base }) => {
+    const { ctx, page, sent } = await setup(browser, base, [V("2026-09-25", "first"), V("2026-09-26", ""), V("2026-09-27", "third")]);
+    await edit(page, 0);
+    await page.fill("form.pop-form textarea", "typed");
+    page.once("dialog", (d) => d.dismiss());
+    await page.selectOption("select.note-day", "2026-09-27");
+    assert.equal(await page.inputValue("select.note-day"), "2026-09-25", "nothing else was picked: back to the first day");
+    await page.selectOption("select.note-day", "2026-09-26");
+    page.once("dialog", (d) => d.dismiss());
+    await page.selectOption("select.note-day", "2026-09-27");
+    assert.equal(await page.inputValue("select.note-day"), "2026-09-26");
+    page.once("dialog", (d) => d.accept());
+    await page.selectOption("select.note-day", "2026-09-27");
+    assert.equal(await page.inputValue("form.pop-form textarea"), "third");
+    // moving the shown note to the empty day is still a move from the 27th
+    await page.selectOption("select.note-day", "2026-09-26");
+    await save(page);
+    await waitSent(page, sent);
+    assert.deepEqual(sent[0], { title: "Premier", note: "third", note_day: "2026-09-26", from_day: "2026-09-27" });
+    await ctx.close();
+  }],
 ];
