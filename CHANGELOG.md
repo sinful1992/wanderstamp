@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.18.0 (unreleased)
+## 1.18.0 (2026-11-10)
 
 ### Frontend
 - Fixed: a pin saved with weak signal could appear twice when the server's answer was lost; the app now sends one id per pin and the server stores it once (WA-2/WS-5).
