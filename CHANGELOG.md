@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.18.0 (unreleased)
+
+### Frontend
+- Fixed: a pin saved with weak signal could appear twice when the server's answer was lost; the app now sends one id per pin and the server stores it once (WA-2/WS-5).
+- Fixed: in the note editor, Cancel on "Show it instead of what you typed?" went back to the first day and Save could overwrite that day's note; it now goes back to the day you had picked (WA-1).
+
+### Server
+- `POST /api/pins` takes an optional `client_id` (1 to 64 characters of `A-Z a-z 0-9 _ : . -`), the id the page gave the pin before its first post. The same id sent again by the same user stores nothing: the answer is 201 with the pin as it is now (the repeat's own body is ignored), or 410 `pin was deleted` when that pin is gone, so a queued copy can't bring a deleted pin back. Another shape is refused with 400 `invalid client_id`. Without the field nothing changes, so pages from before 1.18.0 keep working. Keys are per user. New table `pin_keys` and new column `pins.client_id`, both added at start; no existing row is changed, and 1.17.0 still runs on the database (roll back = the old image). Keys are not part of the export: they only matter for the minutes a phone retries.
+
+### Tests
+- The audit's repro (`TestAudit137_WS5`, the same pin sent twice) now passes with a key; 13 new server tests, 10 of them fail on 1.17.0: three sends store one pin, no key stores every post, good and bad id shapes, a repeat returns the edited pin, 410 after a delete and the pin again after Undo, a repeat never returns a newer pin that got the deleted pin's number, one key used by two users, 20 posts at once, a failed post leaves no key, a deleted trip, a 1.17.0 database gets the table, and every database fault answers 500 with nothing stored. `handleCreatePin` 95.8 % of statements (the commit-failure answer is not forced), `keyedPin` 100 %.
+
 ## 1.17.0 (2026-11-09)
 
 ### Frontend

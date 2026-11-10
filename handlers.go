@@ -953,6 +953,32 @@ func (a *app) handleListPins(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// clientIDRe is the shape of a pin's client_id: the id the page gave the pin
+// before its first post. Old queue ids look like "1794298543932:k3x9af".
+var clientIDRe = regexp.MustCompile(`^[A-Za-z0-9_:.-]{1,64}$`)
+
+// keyedPin answers a repeat of a keyed post: the pin the key made, as it is
+// now. found is false when the key is new; gone is true when the key is known
+// but its pin is not there any more. The pin's own client_id is compared too,
+// because SQLite hands a deleted pin's id to the next pin.
+func keyedPin(tx *sql.Tx, user, key string) (p pinOut, found, gone bool, err error) {
+	var id int64
+	err = tx.QueryRow(`SELECT pin_id FROM pin_keys WHERE created_by = ? AND client_id = ?`, user, key).Scan(&id)
+	if err == sql.ErrNoRows {
+		return p, false, false, nil
+	}
+	if err != nil {
+		return p, false, false, err
+	}
+	err = tx.QueryRow(`SELECT id, holiday_id, kind, lat, lng, title, note, created_at, created_by
+		FROM pins WHERE id = ? AND client_id = ?`, id, key).
+		Scan(&p.ID, &p.HolidayID, &p.Kind, &p.Lat, &p.Lng, &p.Title, &p.Note, &p.CreatedAt, &p.CreatedBy)
+	if err == sql.ErrNoRows {
+		return p, true, true, nil
+	}
+	return p, true, false, err
+}
+
 func (a *app) handleCreatePin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		HolidayID int64   `json:"holiday_id"`
@@ -961,9 +987,37 @@ func (a *app) handleCreatePin(w http.ResponseWriter, r *http.Request) {
 		Title     string  `json:"title"`
 		Note      string  `json:"note"`
 		CreatedAt string  `json:"created_at"` // optional: pins queued offline sync later but keep their real capture time
+		ClientID  string  `json:"client_id"`  // optional (1.18.0): the same id sent again stores nothing new
 	}
 	if !readJSON(w, r, &req) {
 		return
+	}
+	if req.ClientID != "" && !clientIDRe.MatchString(req.ClientID) {
+		httpError(w, http.StatusBadRequest, "invalid client_id")
+		return
+	}
+	// One transaction on the single write connection: two posts with one key
+	// at the same moment run one after the other, and the second is a repeat.
+	tx, err := a.db.Begin()
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer tx.Rollback()
+	if req.ClientID != "" {
+		p, found, gone, err := keyedPin(tx, userName(r), req.ClientID)
+		switch {
+		case err != nil:
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		case gone:
+			httpError(w, http.StatusGone, "pin was deleted")
+			return
+		case found:
+			// the repeat's own body is ignored: the first post won
+			writeJSON(w, http.StatusCreated, p)
+			return
+		}
 	}
 	if req.Lat < -90 || req.Lat > 90 || req.Lng < -180 || req.Lng > 180 {
 		httpError(w, http.StatusBadRequest, "invalid coordinates")
@@ -979,21 +1033,32 @@ func (a *app) handleCreatePin(w http.ResponseWriter, r *http.Request) {
 		createdAt = t.UTC()
 	}
 	if req.HolidayID == 0 {
-		if err := a.db.QueryRow(`SELECT id FROM holidays WHERE end_at IS NULL AND planned = 0`).Scan(&req.HolidayID); err != nil {
+		if err := tx.QueryRow(`SELECT id FROM holidays WHERE end_at IS NULL AND planned = 0`).Scan(&req.HolidayID); err != nil {
 			httpError(w, http.StatusBadRequest, "no active holiday — start one or pass holiday_id")
 			return
 		}
 	}
-	res, err := a.db.Exec(`
-		INSERT INTO pins (holiday_id, kind, lat, lng, title, note, created_at, created_by)
-		VALUES (?, 'manual', ?, ?, ?, ?, ?, ?)`,
+	res, err := tx.Exec(`
+		INSERT INTO pins (holiday_id, kind, lat, lng, title, note, created_at, created_by, client_id)
+		VALUES (?, 'manual', ?, ?, ?, ?, ?, ?, ?)`,
 		req.HolidayID, req.Lat, req.Lng, strings.TrimSpace(req.Title), req.Note,
-		createdAt.Format(time.RFC3339), userName(r))
+		createdAt.Format(time.RFC3339), userName(r), req.ClientID)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "no such holiday")
 		return
 	}
 	id, _ := res.LastInsertId()
+	if req.ClientID != "" {
+		if _, err := tx.Exec(`INSERT INTO pin_keys (created_by, client_id, pin_id, created_at) VALUES (?, ?, ?, ?)`,
+			userName(r), req.ClientID, id, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 	a.resyncSoon(req.HolidayID)
 	writeJSON(w, http.StatusCreated, pinOut{
 		ID: id, HolidayID: req.HolidayID, Kind: "manual",

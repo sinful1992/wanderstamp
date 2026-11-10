@@ -147,6 +147,18 @@ CREATE TABLE IF NOT EXISTS visit_notes (
   PRIMARY KEY (pin_id, day)
 );
 
+-- 1.18.0: one row per hand-placed pin that came with a client_id. No link to
+-- pins on purpose: the key outlives its pin, so a queued copy that arrives
+-- after the pin was deleted is answered 410 instead of making the pin again.
+-- Per user: created_by is the username, as in pins.created_by.
+CREATE TABLE IF NOT EXISTS pin_keys (
+  created_by TEXT NOT NULL,
+  client_id  TEXT NOT NULL,
+  pin_id     INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (created_by, client_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_pins_holiday ON pins(holiday_id);
 CREATE INDEX IF NOT EXISTS idx_tracks_holiday ON tracks(holiday_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
@@ -197,6 +209,22 @@ var migrations = []string{
 	`ALTER TABLE pin_photos ADD COLUMN duration REAL NOT NULL DEFAULT 0`,
 	`ALTER TABLE unplaced_photos ADD COLUMN type TEXT NOT NULL DEFAULT 'image'`,
 	`ALTER TABLE unplaced_photos ADD COLUMN duration REAL NOT NULL DEFAULT 0`,
+	// 1.18.0: the id the page gave a hand-placed pin before its first post
+	// ('' = none), so the same pin sent twice is stored once (see pin_keys)
+	`ALTER TABLE pins ADD COLUMN client_id TEXT NOT NULL DEFAULT ''`,
+}
+
+// migrate brings a database of any earlier version up to this one. Safe to
+// run at every start: tables are created only when missing, and a column
+// that is already there makes its ALTER fail, which is ignored.
+func migrate(db *sql.DB) error {
+	if _, err := db.Exec(schema); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	for _, stmt := range migrations {
+		db.Exec(stmt)
+	}
+	return nil
 }
 
 func openDB(path string) (*sql.DB, error) {
@@ -208,11 +236,8 @@ func openDB(path string) (*sql.DB, error) {
 	// modernc.org/sqlite serializes access per connection; a single connection
 	// avoids SQLITE_BUSY between the writer and readers under WAL.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
-	for _, stmt := range migrations {
-		db.Exec(stmt)
+	if err := migrate(db); err != nil {
+		return nil, err
 	}
 	// Before planned trips existed (<= 1.8.2) a future first day made a live
 	// trip. An open trip whose first day is still ahead is a planned one.
