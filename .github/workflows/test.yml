@@ -1,0 +1,44 @@
+name: Test
+
+# The server's test step (audit 137 WS-8, team task 141). Runs on every push
+# and pull request, and is called by docker.yml so a version tag can only
+# publish an image after go vet, go test and the browser tests pass.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Workflow gate (publish needs this test job)
+        run: node --test .github/tests/*.test.mjs
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -count=1 ./...
+
+      - name: Browser tests (webtest)
+        run: |
+          npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/pw" playwright-core@1.65.0
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright-core" install --with-deps chromium-headless-shell
+          PW_CORE="$RUNNER_TEMP/pw/node_modules/playwright-core" node webtest/run.mjs

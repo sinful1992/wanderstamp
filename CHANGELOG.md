@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### CI
+- A version tag now publishes the server image only after a new test job passes: `go vet`, `go test`, the browser tests (`webtest/run.mjs`, headless Chromium) and a check of the workflow files themselves (`.github/workflows/test.yml`, called by `docker.yml`; audit 137 WS-8). The same job runs on every push and pull request.
+- A manual run of "Publish Docker image" on a branch runs the tests and skips the publish; publishing (including `latest`) happens only from a `v*` tag. Before, a manual run on master pushed `latest`.
+- `.github/tests/workflow-gate.test.mjs` (5 tests, `node --test .github/tests/*.test.mjs`) fails on the old `docker.yml` (no test job, publish from any ref) and passes now.
+
 ## 1.18.0 (2026-11-10)
 
 ### Frontend
