@@ -183,9 +183,19 @@ function setPinQueue(q) {
   try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch {}
 }
 
+// One id per pin, made before its first post. The server remembers it
+// (client_id), so the same pin sent again after a lost answer is stored once.
+const CLIENT_ID_OK = /^[A-Za-z0-9_:.-]{1,64}$/;
+function newClientId() {
+  // randomUUID needs a secure context; the LAN address over plain HTTP has none
+  if (window.crypto && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return Date.now() + ":" + Math.random().toString(36).slice(2, 8);
+}
+
 function queuePin(pin) {
-  pin.qid = Date.now() + ":" + Math.random().toString(36).slice(2, 8);
-  setPinQueue([...pinQueue(), pin]);
+  const { client_id, ...rest } = pin;
+  rest.qid = client_id || newClientId();
+  setPinQueue([...pinQueue(), rest]);
   renderMarkers();
 }
 
@@ -211,7 +221,7 @@ async function syncQueue() {
   const q = pinQueue();
   if (!q.length) return;
   syncingQueue = true;
-  let sent = 0, dropped = 0;
+  let sent = 0, dropped = 0, gone = 0;
   // Taken off the stored queue one by one, so a pin queued while this runs
   // stays queued.
   const same = (a, b) => (a.qid || b.qid ? a.qid === b.qid : JSON.stringify(a) === JSON.stringify(b));
@@ -225,6 +235,8 @@ async function syncQueue() {
       // discarded while an earlier pin was sending: don't send it
       if (!pinQueue().some((x) => same(x, item))) continue;
       const { qid, ...pin } = item;
+      // a queue id the server would refuse goes without: never lose a pin over its key
+      if (CLIENT_ID_OK.test(String(qid ?? ""))) pin.client_id = String(qid);
       try {
         await api("POST", "/api/pins", pin);
         sent++;
@@ -236,14 +248,20 @@ async function syncQueue() {
           if (ex && ex.status >= 500) continue;
           break;
         }
-        dropped++; // the server said no (trip deleted?) — retrying forever won't fix it
+        // 410: this pin did reach the server earlier and was deleted since:
+        // nothing was lost, so nothing to report
+        if (ex && ex.status === 410) gone++;
+        else dropped++; // the server said no (trip deleted?) — retrying forever won't fix it
       }
       remove(item);
     }
   } finally {
     syncingQueue = false;
   }
-  if (!sent && !dropped) return;
+  if (!sent && !dropped) {
+    if (gone) renderMarkers();
+    return;
+  }
   const bits = [];
   if (sent) bits.push(`${sent} offline pin${sent > 1 ? "s" : ""} synced`);
   if (dropped) bits.push(`${dropped} rejected by the server`);
@@ -1391,17 +1409,19 @@ function editForm(pin, stop) {
     which.appendChild(o);
   }
   if (start) which.value = start.day;
+  let picked = which.value;
   which.onchange = () => {
     const d = days.find((x) => x.day === which.value);
     if (d.note) {
       if (note.value !== loaded && !confirm("That day already has a note. Show it instead of what you typed?")) {
-        which.value = fromDay;
+        which.value = picked; // back to the day the typed words were meant for
         return;
       }
       note.value = d.note;
       loaded = d.note;
       fromDay = d.day;
     }
+    picked = which.value;
     // a day with no note: the text stays and moves there on Save
     moveHint();
   };
@@ -1490,6 +1510,7 @@ function placePin(latlng) {
       .catch(() => {});
   };
   form.append(coords, title, note, trip, save);
+  const clientId = newClientId(); // one per form: a second tap on Add pin is the same pin
   const popup = L.popup({ maxWidth: 300, minWidth: 220 }).setLatLng(latlng).setContent(form).openOn(map);
   title.focus();
   form.onsubmit = async (e) => {
@@ -1498,6 +1519,7 @@ function placePin(latlng) {
       holiday_id: Number(trip.value),
       lat: latlng.lat, lng: latlng.lng,
       title: title.value, note: note.value,
+      client_id: clientId,
     };
     // created_at rides along so a pin synced hours later still lands on the
     // right day of the trip's story
