@@ -357,7 +357,34 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	// Checked before anything is written, like the dates below.
+	// Everything is checked before anything is written, and the writes go in
+	// one transaction: a request answered 400 has changed nothing, a trip that
+	// does not exist answers 404, and a failed write answers 500 (audit 137
+	// WS-3; before, the dates and journal were written and the name and colour
+	// checked after).
+	var curStart string
+	var curEnd *string
+	var planned bool
+	if err := a.db.QueryRow(`SELECT start_at, end_at, planned FROM holidays WHERE id = ?`, id).Scan(&curStart, &curEnd, &planned); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpError(w, http.StatusNotFound, "no such holiday")
+		} else {
+			httpError(w, http.StatusInternalServerError, "database error")
+		}
+		return
+	}
+	var name string
+	if req.Name != nil {
+		name = strings.TrimSpace(*req.Name)
+		if name == "" {
+			httpError(w, http.StatusBadRequest, "name cannot be empty")
+			return
+		}
+	}
+	if req.Color != nil && !colorRe.MatchString(*req.Color) {
+		httpError(w, http.StatusBadRequest, "color must be #RRGGBB")
+		return
+	}
 	var destName string
 	var destLat, destLng float64
 	if req.DestName != nil {
@@ -368,21 +395,16 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var start time.Time
+	var end *time.Time
 	if req.StartAt != nil || req.EndAt != nil {
 		// Either end can move, so check the order against whichever side
 		// is staying put.
-		var curStart string
-		var curEnd *string
-		var planned bool
-		if err := a.db.QueryRow(`SELECT start_at, end_at, planned FROM holidays WHERE id = ?`, id).Scan(&curStart, &curEnd, &planned); err != nil {
-			httpError(w, http.StatusNotFound, "no such holiday")
-			return
-		}
 		if planned && req.EndAt != nil {
 			httpError(w, http.StatusBadRequest, "a planned trip gets its last day when you end it")
 			return
 		}
-		start, _ := time.Parse(time.RFC3339, curStart)
+		start, _ = time.Parse(time.RFC3339, curStart)
 		if req.StartAt != nil {
 			t, ok := parseWhen(*req.StartAt, false)
 			if !ok {
@@ -391,7 +413,6 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 			}
 			start = t
 		}
-		var end *time.Time
 		if curEnd != nil {
 			if t, err := time.Parse(time.RFC3339, *curEnd); err == nil {
 				end = &t
@@ -409,59 +430,80 @@ func (a *app) handleUpdateHoliday(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "the trip can't end before it starts")
 			return
 		}
-		if req.StartAt != nil {
-			a.db.Exec(`UPDATE holidays SET start_at = ? WHERE id = ?`, start.Format(time.RFC3339), id)
-			// An open trip moved to a first day still ahead goes back to
-			// counting down; one moved into the past is promotePlanned's.
-			if end == nil && start.After(time.Now().UTC()) {
-				a.db.Exec(`UPDATE holidays SET planned = 1 WHERE id = ?`, id)
-			}
+	}
+	if req.CoverAsset != nil && *req.CoverAsset != "" {
+		// the cover must be a photo from this trip (on a pin or still unplaced)
+		var onTrip bool
+		if err := a.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
+				             WHERE p.holiday_id = ? AND pp.asset_id = ?)
+				  OR EXISTS (SELECT 1 FROM unplaced_photos up
+				             WHERE up.holiday_id = ? AND up.asset_id = ?)`,
+			id, *req.CoverAsset, id, *req.CoverAsset).Scan(&onTrip); err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
 		}
-		if req.EndAt != nil {
-			a.db.Exec(`UPDATE holidays SET end_at = ? WHERE id = ?`, end.Format(time.RFC3339), id)
+		if !onTrip {
+			httpError(w, http.StatusBadRequest, "cover photo isn't on this trip")
+			return
 		}
 	}
+	// the outline lookup is a network call: done before the transaction opens
+	var destArea string
+	if req.DestName != nil {
+		destArea = resolveArea(r.Context(), destName, req.DestOSM)
+	}
+
+	tx, err := a.db.Begin()
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer tx.Rollback()
+	var werr error
+	exec := func(q string, args ...any) {
+		if werr == nil {
+			_, werr = tx.Exec(q, args...)
+		}
+	}
+	if req.StartAt != nil {
+		exec(`UPDATE holidays SET start_at = ? WHERE id = ?`, start.Format(time.RFC3339), id)
+		// An open trip moved to a first day still ahead goes back to
+		// counting down; one moved into the past is promotePlanned's.
+		if end == nil && start.After(time.Now().UTC()) {
+			exec(`UPDATE holidays SET planned = 1 WHERE id = ?`, id)
+		}
+	}
+	if req.EndAt != nil {
+		exec(`UPDATE holidays SET end_at = ? WHERE id = ?`, end.Format(time.RFC3339), id)
+	}
 	if req.Journal != nil {
-		a.db.Exec(`UPDATE holidays SET journal = ?, journal_by = ? WHERE id = ?`, *req.Journal, userName(r), id)
+		exec(`UPDATE holidays SET journal = ?, journal_by = ? WHERE id = ?`, *req.Journal, userName(r), id)
 	}
 	if req.DestName != nil {
 		// a new destination without a search hit (typed coordinates) drops
 		// the old outline along with the old point
-		a.db.Exec(`UPDATE holidays SET dest_name = ?, dest_lat = ?, dest_lng = ?, dest_area = ?, dest_bbox = '' WHERE id = ?`,
-			destName, destLat, destLng, resolveArea(r.Context(), destName, req.DestOSM), id)
-		a.forgetArea(id)
+		exec(`UPDATE holidays SET dest_name = ?, dest_lat = ?, dest_lng = ?, dest_area = ?, dest_bbox = '' WHERE id = ?`,
+			destName, destLat, destLng, destArea, id)
 	}
 	if req.CoverAsset != nil {
-		// Empty clears the choice; otherwise the cover must be a photo from
-		// this trip (on a pin or still unplaced).
-		if *req.CoverAsset == "" {
-			a.db.Exec(`UPDATE holidays SET cover_asset = '' WHERE id = ?`, id)
-		} else {
-			res, _ := a.db.Exec(`UPDATE holidays SET cover_asset = ? WHERE id = ?
-				AND (EXISTS (SELECT 1 FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id
-				             WHERE p.holiday_id = ? AND pp.asset_id = ?)
-				  OR EXISTS (SELECT 1 FROM unplaced_photos up
-				             WHERE up.holiday_id = ? AND up.asset_id = ?))`,
-				*req.CoverAsset, id, id, *req.CoverAsset, id, *req.CoverAsset)
-			if n, _ := res.RowsAffected(); n == 0 {
-				httpError(w, http.StatusBadRequest, "cover photo isn't on this trip")
-				return
-			}
-		}
+		exec(`UPDATE holidays SET cover_asset = ? WHERE id = ?`, *req.CoverAsset, id)
 	}
 	if req.Name != nil {
-		if strings.TrimSpace(*req.Name) == "" {
-			httpError(w, http.StatusBadRequest, "name cannot be empty")
-			return
-		}
-		a.db.Exec(`UPDATE holidays SET name = ? WHERE id = ?`, strings.TrimSpace(*req.Name), id)
+		exec(`UPDATE holidays SET name = ? WHERE id = ?`, name, id)
 	}
 	if req.Color != nil {
-		if !colorRe.MatchString(*req.Color) {
-			httpError(w, http.StatusBadRequest, "color must be #RRGGBB")
-			return
-		}
-		a.db.Exec(`UPDATE holidays SET color = ? WHERE id = ?`, *req.Color, id)
+		exec(`UPDATE holidays SET color = ? WHERE id = ?`, *req.Color, id)
+	}
+	if werr == nil {
+		werr = tx.Commit()
+	}
+	if werr != nil {
+		log.Printf("update holiday %d: %v", id, werr)
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if req.DestName != nil {
+		a.forgetArea(id)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -873,7 +915,9 @@ func (a *app) queryVisitNotes(holidayID int64) (map[int64]map[string]string, err
 // errNoteConflict: a per-visit note write that would hide or erase a note.
 var errNoteConflict = errors.New("note conflict")
 
-func (a *app) writeVisitNote(pinID int64, day string, fromDay *string, note string) error {
+// more, when not nil, runs inside the same transaction after the note is
+// written (the pin's other fields, task 142 WS-3), so all of it lands or none.
+func (a *app) writeVisitNote(pinID int64, day string, fromDay *string, note string, more func(*sql.Tx) error) error {
 	var hid int64
 	if err := a.db.QueryRow(`SELECT holiday_id FROM pins WHERE id = ?`, pinID).Scan(&hid); err != nil {
 		return err
@@ -937,6 +981,11 @@ func (a *app) writeVisitNote(pinID int64, day string, fromDay *string, note stri
 	}
 	if err != nil {
 		return err
+	}
+	if more != nil {
+		if err := more(tx); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -1084,6 +1133,20 @@ func (a *app) handleUpdatePin(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	// Everything is checked before anything is written, and all writes go in
+	// one transaction (audit 137 WS-2/WS-3): a 400 changes nothing, a pin that
+	// does not exist answers 404, a failed write 500, and a move to a position
+	// no map has is refused like on create (it made the import refuse the
+	// whole export file).
+	var kind string
+	if err := a.db.QueryRow(`SELECT kind FROM pins WHERE id = ?`, id).Scan(&kind); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpError(w, http.StatusNotFound, "no such pin")
+		} else {
+			httpError(w, http.StatusInternalServerError, "database error")
+		}
+		return
+	}
 	if req.FromDay != nil && req.NoteDay == nil {
 		httpError(w, http.StatusBadRequest, "from_day needs note_day")
 		return
@@ -1092,7 +1155,10 @@ func (a *app) handleUpdatePin(w http.ResponseWriter, r *http.Request) {
 		// ada #9791: once a pin has per-visit notes, a plain note would be
 		// shown at no visit. Only a page from before 1.17.0 sends it.
 		var rows int
-		a.db.QueryRow(`SELECT COUNT(*) FROM visit_notes WHERE pin_id = ?`, id).Scan(&rows)
+		if err := a.db.QueryRow(`SELECT COUNT(*) FROM visit_notes WHERE pin_id = ?`, id).Scan(&rows); err != nil {
+			httpError(w, http.StatusInternalServerError, "database error")
+			return
+		}
 		if rows > 0 {
 			httpError(w, http.StatusConflict, "notes are per visit now: reload the page")
 			return
@@ -1107,42 +1173,84 @@ func (a *app) handleUpdatePin(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "day must be YYYY-MM-DD")
 			return
 		}
-		if err := a.writeVisitNote(id, *req.NoteDay, req.FromDay, *req.Note); err == sql.ErrNoRows {
-			httpError(w, http.StatusNotFound, "no such pin")
-			return
-		} else if err == errNoteConflict {
-			httpError(w, http.StatusConflict, "that visit already has a note, or the old note has no visit: reload the page")
-			return
-		} else if err != nil {
+	}
+	if (req.Lat == nil) != (req.Lng == nil) {
+		httpError(w, http.StatusBadRequest, "lat and lng go together")
+		return
+	}
+	if req.Lat != nil && !validLatLng(*req.Lat, *req.Lng) {
+		httpError(w, http.StatusBadRequest, "lat must be -90..90 and lng -180..180")
+		return
+	}
+	if req.CoverAsset != nil && *req.CoverAsset != "" {
+		// the cover must be one of the pin's own photos
+		var onPin bool
+		if err := a.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM pin_photos WHERE pin_id = ? AND asset_id = ?)`,
+			id, *req.CoverAsset).Scan(&onPin); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
-		req.Note = nil // written to the visit, not to pins.note
-	}
-	if req.Title != nil {
-		a.db.Exec(`UPDATE pins SET title = ? WHERE id = ?`, strings.TrimSpace(*req.Title), id)
-	}
-	if req.Note != nil {
-		a.db.Exec(`UPDATE pins SET note = ? WHERE id = ?`, *req.Note, id)
-	}
-	if req.CoverAsset != nil {
-		// Empty clears the choice (back to earliest photo); otherwise the
-		// cover must be one of the pin's own photos.
-		if *req.CoverAsset == "" {
-			a.db.Exec(`UPDATE pins SET cover_asset = '' WHERE id = ?`, id)
-		} else {
-			res, _ := a.db.Exec(`UPDATE pins SET cover_asset = ? WHERE id = ?
-				AND EXISTS (SELECT 1 FROM pin_photos WHERE pin_id = ? AND asset_id = ?)`,
-				*req.CoverAsset, id, id, *req.CoverAsset)
-			if n, _ := res.RowsAffected(); n == 0 {
-				httpError(w, http.StatusBadRequest, "cover photo isn't on this pin")
-				return
-			}
+		if !onPin {
+			httpError(w, http.StatusBadRequest, "cover photo isn't on this pin")
+			return
 		}
 	}
-	if req.Lat != nil && req.Lng != nil {
-		// Only manual pins move by hand; photo pins follow their photos.
-		a.db.Exec(`UPDATE pins SET lat = ?, lng = ? WHERE id = ? AND kind = 'manual'`, *req.Lat, *req.Lng, id)
+	plainNote := req.NoteDay == nil && req.Note != nil
+	fields := func(tx *sql.Tx) error {
+		if req.Title != nil {
+			if _, err := tx.Exec(`UPDATE pins SET title = ? WHERE id = ?`, strings.TrimSpace(*req.Title), id); err != nil {
+				return err
+			}
+		}
+		if plainNote {
+			if _, err := tx.Exec(`UPDATE pins SET note = ? WHERE id = ?`, *req.Note, id); err != nil {
+				return err
+			}
+		}
+		if req.CoverAsset != nil {
+			// empty clears the choice (back to earliest photo)
+			if _, err := tx.Exec(`UPDATE pins SET cover_asset = ? WHERE id = ?`, *req.CoverAsset, id); err != nil {
+				return err
+			}
+		}
+		if req.Lat != nil && kind == "manual" {
+			// Only manual pins move by hand; photo pins follow their photos.
+			if _, err := tx.Exec(`UPDATE pins SET lat = ?, lng = ? WHERE id = ?`, *req.Lat, *req.Lng, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	var err error
+	if req.NoteDay != nil {
+		err = a.writeVisitNote(id, *req.NoteDay, req.FromDay, *req.Note, fields)
+	} else {
+		err = func() error {
+			tx, err := a.db.Begin()
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback()
+			if err := fields(tx); err != nil {
+				return err
+			}
+			return tx.Commit()
+		}()
+	}
+	switch {
+	case err == nil:
+	case errors.Is(err, sql.ErrNoRows):
+		httpError(w, http.StatusNotFound, "no such pin")
+		return
+	case err == errNoteConflict:
+		httpError(w, http.StatusConflict, "that visit already has a note, or the old note has no visit: reload the page")
+		return
+	default:
+		log.Printf("update pin %d: %v", id, err)
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if req.Lat != nil && kind == "manual" {
 		a.resyncPinSoon(id)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

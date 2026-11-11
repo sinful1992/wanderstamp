@@ -773,9 +773,24 @@ func inNets(ip net.IP, nets []*net.IPNet) bool {
 	return false
 }
 
+// peerIP parses a peer address. Go gives an IPv6 link-local peer with its
+// zone ("fe80::1%eth0"), which net.ParseIP refuses, so the door said 404 to a
+// TV on link-local (audit 137 WS-4). A zone is dropped only from a link-local
+// address; any other address with a zone is not a peer we know.
+func peerIP(addr string) net.IP {
+	if i := strings.IndexByte(addr, '%'); i >= 0 {
+		ip := net.ParseIP(addr[:i])
+		if ip == nil || ip.To4() != nil || !ip.IsLinkLocalUnicast() || i == len(addr)-1 || strings.Contains(addr[i+1:], "%") {
+			return nil
+		}
+		return ip
+	}
+	return net.ParseIP(addr)
+}
+
 // homePeer is true for a device on the home network.
 func homePeer(addr string) bool {
-	ip := net.ParseIP(addr)
+	ip := peerIP(addr)
 	if ip == nil {
 		return false
 	}
@@ -804,7 +819,7 @@ func (a *app) lanOnly(next http.Handler) http.Handler {
 }
 
 func refusedPeer(addr string, refuse []net.IP) bool {
-	ip := net.ParseIP(addr)
+	ip := peerIP(addr)
 	for _, g := range refuse {
 		if ip != nil && g.Equal(ip) {
 			return true

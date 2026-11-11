@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Server (task 142, audit 137 WS-2..4)
+- Editing a trip or a pin checks everything first and writes it all in one go: a request refused with 400 (an empty name, a bad colour, a cover photo from another trip) no longer leaves the dates or journal half-changed, a trip or pin that does not exist answers 404 instead of `{"ok":true}`, and a failed write answers 500 instead of passing silently (WS-3). A visit note and the pin's other fields land together.
+- Moving a pin to a position no map has (lat outside -90..90, lng outside -180..180, or only one of the two) is refused like on create. Before, one such pin made the import refuse the whole export file (WS-2).
+- The TV door lets in a TV that reaches the server over IPv6 link-local (`fe80::1%eth0`): Go gives such an address with its zone, which the door could not read, so the TV got 404. A zone is accepted only on a link-local address (WS-4).
+
 ## 1.19.0 (2026-11-11)
 
 ### Frontend (ada, task 142)
