@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.19.0 (2026-11-11)
+
+### Frontend (ada, task 142)
+- Signing out never hands one person's waiting pins to the next: pins queued offline keep their owner, sign-out sends them first, and a sign-out of an already expired session (the server answers 401) still counts as signed out and forgets the saved map. A map answer that arrives during sign-out is no longer saved again (audit 137 WA-3).
+- Opening the app with an expired session forgets the saved map and clears it from the screen; opening it offline keeps the map as before (WA-4).
+- A pin placed on a repeated copy of the world (scrolled past the date line) is saved with its longitude wrapped to -180..180, so it shows in the right place on every device (WS-7).
 
 ### CI (task 142, WS-8 follow-ups from ada's review)
 - Only one image publish runs at a time (`concurrency: publish-image` on the publish job), so two tags pushed together no longer race for `latest`.
