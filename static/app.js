@@ -128,12 +128,16 @@ async function api(method, path, body, meta) {
   if (meta) meta.resp = resp;
   if (resp.status === 401 && path !== "/api/login") {
     showLogin();
-    throw new Error("not logged in");
+    const err = new Error("not logged in");
+    err.status = 401;
+    throw err;
   }
   if (resp.status === 428) {
     // signed in on a temporary password: the server opens nothing else
     showChoosePassword(null);
-    throw new Error("choose your own password first");
+    const err = new Error("choose your own password first");
+    err.status = 428;
+    throw err;
   }
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
@@ -3654,6 +3658,14 @@ window.addEventListener("hashchange", () => {
     // snapshot already on screen is the map.
     if (isNetworkError(ex)) {
       if (hadSnapshot) toast("Offline — showing your last synced map");
+    } else if (ex && ex.status === 401) {
+      // WA-4: the session ran out. The saved map belongs to whoever signed in
+      // last; forget it rather than keep it in storage and behind the cover.
+      try { localStorage.removeItem(SNAP_KEY); } catch {}
+      state.holidays = [];
+      state.pins = [];
+      state.snapUser = null;
+      renderAll();
     } else if ($("login").hidden) {
       // (on 401 or 428 the cover is already up, asking to sign in or for a
       // new password — that says it better than a toast)
