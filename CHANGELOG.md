@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### CI
+- The test job runs on `ubuntu-24.04`, not `ubuntu-latest`. GitHub moved `ubuntu-latest` to Ubuntu 26.04 on 2026-11-11, and there the browser step's `install --with-deps` (apt) failed every run on "Temporary failure resolving 'archive.ubuntu.com'" (runs 43037524781, 43039902690). `workflow-gate.test.mjs` fails on a test job without a named image (task 145, USER #10754).
+
 ## 1.20.1 (2026-11-11)
 
 ### Server (task 143, left notes of task 142)
