@@ -175,15 +175,54 @@ func TestAudit137_WS6_ConfirmedGonePhotosArePruned(t *testing.T) {
 	}
 }
 
-func TestAudit137_WS6_AssetCheckFailureKeepsEverything(t *testing.T) {
+// B3 (ada #10301): a 500 about one photo keeps that photo unchecked; the photo
+// Immich does say is gone still goes, and the sync succeeds.
+func TestAudit137_WS6_AssetCheckFailureKeepsThatPhoto(t *testing.T) {
 	assets := map[string]ws6Asset{"pha": {}, "phb": {status: 500}, "phc": {status: 404}}
 	srv, _ := ws6Server(t, []string{"pha"}, assets)
 	a := ws6Trip(t, srv.URL, 3)
-	if _, _, err := a.syncHoliday(1); err == nil {
-		t.Error("sync reported success while Immich failed to answer about a photo")
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatalf("sync: %v (a 500 about one photo must not stop the sync)", err)
 	}
-	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pin_photos`); n != 3 {
-		t.Errorf("photos left after a failed check: %d, want 3 (nothing pruned)", n)
+	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pin_photos WHERE asset_id = 'phb'`); n != 1 {
+		t.Error("the photo Immich answered 500 about was removed")
+	}
+	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pin_photos WHERE asset_id = 'phc'`); n != 0 {
+		t.Error("the photo Immich says is gone was kept")
+	}
+}
+
+// A check that gets no answer at all (the time limit) still stops the sync and prunes nothing.
+func TestAudit137_WS6_NoAnswerStopsTheSync(t *testing.T) {
+	assets := map[string]ws6Asset{"phb": {hang: true}, "phc": {status: 404}}
+	srv, _ := ws6Server(t, []string{"pha"}, assets)
+	a := ws6Trip(t, srv.URL, 3)
+	old := assetCheckTimeout
+	assetCheckTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { assetCheckTimeout = old })
+	if _, _, err := a.syncHoliday(1); err == nil {
+		t.Error("sync reported success though Immich never answered about a photo")
+	}
+	if n := ws6PhotoCount(t, a); n != 3 {
+		t.Errorf("photos left: %d, want 3 (nothing pruned)", n)
+	}
+}
+
+// B3: the same 500 on every sync (a corrupt file) never stops the trip's new photos.
+func TestAudit137_WS6_LastingOddAnswerStillAddsNewPhotos(t *testing.T) {
+	assets := map[string]ws6Asset{"pha": {}, "phb": {status: 500}, "phc": {}, "phd": {}}
+	srv, _ := ws6Server(t, []string{"pha", "phc", "phd"}, assets)
+	a := ws6Trip(t, srv.URL, 3)
+	for i := 0; i < 3; i++ {
+		if _, _, err := a.syncHoliday(1); err != nil {
+			t.Fatalf("sync %d: %v", i+1, err)
+		}
+	}
+	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pin_photos WHERE asset_id = 'phd'`); n != 1 {
+		t.Error("the trip's new photo never arrived while another photo kept answering 500")
+	}
+	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pin_photos WHERE asset_id = 'phb'`); n != 1 {
+		t.Error("the photo answering 500 was removed")
 	}
 }
 
@@ -217,13 +256,14 @@ func TestAudit137_WS6_OfflinePhotosAreKeptEvenInTheTrash(t *testing.T) {
 	}
 }
 
-// ada #10259 (2): a 400 that is not "not found" is an error, not "gone".
-func TestAudit137_WS6_Other400StopsTheSync(t *testing.T) {
+// ada #10259 (2): a 400 that is not "not found" is not "gone"; since B3 the
+// photo is kept unchecked and the sync goes on.
+func TestAudit137_WS6_Other400KeepsThePhoto(t *testing.T) {
 	assets := map[string]ws6Asset{"phb": {status: 400, body: `{"message":"id must be a UUID"}`}}
 	srv, _ := ws6Server(t, []string{"pha", "phc"}, assets)
 	a := ws6Trip(t, srv.URL, 3)
-	if _, _, err := a.syncHoliday(1); err == nil {
-		t.Error("a 400 that is not 'not found' was read as gone")
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Errorf("sync: %v", err)
 	}
 	if n := ws6PhotoCount(t, a); n != 3 {
 		t.Errorf("photos left: %d, want 3", n)

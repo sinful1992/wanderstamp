@@ -64,7 +64,9 @@ export function gateProblems(dockerYml, testYml) {
     if (!re.test(testYml)) p.push(`test.yml does not run ${what}`);
   }
   if (/continue-on-error:\s*(true|\$\{\{)/.test(testYml)) p.push("test.yml lets a step fail (continue-on-error)");
-  if (/run:.*\|\|\s*(true|:|exit 0)\b/.test(testYml)) p.push("test.yml swallows a failing command (|| true)");
+  // any `||` anywhere (a one-line run: or a run: | block): `|| echo`, `|| exit 0`, `||true` all turn a
+  // failing check green; test.yml needs none (ada #10303, task 143)
+  if (/\|\|/.test(testYml)) p.push("test.yml swallows a failing command (||)");
   // a job or step condition can skip a check on tags (ada #10126 a12/a13): test.yml has none
   if (/^\s+(-\s+)?if:/m.test(testYml)) p.push("test.yml has an if: that can skip a check");
   return p;
@@ -135,6 +137,13 @@ test("other ways to publish count as publishing", () => {
 test("test.yml tricks are refused", () => {
   const ok = dock(OK_IF);
   assert.match(gateProblems(ok, GOOD_TEST.replace("go test -count=1 ./...", "go test -count=1 ./... || true")).join(), /swallows/);
+  // task 143 (ada #10303): any || at all, also inside a run: | block
+  for (const swallow of ["go test -count=1 ./... || echo failed", "go test -count=1 ./... ||true", "go test -count=1 ./... || exit 0",
+    "go test -count=1 ./... || :", "go test -count=1 ./... || { echo; }"]) {
+    assert.match(gateProblems(ok, GOOD_TEST.replace("go test -count=1 ./...", swallow)).join(), /swallows/, swallow);
+  }
+  const block = GOOD_TEST.replace("      - run: go test -count=1 ./...\n", "      - run: |\n          go test -count=1 ./... \\\n            || true\n");
+  assert.match(gateProblems(ok, block).join(), /swallows/);
   assert.match(gateProblems(ok, GOOD_TEST.replace("      - run: go vet ./...\n", "      # - run: go vet ./...\n")).join(), /does not run go vet/);
   assert.match(gateProblems(ok, GOOD_TEST + "      - run: x\n        continue-on-error: ${{ true }}\n").join(), /continue-on-error/);
   assert.match(gateProblems(ok, GOOD_TEST.replace("node webtest/run.mjs", "echo skip  # node webtest/run.mjs")).join(), /does not run webtest/);

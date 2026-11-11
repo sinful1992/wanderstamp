@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Server (task 143, left notes of task 142)
+- One photo that Immich keeps answering oddly about (a 500 for a corrupt file, a 400 that is not "not found", an unreadable answer) no longer stops that trip's photo syncs for good. The photo is kept as it is and asked about again next time; the photos Immich does say are gone still go, and the trip's new photos keep arriving. No answer at all (the time limit) still stops the sync and changes nothing (ada #10301).
+
+### CI
+- The workflow check refuses any `||` in `test.yml`, also inside a `run: |` block (`|| echo`, `||true`, `|| exit 0`, `|| :`); before it caught only `|| true`, `|| :` and `|| exit 0` on a one-line `run:` (ada #10303).
+
+### Tests
+- `ws6_test.go`: a 500 about one photo keeps it while a confirmed-gone photo goes; the same 500 on three syncs still lets a new photo in; no answer still stops the sync. The 500 and other-400 cases changed from "the sync fails" to "the photo is kept". 3 fail on 1.20.0. `workflow-gate.test.mjs`: 6 new `||` forms; 1 test fails on 1.20.0.
+
 ## 1.20.0 (2026-11-11)
 
 ### Frontend (ada, task 142)

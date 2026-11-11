@@ -211,8 +211,19 @@ func (c *immichClient) searchRange(after, before time.Time) ([]immichAsset, erro
 // outside [after, before] (both ends inclusive, as Immich's search is). An
 // offline photo (its library cannot be reached) is never gone, trashed or
 // not: the files come back with the library. Anything else, including a
-// photo Immich has but the search missed, is kept; any other answer is an
-// error, so the sync prunes nothing. Each call has its own short time limit.
+// photo Immich has but the search missed, is kept. Any other answer about this
+// one photo (a 500, a 400 that is not "not found", an unreadable body) is an
+// *assetAnswerError: the caller keeps that photo unchecked. A transport failure
+// (no answer, a time limit) is a plain error, so the sync prunes nothing. Each
+// call has its own short time limit.
+// assetAnswerError: Immich answered about one photo, but not in a way that says
+// whether it is gone (B3 of task 142, ada #10301). That photo is kept unchecked
+// this time; a lasting answer like this (a corrupt file's 500) must not stop the
+// trip's syncs, and so its new photos, for good.
+type assetAnswerError struct{ msg string }
+
+func (e *assetAnswerError) Error() string { return e.msg }
+
 func (c *immichClient) assetGone(ctx context.Context, id string, after, before time.Time) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, assetCheckTimeout)
 	defer cancel()
@@ -232,10 +243,10 @@ func (c *immichClient) assetGone(ctx context.Context, id string, after, before t
 		if strings.Contains(strings.ToLower(string(body)), "not found") {
 			return true, nil
 		}
-		return false, fmt.Errorf("immich asset %s: 400: %s", id, strings.TrimSpace(string(body)))
+		return false, &assetAnswerError{fmt.Sprintf("immich asset %s: 400: %s", id, strings.TrimSpace(string(body)))}
 	default:
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
-		return false, fmt.Errorf("immich asset %s: %s: %s", id, resp.Status, strings.TrimSpace(string(snippet)))
+		return false, &assetAnswerError{fmt.Sprintf("immich asset %s: %s: %s", id, resp.Status, strings.TrimSpace(string(snippet)))}
 	}
 	var a struct {
 		ID            string `json:"id"`
@@ -245,10 +256,13 @@ func (c *immichClient) assetGone(ctx context.Context, id string, after, before t
 		FileCreatedAt string `json:"fileCreatedAt"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&a); err != nil {
-		return false, fmt.Errorf("decode asset %s: %w", id, err)
+		if ctx.Err() != nil {
+			return false, fmt.Errorf("decode asset %s: %w", id, err) // cut off by the time limit: transport
+		}
+		return false, &assetAnswerError{fmt.Sprintf("decode asset %s: %v", id, err)}
 	}
 	if a.ID != id {
-		return false, fmt.Errorf("immich asset %s: answer is for %q", id, a.ID)
+		return false, &assetAnswerError{fmt.Sprintf("immich asset %s: answer is for %q", id, a.ID)}
 	}
 	if a.IsOffline {
 		return false, nil
@@ -470,8 +484,15 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 			gone := 0
 			for _, id := range missing {
 				g, err := a.immich.assetGone(ctx, id, start.Add(-startGrace), before)
+				var odd *assetAnswerError
+				if errors.As(err, &odd) {
+					// an answer about this photo that says neither yes nor no: keep it, check it next time
+					log.Printf("sync holiday %d: %v; kept unchecked", holidayID, err)
+					present[id] = true
+					continue
+				}
 				if err != nil {
-					// transport failure or an odd answer: transient, so stop and change nothing
+					// transport failure (no answer, the time limit): transient, so stop and change nothing
 					return 0, 0, fmt.Errorf("immich check before pruning: %w", err)
 				}
 				if g {
