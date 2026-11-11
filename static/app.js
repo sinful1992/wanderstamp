@@ -1483,7 +1483,13 @@ function editForm(pin, stop) {
     }
     if (cover && cover !== pin.cover_asset) body.cover_asset = cover;
     await busy(submitter(e), async () => {
-      await api("PATCH", `/api/pins/${pin.id}`, body);
+      try {
+        await api("PATCH", `/api/pins/${pin.id}`, body);
+      } catch (ex) {
+        // deleted on another phone: drop it off the map now; busy() shows the error and keeps the words
+        if (ex && ex.status === 404) loadData().catch(() => {});
+        throw ex;
+      }
       loadData(); // refreshStory rebuilds the chapter with the new values
       toast("Pin saved");
     });
