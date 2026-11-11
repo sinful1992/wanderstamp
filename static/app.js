@@ -158,7 +158,12 @@ async function api(method, path, body, meta) {
 const SNAP_KEY = "hm-snapshot";
 const QUEUE_KEY = "hm-pin-queue";
 
+// WA-3 (linus #10249): set while signing out, so a map answer still in flight can't put
+// the departing user's map back into storage after sign-out removed it
+let signingOut = false;
+
 function saveSnapshot() {
+  if (signingOut) return;
   try {
     localStorage.setItem(SNAP_KEY, JSON.stringify({ holidays: state.holidays, pins: state.pins, at: Date.now(),
       user: state.me ? state.me.username : null }));
@@ -284,7 +289,7 @@ async function syncQueue() {
   if (sent) bits.push(`${sent} offline pin${sent > 1 ? "s" : ""} synced`);
   if (dropped) bits.push(`${dropped} rejected by the server`);
   toast(bits.join(" · "));
-  if (sent) loadData().catch(() => {});
+  if (sent && !signingOut) loadData().catch(() => {});
   else renderMarkers();
 }
 
@@ -3138,8 +3143,14 @@ async function loadTVs(list) {
 async function signOut() {
   // WA-3: send this person's waiting pins while still signed in as them; any
   // that can't go now stay queued under their name, never sent as the next user
+  signingOut = true;
   await syncQueue().catch(() => {});
-  await api("POST", "/api/logout", {});
+  try {
+    await api("POST", "/api/logout", {});
+  } catch (ex) {
+    signingOut = false; // still signed in: the map may be saved again
+    throw ex;
+  }
   // the map this device saw goes with the session
   try { localStorage.removeItem(SNAP_KEY); } catch {}
   location.reload();
