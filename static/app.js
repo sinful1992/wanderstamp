@@ -3148,8 +3148,11 @@ async function signOut() {
   try {
     await api("POST", "/api/logout", {});
   } catch (ex) {
-    signingOut = false; // still signed in: the map may be saved again
-    throw ex;
+    // a 401 means the session had already ended: signed out all the same (linus #10262)
+    if (!ex || ex.status !== 401) {
+      signingOut = false; // still signed in: the map may be saved again
+      throw ex;
+    }
   }
   // the map this device saw goes with the session
   try { localStorage.removeItem(SNAP_KEY); } catch {}
