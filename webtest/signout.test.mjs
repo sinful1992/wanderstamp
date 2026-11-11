@@ -126,11 +126,15 @@ export const tests = [
     const h = await trip(page, "WA3 trip");
     await queueOne(page, h.id, "wa3 race " + Date.now());
     let held = null;
-    await page.route("**/api/map", (r) => { held = r; }); // the map refetch after the flush waits here
-    await page.route("**/api/logout", () => {});          // and sign-out never finishes
-    await page.evaluate(() => { signOut(); });
+    // a map load already in flight when sign-out starts (the refetch after a flush, or the
+    // reload after a photo sync) waits here; sign-out itself never finishes
+    await page.route("**/api/map", (r) => { if (!held) held = r; else r.continue(); });
+    await page.route("**/api/logout", () => {});
+    await page.evaluate(() => { loadData().catch(() => {}); });
     for (let i = 0; i < 200 && !held; i++) await page.waitForTimeout(25);
-    assert.ok(held, "no map refetch after the flush");
+    assert.ok(held, "the map load did not start");
+    await page.evaluate(() => { signOut(); });
+    await page.waitForTimeout(300);
     // sign-out has already forgotten the map by the time the answer lands
     await page.evaluate(() => localStorage.removeItem(SNAP_KEY));
     await held.fulfill({ response: await held.fetch() });
