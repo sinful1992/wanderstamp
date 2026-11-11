@@ -2,8 +2,8 @@ package main
 
 import (
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"log"
 	"math"
 	"net/http"
@@ -1343,6 +1343,7 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		Lng      float64 `json:"lng"`
 		Type     string  `json:"type"`
 		Duration float64 `json:"duration"`
+		Ask      bool    `json:"ask,omitempty"` // filed on a hand-placed pin, "same place?" not answered yet
 	}
 	type pinExp struct {
 		ID         int64      `json:"id"`
@@ -1356,6 +1357,7 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		CreatedAt  string     `json:"created_at"`
 		Photos     []photoExp `json:"photos"`
 		VisitNotes []dayNote  `json:"visit_notes,omitempty"` // task 136
+		CreatedBy  string     `json:"created_by,omitempty"`  // task 142 (WS-1)
 	}
 	type packingExp struct {
 		Label   string `json:"label"`
@@ -1375,9 +1377,16 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		DestArea   json.RawMessage `json:"dest_area,omitempty"`
 		Pins       []*pinExp       `json:"pins"`
 		Packing    []packingExp    `json:"packing"`
+		// task 142 (audit 137 WS-1): the rest a move to a new server needs.
+		// Share links, TVs, users and sessions stay behind on purpose.
+		CreatedBy     string `json:"created_by,omitempty"`
+		JournalBy     string `json:"journal_by,omitempty"`
+		ImmichAlbumID string `json:"immich_album_id,omitempty"`
+		holidayRest
 	}
 
-	rows, err := a.db.Query(`SELECT id, name, color, start_at, end_at, journal, cover_asset, dest_name, dest_lat, dest_lng, dest_area FROM holidays ORDER BY start_at`)
+	rows, err := a.db.Query(`SELECT id, name, color, start_at, end_at, journal, cover_asset, dest_name, dest_lat, dest_lng, dest_area,
+		created_by, journal_by, immich_album_id FROM holidays ORDER BY start_at`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
@@ -1386,9 +1395,10 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 	holidays := []*holidayExp{}
 	byHoliday := map[int64]*holidayExp{}
 	for rows.Next() {
-		h := &holidayExp{Pins: []*pinExp{}, Packing: []packingExp{}}
+		h := &holidayExp{Pins: []*pinExp{}, Packing: []packingExp{}, holidayRest: newHolidayRest()}
 		var box string
-		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.DestName, &h.DestLat, &h.DestLng, &box); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Color, &h.StartAt, &h.EndAt, &h.Journal, &h.CoverAsset, &h.DestName, &h.DestLat, &h.DestLng, &box,
+			&h.CreatedBy, &h.JournalBy, &h.ImmichAlbumID); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -1399,7 +1409,7 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		byHoliday[h.ID] = h
 	}
 
-	pinRows, err := a.db.Query(`SELECT id, holiday_id, kind, lat, lng, title, note, country, cover_asset, created_at FROM pins ORDER BY created_at, id`)
+	pinRows, err := a.db.Query(`SELECT id, holiday_id, kind, lat, lng, title, note, country, cover_asset, created_at, created_by FROM pins ORDER BY created_at, id`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
@@ -1409,7 +1419,7 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 	for pinRows.Next() {
 		p := &pinExp{Photos: []photoExp{}}
 		var hid int64
-		if err := pinRows.Scan(&p.ID, &hid, &p.Kind, &p.Lat, &p.Lng, &p.Title, &p.Note, &p.Country, &p.CoverAsset, &p.CreatedAt); err != nil {
+		if err := pinRows.Scan(&p.ID, &hid, &p.Kind, &p.Lat, &p.Lng, &p.Title, &p.Note, &p.Country, &p.CoverAsset, &p.CreatedAt, &p.CreatedBy); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -1419,7 +1429,7 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		byPin[p.ID] = p
 	}
 
-	phRows, err := a.db.Query(`SELECT pin_id, asset_id, taken_at, lat, lng, type, duration FROM pin_photos ORDER BY taken_at`)
+	phRows, err := a.db.Query(`SELECT pin_id, asset_id, taken_at, lat, lng, type, duration, ask FROM pin_photos ORDER BY taken_at`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "database error")
 		return
@@ -1428,7 +1438,7 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 	for phRows.Next() {
 		var pid int64
 		var ph photoExp
-		if err := phRows.Scan(&pid, &ph.AssetID, &ph.TakenAt, &ph.Lat, &ph.Lng, &ph.Type, &ph.Duration); err != nil {
+		if err := phRows.Scan(&pid, &ph.AssetID, &ph.TakenAt, &ph.Lat, &ph.Lng, &ph.Type, &ph.Duration, &ph.Ask); err != nil {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
@@ -1473,10 +1483,21 @@ func (a *app) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	rest := map[int64]*holidayRest{}
+	for id, h := range byHoliday {
+		rest[id] = &h.holidayRest
+	}
+	templates, err := a.exportRest(rest)
+	if err != nil {
+		log.Printf("export: %v", err)
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 	w.Header().Set("Content-Disposition", `attachment; filename="travel-log-export.json"`)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"exported_at": time.Now().UTC().Format(time.RFC3339),
-		"version":     version,
-		"holidays":    holidays,
+		"exported_at":       time.Now().UTC().Format(time.RFC3339),
+		"version":           version,
+		"holidays":          holidays,
+		"packing_templates": templates,
 	})
 }

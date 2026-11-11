@@ -27,9 +27,11 @@ type importPhoto struct {
 	Lng      float64 `json:"lng"`
 	Type     string  `json:"type"`
 	Duration float64 `json:"duration"`
+	Ask      bool    `json:"ask"` // task 142; absent before 1.20.0
 }
 
 type importPin struct {
+	ID         int64         `json:"id"` // the pin's id on the old server: photo_choices point at it
 	Kind       string        `json:"kind"`
 	Lat        float64       `json:"lat"`
 	Lng        float64       `json:"lng"`
@@ -40,6 +42,7 @@ type importPin struct {
 	CreatedAt  string        `json:"created_at"`
 	Photos     []importPhoto `json:"photos"`
 	VisitNotes []dayNote     `json:"visit_notes"` // task 136; absent in older exports
+	CreatedBy  string        `json:"created_by"`  // task 142; absent before 1.20.0
 }
 
 type importHoliday struct {
@@ -58,6 +61,14 @@ type importHoliday struct {
 		Label   string `json:"label"`
 		Checked bool   `json:"checked"`
 	} `json:"packing"`
+	// task 142 (audit 137 WS-1); all absent in exports before 1.20.0
+	CreatedBy     string           `json:"created_by"`
+	JournalBy     string           `json:"journal_by"`
+	ImmichAlbumID string           `json:"immich_album_id"`
+	Tracks        []trackExport    `json:"tracks"`
+	SetAside      []asideExport    `json:"set_aside"`
+	Unplaced      []unplacedExport `json:"unplaced"`
+	PhotoChoices  []choiceExport   `json:"photo_choices"`
 }
 
 type importResult struct {
@@ -66,6 +77,12 @@ type importResult struct {
 	Photos   int `json:"photos"`
 	Packing  int `json:"packing"`
 	Skipped  int `json:"skipped"`
+	// task 142 (WS-1); left out when 0, so an old export gets the old answer
+	Tracks    int `json:"tracks,omitempty"`
+	SetAside  int `json:"set_aside,omitempty"`
+	Unplaced  int `json:"unplaced,omitempty"`
+	Choices   int `json:"photo_choices,omitempty"`
+	Templates int `json:"packing_templates,omitempty"`
 }
 
 // handleImport: POST /api/import (admin), body = an /api/export JSON.
@@ -80,7 +97,8 @@ func (a *app) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxImportBytes)
 	var doc struct {
-		Holidays []importHoliday `json:"holidays"`
+		Holidays  []importHoliday  `json:"holidays"`
+		Templates []templateExport `json:"packing_templates"` // task 142; absent before 1.20.0
 	}
 	// a file saved by a Windows editor can start with a UTF-8 BOM
 	body := bufio.NewReader(r.Body)
@@ -117,6 +135,12 @@ func (a *app) handleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	for i, t := range doc.Templates {
+		if strings.TrimSpace(t.Name) == "" {
+			httpError(w, http.StatusBadRequest, fmt.Sprintf("packing list %d: no name", i+1))
+			return
+		}
+	}
 
 	tx, err := a.db.Begin()
 	if err != nil {
@@ -130,6 +154,12 @@ func (a *app) handleImport(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusInternalServerError, "database error")
 			return
 		}
+	}
+	// master packing lists belong to no trip: they come in even when every
+	// trip was skipped, and a list already here gets only its missing items
+	if err := importTemplatesTx(tx, doc.Templates, &res); err != nil {
+		httpError(w, http.StatusInternalServerError, "database error")
+		return
 	}
 	if r.URL.Query().Get("dry_run") == "1" {
 		writeJSON(w, http.StatusOK, res) // the deferred Rollback undoes it all
@@ -176,7 +206,20 @@ func checkImportHoliday(h importHoliday) string {
 			return "bad dest_area"
 		}
 	}
+	if h.ImmichAlbumID != "" && !assetIDRe.MatchString(h.ImmichAlbumID) {
+		return "bad immich_album_id"
+	}
+	if msg := checkImportRest(h); msg != "" {
+		return msg
+	}
+	ids := map[int64]bool{}
 	for j, p := range h.Pins {
+		if p.ID != 0 {
+			if ids[p.ID] {
+				return fmt.Sprintf("pin %d: id %d twice in one trip", j+1, p.ID)
+			}
+			ids[p.ID] = true
+		}
 		if p.Kind != "photo" && p.Kind != "manual" {
 			return fmt.Sprintf("pin %d: kind must be photo or manual", j+1)
 		}
@@ -228,13 +271,21 @@ func importHolidayTx(tx *sql.Tx, h importHoliday, res *importResult) error {
 	}
 	destName, destLat, destLng, _ := cleanDest(h.DestName, h.DestLat, h.DestLng)
 	r, err := tx.Exec(`INSERT INTO holidays (name, color, start_at, end_at, journal, cover_asset,
-		dest_name, dest_lat, dest_lng, dest_area, planned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		name, h.Color, h.StartAt, h.EndAt, h.Journal, h.CoverAsset, destName, destLat, destLng, area, planned)
+		dest_name, dest_lat, dest_lng, dest_area, planned, created_by, journal_by, immich_album_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		name, h.Color, h.StartAt, h.EndAt, h.Journal, h.CoverAsset, destName, destLat, destLng, area, planned,
+		truncate(h.CreatedBy, 64), truncate(h.JournalBy, 64), h.ImmichAlbumID)
 	if err != nil {
 		return err
 	}
 	hid, _ := r.LastInsertId()
 	res.Holidays++
+	// set-aside and unplaced photos first, so a photo set aside by hand is
+	// never filed on a pin by this same import
+	if err := importAsideTx(tx, hid, h, res); err != nil {
+		return err
+	}
+	pinIDs := map[int64]int64{} // old pin id -> new
 
 	for _, p := range h.Pins {
 		// photo pins get their cluster key back, so the next sync reuses them
@@ -251,13 +302,16 @@ func importHolidayTx(tx *sql.Tx, h importHoliday, res *importResult) error {
 		if _, err := time.Parse(time.RFC3339, created); err != nil {
 			created = time.Now().UTC().Format(time.RFC3339)
 		}
-		r, err := tx.Exec(`INSERT INTO pins (holiday_id, kind, cluster_key, lat, lng, title, note, country, cover_asset, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			hid, p.Kind, key, p.Lat, p.Lng, p.Title, p.Note, p.Country, p.CoverAsset, created)
+		r, err := tx.Exec(`INSERT INTO pins (holiday_id, kind, cluster_key, lat, lng, title, note, country, cover_asset, created_at, created_by)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			hid, p.Kind, key, p.Lat, p.Lng, p.Title, p.Note, p.Country, p.CoverAsset, created, truncate(p.CreatedBy, 64))
 		if err != nil {
 			return err
 		}
 		pid, _ := r.LastInsertId()
+		if p.ID != 0 {
+			pinIDs[p.ID] = pid
+		}
 		res.Pins++
 		for _, vn := range p.VisitNotes {
 			if !validDay(vn.Day) || strings.TrimSpace(vn.Note) == "" {
@@ -278,14 +332,15 @@ func importHolidayTx(tx *sql.Tx, h importHoliday, res *importResult) error {
 				dur = 0
 			}
 			// filed already (on a pin, unplaced or set aside): it stays there
-			tx.QueryRow(`SELECT (SELECT COUNT(*) FROM unplaced_photos WHERE asset_id = ?)
-				+ (SELECT COUNT(*) FROM set_aside WHERE asset_id = ?)`, ph.AssetID, ph.AssetID).Scan(&n)
-			if n > 0 {
+			if filed, err := filedAnywhere(tx, ph.AssetID); err != nil {
+				return err
+			} else if filed {
 				continue
 			}
-			r, err := tx.Exec(`INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng, type, duration)
-				VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-				pid, ph.AssetID, ph.TakenAt, ph.Lat, ph.Lng, typ, dur)
+			ask := ph.Ask && p.Kind == "manual" // only a hand-placed pin asks "same place?"
+			r, err := tx.Exec(`INSERT INTO pin_photos (pin_id, asset_id, taken_at, lat, lng, type, duration, ask)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+				pid, ph.AssetID, ph.TakenAt, ph.Lat, ph.Lng, typ, dur, ask)
 			if err != nil {
 				return err
 			}
@@ -293,6 +348,9 @@ func importHolidayTx(tx *sql.Tx, h importHoliday, res *importResult) error {
 				res.Photos++
 			}
 		}
+	}
+	if err := importChoicesTracksTx(tx, hid, h, pinIDs, res); err != nil {
+		return err
 	}
 	for i, pk := range h.Packing {
 		label := truncate(strings.TrimSpace(pk.Label), maxLabelLen)

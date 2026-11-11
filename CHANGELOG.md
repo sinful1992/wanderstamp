@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-### Server (task 142, audit 137 WS-2..4)
+### Server (task 142, audit 137 WS-1..4)
+- Export and import now carry everything a move to a new server needs (WS-1). Before, the export left out GPX tracks, photos set aside by hand, photos with no position, the "same place?" answers, the master packing lists, who started a trip, added a pin or wrote the journal, and the trip's Immich album; after export + import the set-aside photos came back onto the map, the share links and the TV at the next sync, and the tracks were gone.
+  - Per trip: `tracks`, `set_aside`, `unplaced`, `photo_choices` (pointing at the export's own pin ids, mapped to the new ids on import; an answer whose pin is gone is dropped and asked again), `created_by`, `journal_by`, `immich_album_id`; per pin `created_by` and, per photo, an open "same place?" question (`ask`). At the top: `packing_templates`, each with its items. A list whose name is already here (any case) gets only the items it lacks.
+  - Every new field is optional: an export from before 1.20.0 imports as before, with the same answer. A bad new field (a track point off the map, a bad asset id or time) refuses the whole file and changes nothing. A photo is filed in one place only: one already on a pin, unplaced or set aside here stays there.
+  - Not exported, on purpose: share links (bringing back an old trip must not bring back a link that was turned off), paired TVs, users and sessions.
 - Editing a trip or a pin checks everything first and writes it all in one go: a request refused with 400 (an empty name, a bad colour, a cover photo from another trip) no longer leaves the dates or journal half-changed, a trip or pin that does not exist answers 404 instead of `{"ok":true}`, and a failed write answers 500 instead of passing silently (WS-3). A visit note and the pin's other fields land together.
 - Moving a pin to a position no map has (lat outside -90..90, lng outside -180..180, or only one of the two) is refused like on create. Before, one such pin made the import refuse the whole export file (WS-2).
 - The TV door lets in a TV that reaches the server over IPv6 link-local (`fe80::1%eth0`): Go gives such an address with its zone, which the door could not read, so the TV got 404. A zone is accepted only on a link-local address (WS-4).

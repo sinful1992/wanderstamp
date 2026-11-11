@@ -107,16 +107,16 @@ func TestAudit137_WS4_DoorRefusesLinkLocalWithZone(t *testing.T) {
 // WS-4 edges: a zone is dropped only from an IPv6 link-local address.
 func TestWS4_ZoneOnlyOnLinkLocal(t *testing.T) {
 	for addr, want := range map[string]bool{
-		"fe80::1%eth0":         true,
-		"fe80::abcd:1%wlan0":   true,
-		"fe80::1%":             false, // empty zone
-		"192.168.1.20%eth0":    false, // IPv4 never has a zone
-		"fd00::1%eth0":         false, // a zone on a non-link-local address
-		"2001:db8::1%eth0":     false,
-		"%eth0":                false,
-		"fe80::1%eth0%x":       false,
-		"100.64.0.1":           false, // tailnet stays refused
-		"192.168.1.20":         true,
+		"fe80::1%eth0":       true,
+		"fe80::abcd:1%wlan0": true,
+		"fe80::1%":           false, // empty zone
+		"192.168.1.20%eth0":  false, // IPv4 never has a zone
+		"fd00::1%eth0":       false, // a zone on a non-link-local address
+		"2001:db8::1%eth0":   false,
+		"%eth0":              false,
+		"fe80::1%eth0%x":     false,
+		"100.64.0.1":         false, // tailnet stays refused
+		"192.168.1.20":       true,
 	} {
 		if got := homePeer(addr); got != want {
 			t.Errorf("homePeer(%q) = %v, want %v", addr, got, want)
