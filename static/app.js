@@ -167,6 +167,7 @@ function restoreSnapshot() {
     if (!s || !Array.isArray(s.holidays)) return false;
     state.holidays = s.holidays;
     state.pins = s.pins || [];
+    state.snapUser = s.user || null;
     loadHidden(s.user);
     renderAll(true);
     return true;
@@ -192,9 +193,21 @@ function newClientId() {
   return Date.now() + ":" + Math.random().toString(36).slice(2, 8);
 }
 
+// WA-3: a waiting pin belongs to whoever placed it. On an offline boot
+// /api/map never answered, so the snapshot's user is the one on this device.
+function queueOwner() {
+  return state.me ? state.me.username : (state.snapUser ?? null);
+}
+
+// A pin queued before owners were recorded has none: it goes as today.
+function ownQueued(item) {
+  return item.by == null || item.by === queueOwner();
+}
+
 function queuePin(pin) {
   const { client_id, ...rest } = pin;
   rest.qid = client_id || newClientId();
+  rest.by = queueOwner();
   setPinQueue([...pinQueue(), rest]);
   renderMarkers();
 }
@@ -218,7 +231,8 @@ function isRetryable(ex) {
 let syncingQueue = false;
 async function syncQueue() {
   if (syncingQueue || SHARE) return;
-  const q = pinQueue();
+  // someone else's pins wait for them to sign in on this device again
+  const q = state.me ? pinQueue().filter(ownQueued) : [];
   if (!q.length) return;
   syncingQueue = true;
   let sent = 0, dropped = 0, gone = 0;
@@ -234,7 +248,7 @@ async function syncQueue() {
     for (const item of q) {
       // discarded while an earlier pin was sending: don't send it
       if (!pinQueue().some((x) => same(x, item))) continue;
-      const { qid, ...pin } = item;
+      const { qid, by, ...pin } = item;
       // a queue id the server would refuse goes without: never lose a pin over its key
       if (CLIENT_ID_OK.test(String(qid ?? ""))) pin.client_id = String(qid);
       try {
@@ -771,6 +785,7 @@ function renderMarkers() {
   // Pins waiting to sync ride along as ghosts: same pushpin, dashed and
   // faded. They're local-only until the network returns; tap to discard.
   for (const qp of pinQueue()) {
+    if (!ownQueued(qp)) continue;
     if (state.hidden.has(qp.holiday_id)) continue;
     const h = holidayById(qp.holiday_id);
     want.set("q" + qp.qid, { qp, color: h ? h.color : "#666" });
@@ -3114,9 +3129,11 @@ async function loadTVs(list) {
 }
 
 async function signOut() {
+  // WA-3: send this person's waiting pins while still signed in as them; any
+  // that can't go now stay queued under their name, never sent as the next user
+  await syncQueue().catch(() => {});
   await api("POST", "/api/logout", {});
-  // the map this device saw goes with the session; pins still waiting to
-  // sync stay queued for whoever signs in next
+  // the map this device saw goes with the session
   try { localStorage.removeItem(SNAP_KEY); } catch {}
   location.reload();
 }
