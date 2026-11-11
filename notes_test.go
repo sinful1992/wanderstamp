@@ -373,11 +373,25 @@ func TestNotesSetAsideLastPhotoKeepsNotedPin(t *testing.T) {
 func TestNotesSyncEmptyAlbumKeepsNotedPin(t *testing.T) {
 	f := newNotesFix(t)
 	noteOnPin7(t, f)
+	// WS-6: the photos that left pin 7 are gone in Immich; the trip's others are still there
+	onPin7 := map[string]bool{}
+	if rows, err := f.a.db.Query(`SELECT asset_id FROM pin_photos WHERE pin_id = 7`); err == nil {
+		for rows.Next() {
+			var id string
+			rows.Scan(&id)
+			onPin7[id] = true
+		}
+		rows.Close()
+	}
 	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/assets/") {
-			// WS-6: asked about the photo that left, Immich no longer has it
-			w.WriteHeader(http.StatusNotFound)
+			id := strings.TrimPrefix(r.URL.Path, "/api/assets/")
+			if onPin7[id] {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Write([]byte(`{"id":"` + id + `","isTrashed":false,"isOffline":false,"visibility":"timeline","fileCreatedAt":"2026-07-03T10:00:00Z"}`))
 			return
 		}
 		// a7 left the album; another of the trip's photos is still there

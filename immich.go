@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+)
+
+// WS-6: asking Immich about photos the search left out, before pruning
+// (variables so the tests can shorten them).
+var (
+	assetCheckTimeout  = 10 * time.Second // one photo
+	assetCheckDeadline = 60 * time.Second // all of them, inside the manual sync's 2 min write timeout
+	assetCheckMax      = 100              // more than this many left out: refuse, ask nothing
 )
 
 const (
@@ -196,13 +205,18 @@ func (c *immichClient) searchRange(after, before time.Time) ([]immichAsset, erro
 }
 
 // assetGone asks Immich about one photo the search did not return (WS-6).
-// It is gone when Immich does not know it (404, or 400 "not found or no
-// access"), it is in the trash, it is no longer on the timeline (archived,
-// hidden, locked), or it is now dated outside [after, before]. Anything else,
-// including a photo Immich has but the search missed, is kept; any other
-// answer is an error, so the sync prunes nothing.
-func (c *immichClient) assetGone(id string, after, before time.Time) (bool, error) {
-	req, _ := http.NewRequest("GET", c.baseURL+"/api/assets/"+url.PathEscape(id), nil)
+// It is gone when Immich says it does not have it (404, or a 400 whose body
+// says "not found", as albumGone reads albums), it is in the trash, it is no
+// longer on the timeline (archived, hidden, locked), or it is now dated
+// outside [after, before] (both ends inclusive, as Immich's search is). An
+// offline photo (its library cannot be reached) is never gone, trashed or
+// not: the files come back with the library. Anything else, including a
+// photo Immich has but the search missed, is kept; any other answer is an
+// error, so the sync prunes nothing. Each call has its own short time limit.
+func (c *immichClient) assetGone(ctx context.Context, id string, after, before time.Time) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, assetCheckTimeout)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/assets/"+url.PathEscape(id), nil)
 	req.Header.Set("x-api-key", c.apiKey)
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -211,8 +225,14 @@ func (c *immichClient) assetGone(id string, after, before time.Time) (bool, erro
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
-	case http.StatusNotFound, http.StatusBadRequest:
+	case http.StatusNotFound:
 		return true, nil
+	case http.StatusBadRequest:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
+		if strings.Contains(strings.ToLower(string(body)), "not found") {
+			return true, nil
+		}
+		return false, fmt.Errorf("immich asset %s: 400: %s", id, strings.TrimSpace(string(body)))
 	default:
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
 		return false, fmt.Errorf("immich asset %s: %s: %s", id, resp.Status, strings.TrimSpace(string(snippet)))
@@ -220,6 +240,7 @@ func (c *immichClient) assetGone(id string, after, before time.Time) (bool, erro
 	var a struct {
 		ID            string `json:"id"`
 		IsTrashed     bool   `json:"isTrashed"`
+		IsOffline     bool   `json:"isOffline"`
 		Visibility    string `json:"visibility"`
 		FileCreatedAt string `json:"fileCreatedAt"`
 	}
@@ -229,10 +250,13 @@ func (c *immichClient) assetGone(id string, after, before time.Time) (bool, erro
 	if a.ID != id {
 		return false, fmt.Errorf("immich asset %s: answer is for %q", id, a.ID)
 	}
+	if a.IsOffline {
+		return false, nil
+	}
 	if a.IsTrashed || (a.Visibility != "" && a.Visibility != "timeline") {
 		return true, nil
 	}
-	if t, err := time.Parse(time.RFC3339, a.FileCreatedAt); err == nil && (t.Before(after) || !t.Before(before)) {
+	if t, err := time.Parse(time.RFC3339, a.FileCreatedAt); err == nil && (t.Before(after) || t.After(before)) {
 		return true, nil
 	}
 	return false, nil
@@ -415,25 +439,43 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 			return 0, 0, err
 		}
 		var missing []string
+		known := 0
 		for rows.Next() {
 			var id string
 			if err := rows.Scan(&id); err != nil {
 				rows.Close()
 				return 0, 0, err
 			}
+			known++
 			if !returned[id] {
 				missing = append(missing, id)
 			}
 		}
 		rows.Close()
+		// Bounded: a search that keeps leaving many photos out (a wrong key,
+		// an index being rebuilt) is not asked about one by one forever.
+		if len(missing) > assetCheckMax {
+			return 0, 0, fmt.Errorf("immich search left out %d of the trip's photos (more than %d to check); not pruning", len(missing), assetCheckMax)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), assetCheckDeadline)
+		defer cancel()
+		gone := 0
 		for _, id := range missing {
-			gone, err := a.immich.assetGone(id, start.Add(-startGrace), before)
+			g, err := a.immich.assetGone(ctx, id, start.Add(-startGrace), before)
 			if err != nil {
 				return 0, 0, fmt.Errorf("immich check before pruning: %w", err)
 			}
-			if !gone {
+			if g {
+				gone++
+			} else {
 				present[id] = true
 			}
+		}
+		// More than half of a trip gone in one sync is far likelier a key for
+		// another account (every photo "not found") than a real clear-out:
+		// refuse, like the empty answer above. A real one is removed by hand.
+		if gone >= 2 && gone*2 > known {
+			return 0, 0, fmt.Errorf("immich says %d of the trip's %d photos are gone; not pruning", gone, known)
 		}
 	}
 

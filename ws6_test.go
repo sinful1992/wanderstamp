@@ -20,6 +20,9 @@ import (
 
 type ws6Asset struct {
 	status     int // answer to GET /api/assets/{id}; 0 = 200
+	body       string
+	hang       bool
+	offline    bool
 	trashed    bool
 	visibility string
 	created    string
@@ -50,9 +53,16 @@ func ws6Server(t *testing.T, search []string, assets map[string]ws6Asset) (*http
 				w.Write([]byte(`{"message":"Not found or no asset.read access"}`))
 				return
 			}
+			if a.hang {
+				<-r.Context().Done()
+				return
+			}
 			if a.status != 0 && a.status != 200 {
 				w.WriteHeader(a.status)
-				w.Write([]byte(`{"message":"x"}`))
+				if a.body == "" {
+					a.body = `{"message":"x"}`
+				}
+				w.Write([]byte(a.body))
 				return
 			}
 			vis := a.visibility
@@ -64,7 +74,7 @@ func ws6Server(t *testing.T, search []string, assets map[string]ws6Asset) (*http
 				created = "2026-07-02T10:00:00.000Z"
 			}
 			json.NewEncoder(w).Encode(map[string]any{"id": id, "type": "IMAGE", "isTrashed": a.trashed,
-				"visibility": vis, "fileCreatedAt": created})
+				"isOffline": a.offline, "visibility": vis, "fileCreatedAt": created})
 		default:
 			// albums and the rest: accept quietly
 			w.Write([]byte(`{}`))
@@ -134,18 +144,18 @@ func TestAudit137_WS6_PartialAnswerKeepsPinsAndTitles(t *testing.T) {
 
 func TestAudit137_WS6_ConfirmedGonePhotosArePruned(t *testing.T) {
 	assets := map[string]ws6Asset{
-		"pha": {},                                // in the search
-		"phb": {status: 404},                     // deleted
-		"phc": {},                                // missing from search, still there -> kept
-		"phd": {trashed: true},                   // in the trash
-		"phe": {visibility: "archive"},           // archived
-		"phf": {visibility: "hidden"},            // hidden
-		"phg": {created: "2026-09-01T10:00:00Z"}, // date moved outside the trip
-		"phh": {created: "2026-07-07T23:00:00Z"}, // inside the trip window (end grace) -> kept
-		// "phi" not listed: 400 not found -> gone
+		"phb": {status: 404},                                                          // deleted
+		"phc": {},                                                                     // missing from search, still there -> kept
+		"phd": {trashed: true},                                                        // in the trash
+		"phe": {visibility: "archive"},                                                // archived
+		"phf": {visibility: "hidden"},                                                 // hidden
+		"phg": {created: "2026-09-01T10:00:00Z"},                                      // date moved outside the trip
+		"phh": {created: "2026-07-08T06:00:00Z"},                                      // exactly at end+6h: inside (inclusive) -> kept
+		"phi": {status: 400, body: `{"message":"Not found or no asset.read access"}`}, // Immich's 400 for a deleted asset
 	}
-	srv, _ := ws6Server(t, []string{"pha"}, assets)
-	a := ws6Trip(t, srv.URL, 9)
+	// 14 photos: 6 come back in the search, 6 of the other 8 are gone (6*2 = 12 <= 14)
+	srv, _ := ws6Server(t, []string{"pha", "phj", "phk", "phl", "phm", "phn"}, assets)
+	a := ws6Trip(t, srv.URL, 14)
 	if _, _, err := a.syncHoliday(1); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -160,8 +170,8 @@ func TestAudit137_WS6_ConfirmedGonePhotosArePruned(t *testing.T) {
 		left = append(left, id)
 	}
 	rows.Close()
-	if got := strings.Join(left, ","); got != "pha,phc,phh" {
-		t.Errorf("photos left = %s, want pha,phc,phh", got)
+	if got := strings.Join(left, ","); got != "pha,phc,phh,phj,phk,phl,phm,phn" {
+		t.Errorf("photos left = %s, want pha,phc,phh,phj,phk,phl,phm,phn", got)
 	}
 }
 
@@ -186,5 +196,118 @@ func TestAudit137_WS6_FullAnswerAsksNothing(t *testing.T) {
 	}
 	if len(*asked) != 0 {
 		t.Errorf("asked about %v though the search returned every photo", *asked)
+	}
+}
+
+func ws6PhotoCount(t *testing.T, a *app) int {
+	return ws6Count(t, a, `SELECT COUNT(*) FROM pin_photos`)
+}
+
+// ada #10259 (1): a library that cannot be reached marks its photos offline
+// and puts them in the trash; they come back with the library.
+func TestAudit137_WS6_OfflinePhotosAreKeptEvenInTheTrash(t *testing.T) {
+	assets := map[string]ws6Asset{"phb": {offline: true, trashed: true}, "phc": {offline: true}}
+	srv, _ := ws6Server(t, []string{"pha"}, assets)
+	a := ws6Trip(t, srv.URL, 3)
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if n := ws6PhotoCount(t, a); n != 3 {
+		t.Errorf("photos left: %d, want 3 (offline photos are not gone)", n)
+	}
+}
+
+// ada #10259 (2): a 400 that is not "not found" is an error, not "gone".
+func TestAudit137_WS6_Other400StopsTheSync(t *testing.T) {
+	assets := map[string]ws6Asset{"phb": {status: 400, body: `{"message":"id must be a UUID"}`}}
+	srv, _ := ws6Server(t, []string{"pha", "phc"}, assets)
+	a := ws6Trip(t, srv.URL, 3)
+	if _, _, err := a.syncHoliday(1); err == nil {
+		t.Error("a 400 that is not 'not found' was read as gone")
+	}
+	if n := ws6PhotoCount(t, a); n != 3 {
+		t.Errorf("photos left: %d, want 3", n)
+	}
+}
+
+// ada #10259 (2): a key for another account finds some photos (its own, in
+// the same dates) and answers "not found" for every one of ours.
+func TestAudit137_WS6_MostOfTheTripGoneIsRefused(t *testing.T) {
+	srv, _ := ws6Server(t, []string{"pha"}, map[string]ws6Asset{}) // every other id: 400 not found
+	a := ws6Trip(t, srv.URL, 10)
+	_, _, err := a.syncHoliday(1)
+	if err == nil || !strings.Contains(err.Error(), "not pruning") {
+		t.Errorf("9 of 10 photos gone at once was not refused: %v", err)
+	}
+	if n := ws6PhotoCount(t, a); n != 10 {
+		t.Errorf("photos left: %d, want 10", n)
+	}
+	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pins WHERE title LIKE 'Title %'`); n != 3 {
+		t.Errorf("titled pins left: %d, want 3", n)
+	}
+}
+
+// A single photo deleted from a small trip still goes (gone >= 2 for the guard).
+func TestAudit137_WS6_OnePhotoDeletedStillGoes(t *testing.T) {
+	srv, _ := ws6Server(t, []string{"pha"}, map[string]ws6Asset{"phb": {status: 404}})
+	a := ws6Trip(t, srv.URL, 2)
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if n := ws6PhotoCount(t, a); n != 1 {
+		t.Errorf("photos left: %d, want 1", n)
+	}
+}
+
+// ada #10259 (3): more than assetCheckMax left out: refuse without asking about each.
+func TestAudit137_WS6_TooManyMissingAsksNothing(t *testing.T) {
+	old := assetCheckMax
+	assetCheckMax = 5
+	t.Cleanup(func() { assetCheckMax = old })
+	srv, asked := ws6Server(t, []string{"pha"}, map[string]ws6Asset{})
+	a := ws6Trip(t, srv.URL, 8)
+	if _, _, err := a.syncHoliday(1); err == nil {
+		t.Error("7 missing with a cap of 5 was not refused")
+	}
+	if len(*asked) != 0 {
+		t.Errorf("asked about %d photos past the cap", len(*asked))
+	}
+	if n := ws6PhotoCount(t, a); n != 8 {
+		t.Errorf("photos left: %d, want 8", n)
+	}
+}
+
+// ada #10259 (3): one photo whose check hangs stops the sync within its own limit.
+func TestAudit137_WS6_HangingCheckTimesOut(t *testing.T) {
+	oldT, oldD := assetCheckTimeout, assetCheckDeadline
+	assetCheckTimeout, assetCheckDeadline = 300*time.Millisecond, 2*time.Second
+	t.Cleanup(func() { assetCheckTimeout, assetCheckDeadline = oldT, oldD })
+	srv, _ := ws6Server(t, []string{"pha", "phc"}, map[string]ws6Asset{"phb": {hang: true}})
+	a := ws6Trip(t, srv.URL, 3)
+	t0 := time.Now()
+	if _, _, err := a.syncHoliday(1); err == nil {
+		t.Error("a hanging check did not stop the sync")
+	}
+	if d := time.Since(t0); d > 1500*time.Millisecond {
+		t.Errorf("hanging check took %v", d)
+	}
+	if n := ws6PhotoCount(t, a); n != 3 {
+		t.Errorf("photos left: %d, want 3", n)
+	}
+}
+
+// ada #10259 (3): the overall deadline holds even when each check is under its own limit.
+func TestAudit137_WS6_OverallDeadline(t *testing.T) {
+	oldT, oldD := assetCheckTimeout, assetCheckDeadline
+	assetCheckTimeout, assetCheckDeadline = 5*time.Second, 400*time.Millisecond
+	t.Cleanup(func() { assetCheckTimeout, assetCheckDeadline = oldT, oldD })
+	srv, _ := ws6Server(t, []string{"pha", "phc", "phd", "phe", "phf"}, map[string]ws6Asset{"phb": {hang: true}})
+	a := ws6Trip(t, srv.URL, 6)
+	t0 := time.Now()
+	if _, _, err := a.syncHoliday(1); err == nil {
+		t.Error("the deadline did not stop the sync")
+	}
+	if d := time.Since(t0); d > 1500*time.Millisecond {
+		t.Errorf("deadline took %v", d)
 	}
 }

@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Server
-- Fixed: when Immich answered a photo sync with only part of a trip's photos (a library offline, a search index being rebuilt), the sync removed the missing photos and deleted every emptied photo pin, losing its typed title and cover. Now each photo the search left out is checked with Immich on its own, and it is removed only if Immich says it is gone: not found, in the trash, archived or hidden, or now dated outside the trip. If that check fails, the sync stops and changes nothing (audit 137 WS-6).
+- Fixed: when Immich answered a photo sync with only part of a trip's photos (a library offline, a search index being rebuilt), the sync removed the missing photos and deleted every emptied photo pin, losing its typed title and cover. Now each photo the search left out is checked with Immich on its own, and it is removed only if Immich says it is gone: not found, in the trash, archived or hidden, or now dated outside the trip. An offline photo (its library cannot be reached, so Immich trashes it) is never removed. If more than half of a trip's photos come back gone at once (a key for another account says "not found" for all of them), or more than 100 are missing from the search, or a check fails or takes too long (10 s each, 60 s in all), the sync stops and changes nothing (audit 137 WS-6, with ada's review).
 - A normal sync, where the search returns every photo, makes no extra calls.
 
 ### CI
