@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Server
+- Fixed: when Immich answered a photo sync with only part of a trip's photos (a library offline, a search index being rebuilt), the sync removed the missing photos and deleted every emptied photo pin, losing its typed title and cover. Now each photo the search left out is checked with Immich on its own, and it is removed only if Immich says it is gone: not found, in the trash, archived or hidden, or now dated outside the trip. If that check fails, the sync stops and changes nothing (audit 137 WS-6).
+- A normal sync, where the search returns every photo, makes no extra calls.
+
 ### CI
 - A version tag now publishes the server image only after a new test job passes: `go vet`, `go test`, the browser tests (`webtest/run.mjs`, headless Chromium) and a check of the workflow files themselves (`.github/workflows/test.yml`, called by `docker.yml`; audit 137 WS-8). The same job runs on every push and pull request.
 - A manual run of "Publish Docker image" on a branch runs the tests and skips the publish; publishing (including `latest`) happens only from a `v*` tag. Before, a manual run on master pushed `latest`.

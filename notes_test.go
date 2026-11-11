@@ -375,6 +375,11 @@ func TestNotesSyncEmptyAlbumKeepsNotedPin(t *testing.T) {
 	noteOnPin7(t, f)
 	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/assets/") {
+			// WS-6: asked about the photo that left, Immich no longer has it
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		// a7 left the album; another of the trip's photos is still there
 		w.Write([]byte(`{"assets":{"items":[{"id":"` + tvA2 + `","type":"IMAGE","fileCreatedAt":"2026-07-02T08:00:00Z","exifInfo":{"latitude":54.6,"longitude":-3.13}}],"nextPage":null}}`))
 	}))

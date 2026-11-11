@@ -228,6 +228,10 @@ func TestSyncAsksAboutPhotosNearAHandPin(t *testing.T) {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/assets/") {
+			w.WriteHeader(http.StatusNotFound) // WS-6: a photo the search left out is gone
+			return
+		}
 		if r.URL.Path != "/api/search/metadata" {
 			w.Write([]byte(`{}`))
 			return

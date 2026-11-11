@@ -10,6 +10,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -194,6 +195,49 @@ func (c *immichClient) searchRange(after, before time.Time) ([]immichAsset, erro
 	return all, nil
 }
 
+// assetGone asks Immich about one photo the search did not return (WS-6).
+// It is gone when Immich does not know it (404, or 400 "not found or no
+// access"), it is in the trash, it is no longer on the timeline (archived,
+// hidden, locked), or it is now dated outside [after, before]. Anything else,
+// including a photo Immich has but the search missed, is kept; any other
+// answer is an error, so the sync prunes nothing.
+func (c *immichClient) assetGone(id string, after, before time.Time) (bool, error) {
+	req, _ := http.NewRequest("GET", c.baseURL+"/api/assets/"+url.PathEscape(id), nil)
+	req.Header.Set("x-api-key", c.apiKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound, http.StatusBadRequest:
+		return true, nil
+	default:
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+		return false, fmt.Errorf("immich asset %s: %s: %s", id, resp.Status, strings.TrimSpace(string(snippet)))
+	}
+	var a struct {
+		ID            string `json:"id"`
+		IsTrashed     bool   `json:"isTrashed"`
+		Visibility    string `json:"visibility"`
+		FileCreatedAt string `json:"fileCreatedAt"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&a); err != nil {
+		return false, fmt.Errorf("decode asset %s: %w", id, err)
+	}
+	if a.ID != id {
+		return false, fmt.Errorf("immich asset %s: answer is for %q", id, a.ID)
+	}
+	if a.IsTrashed || (a.Visibility != "" && a.Visibility != "timeline") {
+		return true, nil
+	}
+	if t, err := time.Parse(time.RFC3339, a.FileCreatedAt); err == nil && (t.Before(after) || !t.Before(before)) {
+		return true, nil
+	}
+	return false, nil
+}
+
 // --- albums ---
 
 type immichError struct {
@@ -351,6 +395,45 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 			holidayID, holidayID).Scan(&have)
 		if have > 0 {
 			return 0, 0, fmt.Errorf("immich returned no photos for a trip that has %d; not pruning", have)
+		}
+	}
+
+	// WS-6: a photo the trip has but the search did not return is pruned only
+	// if Immich, asked about that photo, says it is gone. A partial answer (a
+	// library offline, an index being rebuilt) then keeps pins and titles.
+	// Asked before the transaction, so no database lock waits on Immich.
+	present := make(map[string]bool)
+	{
+		returned := make(map[string]bool, len(assets))
+		for _, as := range assets {
+			returned[as.ID] = true
+		}
+		rows, err := a.db.Query(`
+			SELECT pp.asset_id FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id WHERE p.holiday_id = ?
+			UNION SELECT asset_id FROM unplaced_photos WHERE holiday_id = ?`, holidayID, holidayID)
+		if err != nil {
+			return 0, 0, err
+		}
+		var missing []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return 0, 0, err
+			}
+			if !returned[id] {
+				missing = append(missing, id)
+			}
+		}
+		rows.Close()
+		for _, id := range missing {
+			gone, err := a.immich.assetGone(id, start.Add(-startGrace), before)
+			if err != nil {
+				return 0, 0, fmt.Errorf("immich check before pruning: %w", err)
+			}
+			if !gone {
+				present[id] = true
+			}
 		}
 	}
 
@@ -586,7 +669,7 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 				rows.Close()
 				return 0, 0, err
 			}
-			if !seenUnplaced[id] {
+			if !seenUnplaced[id] && !present[id] {
 				staleUnplaced = append(staleUnplaced, id)
 			}
 		}
@@ -613,7 +696,7 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 			rows.Close()
 			return 0, 0, err
 		}
-		if !seen[id] {
+		if !seen[id] && !present[id] {
 			stale = append(stale, id)
 		}
 	}
