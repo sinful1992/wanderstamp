@@ -452,30 +452,40 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 			}
 		}
 		rows.Close()
-		// Bounded: a search that keeps leaving many photos out (a wrong key,
-		// an index being rebuilt) is not asked about one by one forever.
-		if len(missing) > assetCheckMax {
-			return 0, 0, fmt.Errorf("immich search left out %d of the trip's photos (more than %d to check); not pruning", len(missing), assetCheckMax)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), assetCheckDeadline)
-		defer cancel()
-		gone := 0
-		for _, id := range missing {
-			g, err := a.immich.assetGone(ctx, id, start.Add(-startGrace), before)
-			if err != nil {
-				return 0, 0, fmt.Errorf("immich check before pruning: %w", err)
-			}
-			if g {
-				gone++
-			} else {
+		// keepAll: prune nothing this time, but still add what the search found,
+		// so a lasting condition never stops the trip's new photos (ada #10282).
+		keepAll := func(why string) {
+			log.Printf("sync holiday %d: %s; pruning nothing this time", holidayID, why)
+			for _, id := range missing {
 				present[id] = true
 			}
 		}
-		// More than half of a trip gone in one sync is far likelier a key for
-		// another account (every photo "not found") than a real clear-out:
-		// refuse, like the empty answer above. A real one is removed by hand.
-		if gone >= 2 && gone*2 > known {
-			return 0, 0, fmt.Errorf("immich says %d of the trip's %d photos are gone; not pruning", gone, known)
+		// Bounded: a search that keeps leaving many photos out (a wrong key,
+		// an index being rebuilt) is not asked about one by one forever.
+		if len(missing) > assetCheckMax {
+			keepAll(fmt.Sprintf("the search left out %d of the trip's photos (more than %d to check)", len(missing), assetCheckMax))
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), assetCheckDeadline)
+			defer cancel()
+			gone := 0
+			for _, id := range missing {
+				g, err := a.immich.assetGone(ctx, id, start.Add(-startGrace), before)
+				if err != nil {
+					// transport failure or an odd answer: transient, so stop and change nothing
+					return 0, 0, fmt.Errorf("immich check before pruning: %w", err)
+				}
+				if g {
+					gone++
+				} else {
+					present[id] = true
+				}
+			}
+			// More than half of a trip gone in one sync is far likelier a key for
+			// another account (every photo "not found") than a real clear-out.
+			// A real one is removed by hand.
+			if gone >= 2 && gone*2 > known {
+				keepAll(fmt.Sprintf("Immich says %d of the trip's %d photos are gone", gone, known))
+			}
 		}
 	}
 

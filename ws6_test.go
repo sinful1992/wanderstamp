@@ -235,15 +235,38 @@ func TestAudit137_WS6_Other400StopsTheSync(t *testing.T) {
 func TestAudit137_WS6_MostOfTheTripGoneIsRefused(t *testing.T) {
 	srv, _ := ws6Server(t, []string{"pha"}, map[string]ws6Asset{}) // every other id: 400 not found
 	a := ws6Trip(t, srv.URL, 10)
-	_, _, err := a.syncHoliday(1)
-	if err == nil || !strings.Contains(err.Error(), "not pruning") {
-		t.Errorf("9 of 10 photos gone at once was not refused: %v", err)
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Errorf("sync: %v (a refused prune must not fail the sync)", err)
 	}
 	if n := ws6PhotoCount(t, a); n != 10 {
 		t.Errorf("photos left: %d, want 10", n)
 	}
 	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pins WHERE title LIKE 'Title %'`); n != 3 {
 		t.Errorf("titled pins left: %d, want 3", n)
+	}
+}
+
+// ada #10282: a lasting refusal (ratio or cap) still adds the trip's new photos.
+func TestAudit137_WS6_RefusedPruneStillAddsNewPhotos(t *testing.T) {
+	// 6 photos, 4 deleted in Immich (4*2 > 6: refused), and one new photo taken on the trip
+	assets := map[string]ws6Asset{"phc": {status: 404}, "phd": {status: 404}, "phe": {status: 404}, "phf": {status: 404}}
+	srv, _ := ws6Server(t, []string{"pha", "phb", "new1"}, assets)
+	a := ws6Trip(t, srv.URL, 6)
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pin_photos WHERE asset_id = 'new1'`); n != 1 {
+		t.Errorf("the new photo was not added (%d)", n)
+	}
+	if n := ws6PhotoCount(t, a); n != 7 {
+		t.Errorf("photos: %d, want 7 (6 kept + 1 new)", n)
+	}
+	// and again: the same lasting condition, same result, no error
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatalf("second sync: %v", err)
+	}
+	if n := ws6PhotoCount(t, a); n != 7 {
+		t.Errorf("photos after a second sync: %d, want 7", n)
 	}
 }
 
@@ -264,16 +287,16 @@ func TestAudit137_WS6_TooManyMissingAsksNothing(t *testing.T) {
 	old := assetCheckMax
 	assetCheckMax = 5
 	t.Cleanup(func() { assetCheckMax = old })
-	srv, asked := ws6Server(t, []string{"pha"}, map[string]ws6Asset{})
+	srv, asked := ws6Server(t, []string{"pha", "new1"}, map[string]ws6Asset{})
 	a := ws6Trip(t, srv.URL, 8)
-	if _, _, err := a.syncHoliday(1); err == nil {
-		t.Error("7 missing with a cap of 5 was not refused")
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Errorf("sync: %v (over the cap: prune nothing, sync the rest)", err)
 	}
 	if len(*asked) != 0 {
 		t.Errorf("asked about %d photos past the cap", len(*asked))
 	}
-	if n := ws6PhotoCount(t, a); n != 8 {
-		t.Errorf("photos left: %d, want 8", n)
+	if n := ws6PhotoCount(t, a); n != 9 {
+		t.Errorf("photos: %d, want 9 (8 kept + 1 new)", n)
 	}
 }
 
