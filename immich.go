@@ -237,7 +237,12 @@ func (c *immichClient) assetGone(ctx context.Context, id string, after, before t
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
-		return true, nil
+		// Immich's own 404 is JSON; an HTML page (a proxy, or a moved route) says nothing about this photo
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
+		if t := strings.TrimSpace(string(body)); t == "" || strings.HasPrefix(t, "{") {
+			return true, nil
+		}
+		return false, &assetAnswerError{fmt.Sprintf("immich asset %s: 404 that is not Immich's (%.60q)", id, strings.TrimSpace(string(body)))}
 	case http.StatusBadRequest:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
 		if strings.Contains(strings.ToLower(string(body)), "not found") {

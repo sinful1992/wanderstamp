@@ -374,3 +374,19 @@ func TestAudit137_WS6_OverallDeadline(t *testing.T) {
 		t.Errorf("deadline took %v", d)
 	}
 }
+
+// ada #10515: a 404 that is an HTML page (a proxy, a moved route) is not "gone".
+func TestAudit137_WS6_HTML404KeepsThePhoto(t *testing.T) {
+	assets := map[string]ws6Asset{"phb": {status: 404, body: "<html><body>Not Found</body></html>"}, "phc": {status: 404, body: `{"message":"Asset not found"}`}}
+	srv, _ := ws6Server(t, []string{"pha"}, assets)
+	a := ws6Trip(t, srv.URL, 3)
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pin_photos WHERE asset_id = 'phb'`); n != 1 {
+		t.Error("a photo was removed on an HTML 404")
+	}
+	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pin_photos WHERE asset_id = 'phc'`); n != 0 {
+		t.Error("a photo Immich's own JSON 404 says is gone was kept")
+	}
+}
