@@ -126,3 +126,95 @@ func TestWS4_ZoneOnlyOnLinkLocal(t *testing.T) {
 		t.Errorf("a refused gateway on link-local must stay refused with its zone")
 	}
 }
+
+// WS-2/WS-3 edges on the pin side: a refused PATCH writes nothing, a
+// missing pin is 404, lat and lng go together, a photo pin does not move.
+func TestWS3_PatchPinAllOrNothing(t *testing.T) {
+	f := newNotesFix(t)
+	get := func() (title, cover string, lat, lng float64) {
+		f.a.db.QueryRow(`SELECT title, cover_asset, lat, lng FROM pins WHERE id = 5`).Scan(&title, &cover, &lat, &lng)
+		return
+	}
+	for _, c := range []struct {
+		body string
+		code int
+	}{
+		{`{"title":"changed","cover_asset":"not-on-this-pin"}`, 400},
+		{`{"title":"changed","lat":91,"lng":0}`, 400},
+		{`{"title":"changed","lat":0,"lng":180.5}`, 400},
+		{`{"title":"changed","lat":10}`, 400},
+		{`{"title":"changed","lng":10}`, 400},
+		{`{"title":"changed","from_day":"2026-07-05"}`, 400},
+		{`{"title":"changed","note_day":"2026-07-05"}`, 400},
+		{`{"title":"changed","note":"x","note_day":"July"}`, 400},
+	} {
+		r := tvDo(t, f.main.URL, "PATCH", "/api/pins/5", c.body, f.signedIn())
+		if r.code != c.code {
+			t.Errorf("PATCH %s: want %d, got %d %s", c.body, c.code, r.code, r.body)
+		}
+		if title, _, lat, lng := get(); title != "Premier Inn" || lat != 52.5 || lng != -1.4 {
+			t.Fatalf("after refused %s the pin is %q at %v,%v", c.body, title, lat, lng)
+		}
+	}
+	if r := tvDo(t, f.main.URL, "PATCH", "/api/pins/987654", `{"title":"x"}`, f.signedIn()); r.code != 404 {
+		t.Errorf("PATCH a missing pin: want 404, got %d %s", r.code, r.body)
+	}
+	// a good request still writes every field, edges of the range included
+	r := tvDo(t, f.main.URL, "PATCH", "/api/pins/5",
+		`{"title":"  New name ","cover_asset":"a5000000-0000-0000-0000-000000000002","lat":-90,"lng":180}`, f.signedIn())
+	if r.code != 200 {
+		t.Fatalf("good PATCH: %d %s", r.code, r.body)
+	}
+	if title, cover, lat, lng := get(); title != "New name" || cover != "a5000000-0000-0000-0000-000000000002" || lat != -90 || lng != 180 {
+		t.Errorf("after the good PATCH: %q %q %v,%v", title, cover, lat, lng)
+	}
+	// a visit note and a title land together
+	r = tvDo(t, f.main.URL, "PATCH", "/api/pins/5", `{"title":"With note","note":"nice","note_day":"2026-07-06"}`, f.signedIn())
+	if r.code != 200 {
+		t.Fatalf("note+title PATCH: %d %s", r.code, r.body)
+	}
+	var note string
+	f.a.db.QueryRow(`SELECT note FROM visit_notes WHERE pin_id = 5 AND day = '2026-07-06'`).Scan(&note)
+	if title, _, _, _ := get(); title != "With note" || note != "nice" {
+		t.Errorf("title %q note %q", title, note)
+	}
+	// a photo pin follows its photos: a move is accepted but changes nothing
+	r = tvDo(t, f.main.URL, "PATCH", "/api/pins/6", `{"lat":1,"lng":1}`, f.signedIn())
+	var plat float64
+	f.a.db.QueryRow(`SELECT lat FROM pins WHERE id = 6`).Scan(&plat)
+	if r.code != 200 || plat != 52.3 {
+		t.Errorf("photo pin move: %d, lat now %v", r.code, plat)
+	}
+}
+
+// WS-3 edges on the trip side: every refusal leaves the trip as it was.
+func TestWS3_PatchHolidayAllOrNothing(t *testing.T) {
+	f := newNotesFix(t)
+	read := func() (name, journal, color, start string) {
+		f.a.db.QueryRow(`SELECT name, journal, color, start_at FROM holidays WHERE id = 1`).Scan(&name, &journal, &color, &start)
+		return
+	}
+	n0, j0, c0, s0 := read()
+	for _, body := range []string{
+		`{"journal":"x","name":"   "}`,
+		`{"start_at":"2026-01-01","color":"#12345"}`,
+		`{"journal":"x","cover_asset":"not-on-this-trip"}`,
+		`{"journal":"x","start_at":"tomorrow"}`,
+		`{"journal":"x","start_at":"2027-01-01","end_at":"2026-01-01"}`,
+	} {
+		r := tvDo(t, f.main.URL, "PATCH", "/api/holidays/1", body, f.signedIn())
+		if r.code != 400 {
+			t.Errorf("PATCH %s: want 400, got %d %s", body, r.code, r.body)
+		}
+		if n, j, c, s := read(); n != n0 || j != j0 || c != c0 || s != s0 {
+			t.Fatalf("after refused %s: %q %q %q %q", body, n, j, c, s)
+		}
+	}
+	r := tvDo(t, f.main.URL, "PATCH", "/api/holidays/1", `{"name":" Renamed ","color":"#00aa00","journal":"new words"}`, f.signedIn())
+	if r.code != 200 {
+		t.Fatalf("good PATCH: %d %s", r.code, r.body)
+	}
+	if n, j, c, _ := read(); n != "Renamed" || j != "new words" || c != "#00aa00" {
+		t.Errorf("after the good PATCH: %q %q %q", n, j, c)
+	}
+}
