@@ -390,3 +390,20 @@ func TestAudit137_WS6_HTML404KeepsThePhoto(t *testing.T) {
 		t.Error("a photo Immich's own JSON 404 says is gone was kept")
 	}
 }
+
+// ada #10540: NestJS answers a route that does not exist (a moved API) with a JSON 404
+// "Cannot GET ..."; that is not "gone" either.
+func TestAudit137_WS6_UnmatchedRoute404KeepsThePhoto(t *testing.T) {
+	assets := map[string]ws6Asset{"phb": {status: 404, body: `{"message":"Cannot GET /api/assets/phb","error":"Not Found","statusCode":404}`}, "phc": {status: 404, body: `{"message":"Asset not found"}`}}
+	srv, _ := ws6Server(t, []string{"pha"}, assets)
+	a := ws6Trip(t, srv.URL, 3)
+	if _, _, err := a.syncHoliday(1); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pin_photos WHERE asset_id = 'phb'`); n != 1 {
+		t.Error("a photo was removed on NestJS's unmatched-route 404")
+	}
+	if n := ws6Count(t, a, `SELECT COUNT(*) FROM pin_photos WHERE asset_id = 'phc'`); n != 0 {
+		t.Error("a photo Immich's own 404 says is gone was kept")
+	}
+}

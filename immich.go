@@ -237,9 +237,17 @@ func (c *immichClient) assetGone(ctx context.Context, id string, after, before t
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
-		// Immich's own 404 is JSON; an HTML page (a proxy, or a moved route) says nothing about this photo
+		// Immich's own 404 is JSON. An HTML page (a proxy) or NestJS's unmatched-route answer
+		// ({"message":"Cannot GET /api/assets/<id>"}, a moved route; ada #10540) says nothing about this photo.
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
-		if t := strings.TrimSpace(string(body)); t == "" || strings.HasPrefix(t, "{") {
+		t := strings.TrimSpace(string(body))
+		if t == "" {
+			return true, nil
+		}
+		var nf struct {
+			Message string `json:"message"`
+		}
+		if strings.HasPrefix(t, "{") && json.Unmarshal([]byte(t), &nf) == nil && !strings.HasPrefix(nf.Message, "Cannot ") {
 			return true, nil
 		}
 		return false, &assetAnswerError{fmt.Sprintf("immich asset %s: 404 that is not Immich's (%.60q)", id, strings.TrimSpace(string(body)))}

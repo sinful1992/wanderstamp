@@ -3,7 +3,7 @@
 ## 1.20.1 (2026-11-11)
 
 ### Server (task 143, left notes of task 142)
-- One photo that Immich keeps answering oddly about (a 500 for a corrupt file, a 400 that is not "not found", an unreadable answer) no longer stops that trip's photo syncs for good. The photo is kept as it is and asked about again next time; the photos Immich does say are gone still go, and the trip's new photos keep arriving. No answer at all (the time limit) still stops the sync and changes nothing (ada #10301). A 404 counts as gone only when it is Immich's own (JSON or empty); an HTML 404 from a proxy or a moved route keeps the photo (ada #10515).
+- One photo that Immich keeps answering oddly about (a 500 for a corrupt file, a 400 that is not "not found", an unreadable answer) no longer stops that trip's photo syncs for good. The photo is kept as it is and asked about again next time; the photos Immich does say are gone still go, and the trip's new photos keep arriving. No answer at all (the time limit) still stops the sync and changes nothing (ada #10301). A 404 counts as gone only when it is Immich's own (JSON or empty); an HTML 404 from a proxy, or NestJS's JSON "Cannot GET …" answer for a route that moved, keeps the photo (ada #10515, #10540).
 
 ### CI
 - The workflow check refuses any `||` in `test.yml`, also inside a `run: |` block (`|| echo`, `||true`, `|| exit 0`, `|| :`); before it caught only `|| true`, `|| :` and `|| exit 0` on a one-line `run:` (ada #10303).
