@@ -1517,7 +1517,10 @@ function placePin(latlng) {
   save.type = "submit";
   // Exactly where this pin lands; tap to copy (clipboard needs HTTPS, so it
   // may quietly do nothing on plain-HTTP LAN — the numbers stay readable).
-  const coords = el("p", "pop-coords", `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`);
+  // WS-7: at low zoom the world repeats; a click on another copy is past ±180.
+  // The popup stays where the tap was; the pin is saved on the one world.
+  const lng = wrapLng(latlng.lng);
+  const coords = el("p", "pop-coords", `${latlng.lat.toFixed(5)}, ${lng.toFixed(5)}`);
   coords.title = "Tap to copy the coordinates";
   coords.onclick = () => {
     navigator.clipboard?.writeText(coords.textContent)
@@ -1532,7 +1535,7 @@ function placePin(latlng) {
     e.preventDefault();
     const pin = {
       holiday_id: Number(trip.value),
-      lat: latlng.lat, lng: latlng.lng,
+      lat: latlng.lat, lng,
       title: title.value, note: note.value,
       client_id: clientId,
     };
