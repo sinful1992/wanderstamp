@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.20.0 (2026-11-11)
 
 ### Frontend (ada, task 142)
 - A pin deleted on another phone drops off the map as soon as you try to save it; what you typed stays (a save answered 404 reloads the map; before, it said "Pin saved" over nothing, and since WS-3 it showed the error and kept the pin).
