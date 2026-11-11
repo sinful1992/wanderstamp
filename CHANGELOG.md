@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### CI
-- The test job runs on `ubuntu-24.04`, not `ubuntu-latest`. GitHub moved `ubuntu-latest` to Ubuntu 26.04 on 2026-11-11, and there the browser step's `install --with-deps` (apt) failed every run on "Temporary failure resolving 'archive.ubuntu.com'" (runs 43037524781, 43039902690). `workflow-gate.test.mjs` fails on a test job without a named image (task 145, USER #10754).
+- The browser tests no longer use apt: `playwright-core install chromium-headless-shell` without `--with-deps`. On 2026-11-11 GitHub's runners could not resolve Ubuntu's apt mirrors ("Temporary failure resolving 'archive.ubuntu.com'", on 26.04 and 24.04 alike), so every run failed before a test started (runs 43037524781, 43039902690, 43044508334). The runner images already carry Chrome's libraries, and the browser comes from Playwright's CDN. `workflow-gate.test.mjs` fails on `--with-deps` or apt in the test job (task 145, USER #10754).
 
 ## 1.20.1 (2026-11-11)
 

@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -40,5 +40,5 @@ jobs:
       - name: Browser tests (webtest)
         run: |
           npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/pw" playwright-core@1.65.0
-          "$RUNNER_TEMP/pw/node_modules/.bin/playwright-core" install --with-deps chromium-headless-shell
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright-core" install chromium-headless-shell
           PW_CORE="$RUNNER_TEMP/pw/node_modules/playwright-core" node webtest/run.mjs

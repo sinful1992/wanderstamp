@@ -167,12 +167,11 @@ test("an if: anywhere in test.yml is refused (a step or the job could be skipped
   assert.match(gateProblems(ok, GOOD_TEST.replace("  test:\n", "  test:\n    if: \"!startsWith(github.ref, 'refs/tags/')\"\n")).join(), /if: that can skip/);
 });
 
-// Task 145 (USER #10754): `ubuntu-latest` moved to Ubuntu 26.04 on 11-11, where the browser step's
-// `install --with-deps` (apt) failed three runs in a row on "Temporary failure resolving
-// 'archive.ubuntu.com'". The test job names its image, so a moving label cannot break it again.
-test("the test job runs on a named Ubuntu image, not ubuntu-latest", () => {
+// Task 145 (USER #10754): GitHub's runners could not reach Ubuntu's apt mirrors on 11-11 ("Temporary
+// failure resolving 'archive.ubuntu.com'", on 26.04 and on 24.04 alike), and `install --with-deps`
+// runs apt, so the browser tests failed before they started. The runner images already carry
+// Chrome's libraries; the headless shell itself comes from Playwright's CDN. No apt in the test job.
+test("the test job installs the browser without apt (no --with-deps, no apt-get)", () => {
   const lines = jobs(read("test.yml")).test.join("\n");
-  const m = /^\s*runs-on:\s*(\S+)\s*$/m.exec(lines);
-  assert.ok(m, "test job has no runs-on");
-  assert.match(m[1], /^ubuntu-\d\d\.\d\d$/, `runs-on: ${m[1]}`);
+  assert.doesNotMatch(lines, /--with-deps|\bapt(-get)?\s+(install|update)\b|install-deps/);
 });
