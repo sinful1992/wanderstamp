@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,11 +11,20 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+)
+
+// WS-6: asking Immich about photos the search left out, before pruning
+// (variables so the tests can shorten them).
+var (
+	assetCheckTimeout  = 10 * time.Second // one photo
+	assetCheckDeadline = 60 * time.Second // all of them, inside the manual sync's 2 min write timeout
+	assetCheckMax      = 100              // more than this many left out: refuse, ask nothing
 )
 
 const (
@@ -194,6 +204,64 @@ func (c *immichClient) searchRange(after, before time.Time) ([]immichAsset, erro
 	return all, nil
 }
 
+// assetGone asks Immich about one photo the search did not return (WS-6).
+// It is gone when Immich says it does not have it (404, or a 400 whose body
+// says "not found", as albumGone reads albums), it is in the trash, it is no
+// longer on the timeline (archived, hidden, locked), or it is now dated
+// outside [after, before] (both ends inclusive, as Immich's search is). An
+// offline photo (its library cannot be reached) is never gone, trashed or
+// not: the files come back with the library. Anything else, including a
+// photo Immich has but the search missed, is kept; any other answer is an
+// error, so the sync prunes nothing. Each call has its own short time limit.
+func (c *immichClient) assetGone(ctx context.Context, id string, after, before time.Time) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, assetCheckTimeout)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/assets/"+url.PathEscape(id), nil)
+	req.Header.Set("x-api-key", c.apiKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return true, nil
+	case http.StatusBadRequest:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
+		if strings.Contains(strings.ToLower(string(body)), "not found") {
+			return true, nil
+		}
+		return false, fmt.Errorf("immich asset %s: 400: %s", id, strings.TrimSpace(string(body)))
+	default:
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+		return false, fmt.Errorf("immich asset %s: %s: %s", id, resp.Status, strings.TrimSpace(string(snippet)))
+	}
+	var a struct {
+		ID            string `json:"id"`
+		IsTrashed     bool   `json:"isTrashed"`
+		IsOffline     bool   `json:"isOffline"`
+		Visibility    string `json:"visibility"`
+		FileCreatedAt string `json:"fileCreatedAt"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&a); err != nil {
+		return false, fmt.Errorf("decode asset %s: %w", id, err)
+	}
+	if a.ID != id {
+		return false, fmt.Errorf("immich asset %s: answer is for %q", id, a.ID)
+	}
+	if a.IsOffline {
+		return false, nil
+	}
+	if a.IsTrashed || (a.Visibility != "" && a.Visibility != "timeline") {
+		return true, nil
+	}
+	if t, err := time.Parse(time.RFC3339, a.FileCreatedAt); err == nil && (t.Before(after) || t.After(before)) {
+		return true, nil
+	}
+	return false, nil
+}
+
 // --- albums ---
 
 type immichError struct {
@@ -351,6 +419,73 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 			holidayID, holidayID).Scan(&have)
 		if have > 0 {
 			return 0, 0, fmt.Errorf("immich returned no photos for a trip that has %d; not pruning", have)
+		}
+	}
+
+	// WS-6: a photo the trip has but the search did not return is pruned only
+	// if Immich, asked about that photo, says it is gone. A partial answer (a
+	// library offline, an index being rebuilt) then keeps pins and titles.
+	// Asked before the transaction, so no database lock waits on Immich.
+	present := make(map[string]bool)
+	{
+		returned := make(map[string]bool, len(assets))
+		for _, as := range assets {
+			returned[as.ID] = true
+		}
+		rows, err := a.db.Query(`
+			SELECT pp.asset_id FROM pin_photos pp JOIN pins p ON p.id = pp.pin_id WHERE p.holiday_id = ?
+			UNION SELECT asset_id FROM unplaced_photos WHERE holiday_id = ?`, holidayID, holidayID)
+		if err != nil {
+			return 0, 0, err
+		}
+		var missing []string
+		known := 0
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return 0, 0, err
+			}
+			known++
+			if !returned[id] {
+				missing = append(missing, id)
+			}
+		}
+		rows.Close()
+		// keepAll: prune nothing this time, but still add what the search found,
+		// so a lasting condition never stops the trip's new photos (ada #10282).
+		keepAll := func(why string) {
+			log.Printf("sync holiday %d: %s; pruning nothing this time", holidayID, why)
+			for _, id := range missing {
+				present[id] = true
+			}
+		}
+		// Bounded: a search that keeps leaving many photos out (a wrong key,
+		// an index being rebuilt) is not asked about one by one forever.
+		if len(missing) > assetCheckMax {
+			keepAll(fmt.Sprintf("the search left out %d of the trip's photos (more than %d to check)", len(missing), assetCheckMax))
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), assetCheckDeadline)
+			defer cancel()
+			gone := 0
+			for _, id := range missing {
+				g, err := a.immich.assetGone(ctx, id, start.Add(-startGrace), before)
+				if err != nil {
+					// transport failure or an odd answer: transient, so stop and change nothing
+					return 0, 0, fmt.Errorf("immich check before pruning: %w", err)
+				}
+				if g {
+					gone++
+				} else {
+					present[id] = true
+				}
+			}
+			// More than half of a trip gone in one sync is far likelier a key for
+			// another account (every photo "not found") than a real clear-out.
+			// A real one is removed by hand.
+			if gone >= 2 && gone*2 > known {
+				keepAll(fmt.Sprintf("Immich says %d of the trip's %d photos are gone", gone, known))
+			}
 		}
 	}
 
@@ -586,7 +721,7 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 				rows.Close()
 				return 0, 0, err
 			}
-			if !seenUnplaced[id] {
+			if !seenUnplaced[id] && !present[id] {
 				staleUnplaced = append(staleUnplaced, id)
 			}
 		}
@@ -613,7 +748,7 @@ func (a *app) syncHoliday(holidayID int64) (int, int, error) {
 			rows.Close()
 			return 0, 0, err
 		}
-		if !seen[id] {
+		if !seen[id] && !present[id] {
 			stale = append(stale, id)
 		}
 	}
