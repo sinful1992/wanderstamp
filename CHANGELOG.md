@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Frontend (ada, task 142)
+- A pin deleted on another phone drops off the map as soon as you try to save it; what you typed stays (a save answered 404 reloads the map; before, it said "Pin saved" over nothing, and since WS-3 it showed the error and kept the pin).
+- Test only: the visit-notes browser test no longer fails now and then when a map reload is still in flight as the test closes its page.
+
 ### Server (task 142, audit 137 WS-1..4)
 - The ids hand-placed pins carry (1.18.0, so a pin sent twice is stored once) are forgotten after 90 days, checked every hour; before, one row per pin stayed forever. A phone that sends a 90-day-old queued pin again stores it as a new pin, as a page from before 1.18.0 did.
 - Export and import now carry everything a move to a new server needs (WS-1). Before, the export left out GPX tracks, photos set aside by hand, photos with no position, the "same place?" answers, the master packing lists, who started a trip, added a pin or wrote the journal, and the trip's Immich album; after export + import the set-aside photos came back onto the map, the share links and the TV at the next sync, and the tracks were gone.
