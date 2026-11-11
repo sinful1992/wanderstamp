@@ -11,8 +11,13 @@ async function setup(browser, base, visits, extra = {}) {
   if (!h) h = (await api(page, "POST", "/api/holidays", { name: "Notes trip", color: "#1d6fb8", start_at: "2026-09-25", end_at: "2026-09-27" })).body;
   const pin = { id: 900, holiday_id: h.id, kind: "manual", lat: 52.4, lng: -1.5, title: "Premier", note: "", photo_count: 0, cover_asset: "", created_at: "2026-09-25T10:00:00Z", visited_at: "2026-09-25T10:00:00Z", visits, ...extra };
   await page.route("**/api/map*", async (r) => {
-    const res = await r.fetch();
-    return r.fulfill({ response: res, json: { ...(await res.json()), pins: [pin] } });
+    // a map reload still in flight when the test closes its context: nothing left to answer (linus #10321)
+    try {
+      const res = await r.fetch();
+      await r.fulfill({ response: res, json: { ...(await res.json()), pins: [pin] } });
+    } catch (e) {
+      if (!page.isClosed() && !/closed/i.test(String(e && e.message))) throw e;
+    }
   });
   const sent = [];
   await page.route("**/api/pins/900", (r) => { sent.push(r.request().postDataJSON()); return r.fulfill({ json: {} }); });
