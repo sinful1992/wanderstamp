@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Tests
+- `webtest/coverage/`: line coverage of `static/*.js` from the browser tests. `WS_BIN=<built server> PW_CORE=... CHROME=... node webtest/coverage/run.mjs` runs `webtest/run.mjs` once with V8 coverage on every page and prints each file and one total line (`coverage: X% lines`); Leaflet is left out. `node webtest/coverage/test.cjs` checks the counting on fixture pages (audit 137 rank 14, task 143; merged in task 145). No app change.
+
 ## 1.20.1 (2026-11-11)
 
 ### Server (task 143, left notes of task 142)
