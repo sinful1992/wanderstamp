@@ -121,4 +121,21 @@ export const tests = [
     assert.equal(q.by, "tester", "queued pin carries no owner");
     await ctx.close();
   }],
+  ["WA-3: a map answer landing after sign-out began does not save the map again (linus #10249)", async ({ browser, base }) => {
+    const { ctx, page } = await signedIn(browser, base);
+    const h = await trip(page, "WA3 trip");
+    await queueOne(page, h.id, "wa3 race " + Date.now());
+    let held = null;
+    await page.route("**/api/map", (r) => { held = r; }); // the map refetch after the flush waits here
+    await page.route("**/api/logout", () => {});          // and sign-out never finishes
+    await page.evaluate(() => { signOut(); });
+    for (let i = 0; i < 200 && !held; i++) await page.waitForTimeout(25);
+    assert.ok(held, "no map refetch after the flush");
+    // sign-out has already forgotten the map by the time the answer lands
+    await page.evaluate(() => localStorage.removeItem(SNAP_KEY));
+    await held.fulfill({ response: await held.fetch() });
+    await page.waitForTimeout(500);
+    assert.equal(await page.evaluate(() => localStorage.getItem(SNAP_KEY)), null, "the signed-out user's map was saved again");
+    await ctx.close();
+  }],
 ];
