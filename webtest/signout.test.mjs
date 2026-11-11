@@ -145,7 +145,9 @@ export const tests = [
   ["WA-3: sign-out with an already expired session still forgets the map (linus #10262)", async ({ browser, base }) => {
     const { ctx, page } = await signedIn(browser, base);
     await page.waitForFunction(() => localStorage.getItem(SNAP_KEY));
-    await page.route("**/api/logout", (r) => r.fulfill({ status: 401, contentType: "application/json", body: '{"error":"not logged in"}' }));
+    // the session really ends (cookie gone): a faked 401 alone would leave the server session
+    // alive, and the reload after sign-out would load and save the map again
+    await ctx.clearCookies();
     await Promise.all([page.waitForEvent("load"), page.evaluate(() => signOut().catch(() => {}))]);
     assert.equal(await page.evaluate(() => localStorage.getItem(SNAP_KEY)), null, "the map stayed after signing out of an expired session");
     await ctx.close();
