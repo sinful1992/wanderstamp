@@ -21,6 +21,10 @@ jobs:
   publish:
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
+    # one publish at a time: two tags pushed together must not race for :latest (task 142)
+    concurrency:
+      group: publish-image
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

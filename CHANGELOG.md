@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### CI (task 142, WS-8 follow-ups from ada's review)
+- Only one image publish runs at a time (`concurrency: publish-image` on the publish job), so two tags pushed together no longer race for `latest`.
+- The workflow check (`.github/tests/workflow-gate.test.mjs`) is stricter: comments are ignored; the publish job's `if:` must be exactly the tag check (no `always()`, `!cancelled()`, `failure() ||`, `|| workflow_dispatch`, negated or `contains`); any `docker/build-push-action`, `buildx --push`, `type=registry` or `push: ${{ }}` counts as publishing; `test.yml` may not swallow a failure (`|| true`, `continue-on-error` by expression) or skip a check with an `if:`; the test job must call exactly `test.yml`. 16 of the 18 holes a review found in the task 141 check are closed (12 tests); the other two are repo settings, not workflow text.
+
 ### Server
 - Fixed: when Immich answered a photo sync with only part of a trip's photos (a library offline, a search index being rebuilt), the sync removed the missing photos and deleted every emptied photo pin, losing its typed title and cover. Now each photo the search left out is checked with Immich on its own, and it is removed only if Immich says it is gone: not found, in the trash, archived or hidden, or now dated outside the trip. An offline photo (its library cannot be reached, so Immich trashes it) is never removed. If more than half of a trip's photos come back gone at once (a key for another account says "not found" for all of them), or more than 100 are missing from the search, that sync removes nothing but still adds new photos; if a check fails or takes too long (10 s each, 60 s in all), the sync stops and changes nothing (audit 137 WS-6, with ada's review).
 - A normal sync, where the search returns every photo, makes no extra calls.
