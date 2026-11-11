@@ -7,15 +7,23 @@ import { signedIn, api } from "./harness.mjs";
 async function trip(page) {
   let h = (await api(page, "GET", "/api/holidays")).body.find((x) => x.name === "WS7 trip");
   if (!h) h = (await api(page, "POST", "/api/holidays", { name: "WS7 trip", color: "#2e4f7d", start_at: "2025-05-01", end_at: "2025-05-03" })).body;
+  await page.evaluate(() => loadData()); // the page learns of a trip made behind its back
   return h;
 }
 
 async function place(page, h, lat, lng, title) {
-  await page.evaluate(([a, b]) => { map.closePopup(); placePin(L.latLng(a, b)); }, [lat, lng]);
-  const shown = await page.textContent("form.pop-form .pop-coords");
-  await page.selectOption("form.pop-form select", String(h.id));
-  await page.fill("form.pop-form input[type=text]", title);
-  await page.click("form.pop-form button[type=submit]");
+  // the popup opens where the tap was, which on a far world copy may be off
+  // screen in a headless window: fill and send the form directly
+  const shown = await page.evaluate(([a, b, id, t]) => {
+    map.closePopup();
+    placePin(L.latLng(a, b));
+    const f = document.querySelector("form.pop-form");
+    f.querySelector("select").value = String(id);
+    f.querySelector("input[type=text]").value = t;
+    const text = f.querySelector(".pop-coords").textContent;
+    f.querySelector("button[type=submit]").click();
+    return text;
+  }, [lat, lng, h.id, title]);
   let pin;
   for (let i = 0; i < 100 && !pin; i++) {
     pin = (await api(page, "GET", "/api/map")).body.pins.find((p) => p.title === title);
