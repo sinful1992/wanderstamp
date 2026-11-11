@@ -6,7 +6,7 @@
 - The browser tests no longer use apt: `playwright-core install chromium-headless-shell` without `--with-deps`. On 2026-11-11 GitHub's runners could not resolve Ubuntu's apt mirrors ("Temporary failure resolving 'archive.ubuntu.com'", on 26.04 and 24.04 alike), so every run failed before a test started (runs 43037524781, 43039902690, 43044508334). The runner images already carry Chrome's libraries, and the browser comes from Playwright's CDN. `workflow-gate.test.mjs` fails on `--with-deps` or apt in the test job (task 145, USER #10754).
 
 ### Tests
-- `webtest/coverage/`: line coverage of `static/*.js` from the browser tests. `WS_BIN=<built server> PW_CORE=... CHROME=... node webtest/coverage/run.mjs` runs `webtest/run.mjs` once with V8 coverage on every page and prints each file and one total line (`coverage: X% lines`); Leaflet is left out. `node webtest/coverage/test.cjs` checks the counting on fixture pages (audit 137 rank 14, task 143; merged in task 145). No app change.
+- `webtest/coverage/`: line coverage of `static/*.js` from the browser tests. `WS_BIN=<built server> PW_CORE=... CHROME=... node webtest/coverage/run.mjs` runs `webtest/run.mjs` once with V8 coverage on every page and prints each file and one total line (`coverage: X% lines`); Leaflet is left out. The total is of the scripts the tests load: sw.js (a service worker, which page.coverage does not see) and any file no test opens are not in it (linus #10685). `node webtest/coverage/test.cjs` checks the counting on fixture pages (audit 137 rank 14, task 143; merged in task 145). No app change.
 
 ## 1.20.1 (2026-11-11)
 
