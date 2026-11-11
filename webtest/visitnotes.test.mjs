@@ -182,4 +182,45 @@ export const tests = [
     assert.deepEqual(sent[0], { title: "Premier", note: "third", note_day: "2026-09-26", from_day: "2026-09-27" });
     await ctx.close();
   }],
+  ["a pin deleted on another phone: saving it answers 404, the map reloads and the pin goes, what was typed stays", async ({ browser, base }) => {
+    const { ctx, page } = await setup(browser, base, [V("2026-09-25", "first")]);
+    let maps = 0, gone = false;
+    await page.unroute("**/api/map*");
+    await page.route("**/api/map*", async (r) => {
+      maps++;
+      try {
+        const res = await r.fetch();
+        const j = await res.json();
+        await r.fulfill({ response: res, json: { ...j, pins: gone ? j.pins : [...j.pins, { id: 900, holiday_id: j.holidays[0].id, kind: "manual", lat: 52.4, lng: -1.5, title: "Premier", note: "", photo_count: 0, cover_asset: "" }] } });
+      } catch (e) {
+        if (!page.isClosed() && !/closed/i.test(String(e && e.message))) throw e;
+      }
+    });
+    await page.unroute("**/api/pins/900");
+    await page.route("**/api/pins/900", (r) => { gone = true; return r.fulfill({ status: 404, json: { error: "pin not found" } }); });
+    await edit(page, 0);
+    await page.fill("form.pop-form textarea", "typed on a pin that is gone");
+    const before = maps;
+    await save(page);
+    for (let i = 0; i < 100 && maps === before; i++) await page.waitForTimeout(50);
+    assert.ok(maps > before, "the map was asked for again");
+    await page.waitForFunction(() => !state.pins.some((p) => p.id === 900));
+    assert.equal(await page.inputValue("form.pop-form textarea"), "typed on a pin that is gone", "the words are not wiped");
+    await ctx.close();
+  }],
+  ["a save that fails for another reason (500) does not reload the map", async ({ browser, base }) => {
+    const { ctx, page } = await setup(browser, base, [V("2026-09-25", "first")]);
+    let hit = false, maps = 0;
+    await page.unroute("**/api/pins/900");
+    await page.route("**/api/pins/900", (r) => { hit = true; return r.fulfill({ status: 500, json: { error: "database error" } }); });
+    page.on("request", (q) => { if (/\/api\/map/.test(q.url())) maps++; });
+    await edit(page, 0);
+    await page.fill("form.pop-form textarea", "typed");
+    await save(page);
+    for (let i = 0; i < 100 && !hit; i++) await page.waitForTimeout(50);
+    await page.waitForTimeout(400);
+    assert.ok(hit, "the PATCH was sent");
+    assert.equal(maps, 0, "no reload on a 500");
+    await ctx.close();
+  }],
 ];
