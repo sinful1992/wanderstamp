@@ -233,6 +233,7 @@ func (a *app) housekeeping() {
 		a.ipLimiter.gc()
 		a.promotePlanned()
 		a.tvHousekeeping()
+		a.prunePinKeys(time.Now())
 		if err := checkpoint(a.db); err != nil {
 			log.Printf("wal checkpoint: %v", err)
 		}

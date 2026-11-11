@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Server (task 142, audit 137 WS-1..4)
+- The ids hand-placed pins carry (1.18.0, so a pin sent twice is stored once) are forgotten after 90 days, checked every hour; before, one row per pin stayed forever. A phone that sends a 90-day-old queued pin again stores it as a new pin, as a page from before 1.18.0 did.
 - Export and import now carry everything a move to a new server needs (WS-1). Before, the export left out GPX tracks, photos set aside by hand, photos with no position, the "same place?" answers, the master packing lists, who started a trip, added a pin or wrote the journal, and the trip's Immich album; after export + import the set-aside photos came back onto the map, the share links and the TV at the next sync, and the tracks were gone.
   - Per trip: `tracks`, `set_aside`, `unplaced`, `photo_choices` (pointing at the export's own pin ids, mapped to the new ids on import; an answer whose pin is gone is dropped and asked again), `created_by`, `journal_by`, `immich_album_id`; per pin `created_by` and, per photo, an open "same place?" question (`ask`). At the top: `packing_templates`, each with its items. A list whose name is already here (any case) gets only the items it lacks.
   - Every new field is optional: an export from before 1.20.0 imports as before, with the same answer. A bad new field (a track point off the map, a bad asset id or time) refuses the whole file and changes nothing. A photo is filed in one place only: one already on a pin, unplaced or set aside here stays there.
